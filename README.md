@@ -11,6 +11,8 @@ $0.00 a picture.
 
 **[Download the latest release →](https://github.com/JesseDubb/pixal-releases/releases/latest)**
 
+**[Read the manual →](HELP.md)** — install to troubleshooting to FAQ.
+
 ## What it does
 
 - **Chat-directed rendering.** No prompt engineering: the scene is corrected

@@ -1,0 +1,22 @@
+{
+  "name": "pixal-comfy-middleware",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local, conversational recipe layer for ComfyUI.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild web/src/app.jsx --bundle --format=esm --external:/vendor/* --outfile=web/app.js --jsx=automatic --minify",
+    "watch": "esbuild web/src/app.jsx --bundle --format=esm --external:/vendor/* --outfile=web/app.js --jsx=automatic --watch --sourcemap"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

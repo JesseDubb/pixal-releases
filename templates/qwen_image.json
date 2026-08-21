@@ -1,0 +1,141 @@
+{
+ "qi:unet": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "Qwen\\qwen_image_2512_fp8_e4m3fn.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "Load Diffusion Model (Qwen-Image)"
+  }
+ },
+ "qi:clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "Qwen\\qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "type": "qwen_image",
+   "device": "default"
+  },
+  "_meta": {
+   "title": "Load CLIP (Qwen 2.5 VL 7B)"
+  }
+ },
+ "qi:vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "Qwen-Image\\Qwen_Image_VAE.safetensors"
+  },
+  "_meta": {
+   "title": "Load VAE (Qwen Image)"
+  }
+ },
+ "qi:pos": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "qi:clip",
+    0
+   ],
+   "text": "TEMPLATE_PLACEHOLDER_SCENE"
+  },
+  "_meta": {
+   "title": "Encode Scene"
+  }
+ },
+ "qi:neg": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "qi:clip",
+    0
+   ],
+   "text": ""
+  },
+  "_meta": {
+   "title": "Encode Negative"
+  }
+ },
+ "qi:latent": {
+  "class_type": "EmptySD3LatentImage",
+  "inputs": {
+   "width": 992,
+   "height": 1488,
+   "batch_size": 1
+  },
+  "_meta": {
+   "title": "Empty Latent (size set by builder)"
+  }
+ },
+ "qi:shift": {
+  "class_type": "ModelSamplingAuraFlow",
+  "inputs": {
+   "model": [
+    "qi:unet",
+    0
+   ],
+   "shift": 3.1
+  },
+  "_meta": {
+   "title": "Model Sampling Shift"
+  }
+ },
+ "qi:sampler": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "qi:shift",
+    0
+   ],
+   "positive": [
+    "qi:pos",
+    0
+   ],
+   "negative": [
+    "qi:neg",
+    0
+   ],
+   "latent_image": [
+    "qi:latent",
+    0
+   ],
+   "seed": 9999,
+   "steps": 20,
+   "cfg": 4.0,
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "denoise": 1.0
+  },
+  "_meta": {
+   "title": "KSampler"
+  }
+ },
+ "qi:decode": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "qi:sampler",
+    0
+   ],
+   "vae": [
+    "qi:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "qi:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "qi:decode",
+    0
+   ],
+   "filename_prefix": "pixal_dm/qwen_image"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

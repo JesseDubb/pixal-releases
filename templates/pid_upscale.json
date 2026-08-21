@@ -1,0 +1,61 @@
+{
+ "up:img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "example-source.png"
+  },
+  "_meta": {
+   "title": "Load Source Image"
+  }
+ },
+ "up:cap": {
+  "class_type": "PiDCaptionCreator",
+  "inputs": {
+   "image": [
+    "up:img",
+    0
+   ],
+   "auto_download": true,
+   "preview": ""
+  },
+  "_meta": {
+   "title": "PiD Caption Creator"
+  }
+ },
+ "up:pid": {
+  "class_type": "PiDUpscale",
+  "inputs": {
+   "image": [
+    "up:img",
+    0
+   ],
+   "caption": [
+    "up:cap",
+    1
+   ],
+   "pid_ckpt_type": "2k",
+   "version": "v1",
+   "backbone": "flux",
+   "auto_download": true,
+   "model_precision": "bf16",
+   "upscale_factor": "4x",
+   "strength": 0.4
+  },
+  "_meta": {
+   "title": "PiD Upscale"
+  }
+ },
+ "up:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "up:pid",
+    0
+   ],
+   "filename_prefix": "pixal_dm/upscaled"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

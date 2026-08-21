@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+web/app.js -text -diff linguist-generated=true
+web/vendor/** -text -diff linguist-vendored=true

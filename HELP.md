@@ -653,6 +653,17 @@ compatible generation works." Default is the recipe's own. The footnote tells
 you how many compatible builds you have and where it is used: "Used by the
 edit button on a finished render and by an attached photo."
 
+**Edit speed** — there is no Settings control for this one; it lives only
+in `config.json` in the Pixal folder. `"edit": {"speed": "turbo"}` is the
+default; the other value is `"full"`. Turbo runs the edit model's own
+distilled fast schedule — "Qwen-Image Lightning 4-step V2" on the Qwen
+line, "FireRed 8-step Lightning" on FireRed — and only when that LoRA is
+actually in the loras folder; `"full"`, or a missing LoRA, runs the model's
+un-accelerated schedule instead. The pairing is deliberate: a distillation
+is trained against one set of weights, so the wrong accelerator does not
+error — it quietly ruins the edit. `config.json` is re-read on every edit,
+so the next one picks the change up; no restart.
+
 ### Models — finishing
 
 **Upscaler** — the still-frame mode (Model / PiD 4×), the upscale model
@@ -1031,7 +1042,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.0b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.1b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

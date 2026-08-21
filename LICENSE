@@ -1,5 +1,5 @@
 Pixal Source-Available License
-Version 1.0, 2026-08-17
+Version 1.1, 2026-08-20
 
 Copyright (c) 2026 Jesse Dubberke. All rights reserved.
 
@@ -66,6 +66,15 @@ change it for yourself. You cannot pass it on. Contributions are welcome.
 
    Receiving a copy of the Software does not grant You the right to give one
    to anybody else. Refer them to the Licensor instead.
+
+   FORKING TO CONTRIBUTE. Sections 3(a) and 3(c) do not prohibit You from
+   using the fork feature of a hosting platform on which the Licensor has
+   himself published the Software, where You do so in order to prepare and
+   submit a contribution under Section 5. Such a fork must stay on that
+   platform, must keep this License and every attribution notice intact, and
+   must not be presented as an independent or competing distribution. It is
+   not permission to publish the Software anywhere else, and the Licensor may
+   ask You to remove it once it has served its purpose.
 
 
 4. RESERVATION OF RIGHTS

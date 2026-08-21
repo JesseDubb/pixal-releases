@@ -1,0 +1,360 @@
+{
+ "lu:load": {
+  "class_type": "VHS_LoadVideoPath",
+  "inputs": {
+   "video": "example-clip.mp4",
+   "force_rate": 0,
+   "custom_width": 0,
+   "custom_height": 0,
+   "frame_load_cap": 0,
+   "skip_first_frames": 0,
+   "select_every_nth": 1
+  },
+  "_meta": {
+   "title": "Load Clip"
+  }
+ },
+ "lu:info": {
+  "class_type": "VHS_VideoInfoLoaded",
+  "inputs": {
+   "video_info": [
+    "lu:load",
+    3
+   ]
+  },
+  "_meta": {
+   "title": "Clip Info"
+  }
+ },
+ "lu:unet": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "LTX2\\ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "LTX 2.5 Transformer"
+  }
+ },
+ "lu:lora": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "lu:unet",
+    0
+   ],
+   "lora_name": "LTX\\ltx-2-19b-ic-lora-detailer.safetensors",
+   "strength_model": 1.0
+  },
+  "_meta": {
+   "title": "IC Detailer LoRA"
+  }
+ },
+ "lu:sage": {
+  "class_type": "LTX2MemoryEfficientSageAttentionPatch",
+  "inputs": {
+   "model": [
+    "lu:lora",
+    0
+   ],
+   "triton_kernels": true
+  },
+  "_meta": {
+   "title": "Sage Attention Patch"
+  }
+ },
+ "lu:clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "LTX2\\gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+   "type": "ltxv",
+   "device": "default"
+  },
+  "_meta": {
+   "title": "Gemma 4 Encoder"
+  }
+ },
+ "lu:vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "LTX2\\ltx-2.5-video-vae-bf16.safetensors"
+  },
+  "_meta": {
+   "title": "Video VAE"
+  }
+ },
+ "lu:avae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "LTX2\\ltx-2.5-audio-vae-bf16.safetensors"
+  },
+  "_meta": {
+   "title": "Audio VAE"
+  }
+ },
+ "lu:upmodel": {
+  "class_type": "LatentUpscaleModelLoader",
+  "inputs": {
+   "model_name": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+  },
+  "_meta": {
+   "title": "Spatial Upscaler x2"
+  }
+ },
+ "lu:pos": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "lu:clip",
+    0
+   ],
+   "text": ""
+  },
+  "_meta": {
+   "title": "Refine Prompt"
+  }
+ },
+ "lu:neg": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "lu:clip",
+    0
+   ],
+   "text": "bad anatomy, inconsistent look, low resolution,"
+  },
+  "_meta": {
+   "title": "Negative"
+  }
+ },
+ "lu:cond": {
+  "class_type": "LTXVConditioning",
+  "inputs": {
+   "positive": [
+    "lu:pos",
+    0
+   ],
+   "negative": [
+    "lu:neg",
+    0
+   ],
+   "frame_rate": 24.0
+  },
+  "_meta": {
+   "title": "LTXV Conditioning"
+  }
+ },
+ "lu:encode": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "lu:load",
+    0
+   ],
+   "vae": [
+    "lu:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Encode Clip"
+  }
+ },
+ "lu:up": {
+  "class_type": "LTXVLatentUpsampler",
+  "inputs": {
+   "samples": [
+    "lu:encode",
+    0
+   ],
+   "upscale_model": [
+    "lu:upmodel",
+    0
+   ],
+   "vae": [
+    "lu:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Latent Upsample x2"
+  }
+ },
+ "lu:aenc": {
+  "class_type": "LTXVAudioVAEEncode",
+  "inputs": {
+   "audio": [
+    "lu:load",
+    2
+   ],
+   "audio_vae": [
+    "lu:avae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Encode Audio"
+  }
+ },
+ "lu:concat": {
+  "class_type": "LTXVConcatAVLatent",
+  "inputs": {
+   "video_latent": [
+    "lu:up",
+    0
+   ],
+   "audio_latent": [
+    "lu:aenc",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Concat AV Latent"
+  }
+ },
+ "lu:noise": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 42
+  },
+  "_meta": {
+   "title": "Noise"
+  }
+ },
+ "lu:sampler": {
+  "class_type": "KSamplerSelect",
+  "inputs": {
+   "sampler_name": "euler_ancestral"
+  },
+  "_meta": {
+   "title": "Sampler"
+  }
+ },
+ "lu:sched": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "lu:sage",
+    0
+   ],
+   "scheduler": "simple",
+   "steps": 4,
+   "denoise": 0.15
+  },
+  "_meta": {
+   "title": "Refine Schedule"
+  }
+ },
+ "lu:guider": {
+  "class_type": "LTXVDualCFGGuider",
+  "inputs": {
+   "model": [
+    "lu:sage",
+    0
+   ],
+   "positive": [
+    "lu:cond",
+    0
+   ],
+   "negative": [
+    "lu:cond",
+    1
+   ],
+   "video_cfg": 1.0,
+   "audio_cfg": 1.0
+  },
+  "_meta": {
+   "title": "Dual CFG Guider"
+  }
+ },
+ "lu:sample": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "lu:noise",
+    0
+   ],
+   "guider": [
+    "lu:guider",
+    0
+   ],
+   "sampler": [
+    "lu:sampler",
+    0
+   ],
+   "sigmas": [
+    "lu:sched",
+    0
+   ],
+   "latent_image": [
+    "lu:concat",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Refine Pass"
+  }
+ },
+ "lu:sep": {
+  "class_type": "LTXVSeparateAVLatent",
+  "inputs": {
+   "av_latent": [
+    "lu:sample",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Separate AV"
+  }
+ },
+ "lu:decode": {
+  "class_type": "VAEDecodeTiled",
+  "inputs": {
+   "samples": [
+    "lu:sep",
+    0
+   ],
+   "vae": [
+    "lu:vae",
+    0
+   ],
+   "tile_size": 768,
+   "overlap": 64,
+   "temporal_size": 4096,
+   "temporal_overlap": 32
+  },
+  "_meta": {
+   "title": "Tiled Decode"
+  }
+ },
+ "lu:save": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "images": [
+    "lu:decode",
+    0
+   ],
+   "audio": [
+    "lu:load",
+    2
+   ],
+   "frame_rate": [
+    "lu:info",
+    0
+   ],
+   "loop_count": 0,
+   "filename_prefix": "pixal_dm/upscaled",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 14,
+   "bitrate": 0,
+   "megabit": true,
+   "save_metadata": true,
+   "pingpong": false,
+   "save_output": true
+  },
+  "_meta": {
+   "title": "Save Clip"
+  }
+ }
+}

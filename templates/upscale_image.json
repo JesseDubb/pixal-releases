@@ -1,0 +1,49 @@
+{
+ "up:model": {
+  "class_type": "UpscaleModelLoader",
+  "inputs": {
+   "model_name": "4x\\4x-UltraSharp.pth"
+  },
+  "_meta": {
+   "title": "Load Upscale Model"
+  }
+ },
+ "up:img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "example-source.png"
+  },
+  "_meta": {
+   "title": "Load Source Image"
+  }
+ },
+ "up:apply": {
+  "class_type": "ImageUpscaleWithModel",
+  "inputs": {
+   "upscale_model": [
+    "up:model",
+    0
+   ],
+   "image": [
+    "up:img",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Upscale Image"
+  }
+ },
+ "up:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "up:apply",
+    0
+   ],
+   "filename_prefix": "pixal_dm/upscaled"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

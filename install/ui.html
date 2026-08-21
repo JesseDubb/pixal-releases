@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install Pixal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='none'%3E%3Cpath fill='%231E32E0' d='M135.01 0 L376.99 0 C470.62 0 512 41.38 512 135.01 L512 376.99 C512 470.62 470.62 512 376.99 512 L135.01 512 C41.38 512 0 470.62 0 376.99 L0 135.01 C0 41.38 41.38 0 135.01 0Z'/%3E%3Cg transform='matrix(1 0 -0.29 1 75.11 0)'%3E%3Cpath fill='%23D6F32F' d='M170.06 103.48 H191.26 A33.56 33.56 0 0 1 224.82 137.04 V380.96 A33.56 33.56 0 0 1 191.26 414.52 H170.06 A33.56 33.56 0 0 1 136.5 380.96 V137.04 A33.56 33.56 0 0 1 170.06 103.48Z M170.06 103.48 H317.75 A64.51 64.51 0 0 1 382.26 167.99 V254.01 A64.51 64.51 0 0 1 317.75 318.52 H170.06 V103.48Z M246.71 174.52 A21.89 21.89 0 0 0 224.82 196.41 V225.59 A21.89 21.89 0 0 0 246.71 247.48 H289.33 A21.89 21.89 0 0 0 311.22 225.59 V196.41 A21.89 21.89 0 0 0 289.33 174.52Z'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+/* Pixal house rules: charcoal ground, chartreuse means "Pixal did this",
+   hard edges, no radius, no gradients. Fonts are whatever the machine has -
+   an installer that waits on a webfont is an installer that shows a blank
+   page on the one machine with no internet yet. */
+:root{
+  --ground:#0B0B0D;--panel:#111114;--panel2:#17171C;--cream:#F2F1EC;--dim:#D8D7D2;
+  --mute:#8B8B85;--faint:#6B6B66;--signal:#D6F32F;--sig-ink:#111401;--blue:#1E32E0;
+  --bad:#FF6B4A;--hair:rgba(242,241,236,.13);
+  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--cream);font-family:var(--sans);
+  font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.shell{width:min(980px,calc(100% - 48px));margin:0 auto;padding:40px 0 80px}
+h1{margin:0;font-size:clamp(30px,5vw,46px);letter-spacing:-.045em;line-height:.95}
+h2{margin:0 0 4px;font-size:19px;letter-spacing:-.02em}
+p{margin:0}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--signal)}
+.eyebrow svg{width:14px;height:14px;vertical-align:-3px;margin-right:8px}
+.sub{color:var(--mute);margin-top:10px;max-width:62ch}
+header{border-bottom:1px solid var(--hair);padding-bottom:26px;margin-bottom:30px}
+section{margin-bottom:34px}
+.sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.sechead .n{font:500 11px/1 var(--mono);color:var(--faint)}
+.card{background:var(--panel);border:1px solid var(--hair);padding:16px 18px}
+.grid{display:grid;gap:10px}
+.grid.two{grid-template-columns:1fr 1fr;column-gap:34px}
+.fact{display:flex;justify-content:space-between;gap:14px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--hair);white-space:nowrap}
+.fact:last-child{border-bottom:0}
+.fact .k{color:var(--mute);font-size:13px}
+.fact .v{font:500 13px/1.2 var(--mono);overflow:hidden;text-overflow:ellipsis}
+/* scoped to values and inline notes on purpose: a bare .ok would also paint
+   every finished step row chartreuse, which shouts louder than the one step
+   that is actually running */
+.v.ok,span.ok{color:var(--signal)}.v.warn,span.warn{color:#FFC24A}
+.v.bad,span.bad{color:var(--bad)}
+label.pick{display:flex;gap:13px;align-items:flex-start;padding:14px 16px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--hair)}
+label.pick:hover{background:var(--panel2)}
+label.pick.on{border-color:var(--signal);background:var(--panel2)}
+label.pick input{margin:3px 0 0;accent-color:var(--signal);width:16px;height:16px;flex:none}
+.pick > span{min-width:0}
+.pick .t{display:block;font-weight:600}
+.pick .d{display:block;color:var(--mute);font-size:13px;margin-top:3px}
+.pick .sz{margin-left:auto;font:500 12px/1 var(--mono);color:var(--dim);padding-left:14px;flex:none}
+/* the per-file breakdown inside a lane card: state, filename, where it is or
+   where it comes from. Three columns so the states line up down the page. */
+.files{display:block;margin-top:11px;border-top:1px solid var(--hair);padding-top:9px}
+.frow{display:grid;grid-template-columns:172px minmax(0,1fr) minmax(0,1.3fr);gap:12px;
+  font:500 11.5px/1.9 var(--mono);color:var(--faint);white-space:nowrap}
+.frow .fn{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow .fw{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.frow a{color:var(--signal)}
+.tag{display:inline-block;font:500 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  padding:4px 7px;background:var(--signal);color:var(--sig-ink);margin-left:8px;vertical-align:2px}
+.tag.have{background:transparent;color:var(--signal);border:1px solid var(--signal)}
+.tag.grey{background:transparent;color:var(--mute);border:1px solid var(--hair)}
+button{font:inherit;font-weight:600;border:0;padding:0 26px;height:52px;cursor:pointer;
+  background:var(--signal);color:var(--sig-ink)}
+button:hover{filter:brightness(1.08)}
+button[disabled]{opacity:.4;cursor:not-allowed;filter:none}
+button.ghost{background:transparent;color:var(--cream);border:1px solid var(--hair)}
+button.small{height:38px;padding:0 16px;font-size:13px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+input[type=text]{flex:1;min-width:240px;height:38px;padding:0 11px;background:#0d0d10;
+  border:1px solid var(--hair);color:var(--cream);font:500 13px var(--mono)}
+.total{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;
+  background:var(--panel2);border:1px solid var(--hair);margin-top:12px;font:500 14px var(--mono)}
+.step{padding:11px 14px;border-bottom:1px solid var(--hair);display:flex;gap:12px;
+  align-items:center;flex-wrap:wrap;color:var(--mute)}
+.step:last-child{border-bottom:0}
+.step.run{color:var(--cream)}
+.step .dot{width:9px;height:9px;flex:none;background:#2a2a32}
+.step.run .dot{background:var(--signal);animation:pulse 1.1s infinite}
+.step.ok .dot{background:#5d7a10}
+.step.skip .dot{background:var(--mute)}
+.step.fail .dot{background:var(--bad)}
+@keyframes pulse{50%{opacity:.25}}
+.step .lab{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step .det{font:500 12px var(--mono);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:46%}
+.step.run .det{color:var(--signal)}
+.bar{flex-basis:100%;height:3px;background:#22222a;margin-top:9px}
+.bar i{display:block;height:100%;background:var(--signal);transition:width .25s linear}
+pre.log{margin:12px 0 0;padding:14px;background:#08080A;border:1px solid var(--hair);
+  font:500 12px/1.6 var(--mono);color:var(--dim);max-height:190px;overflow:auto;white-space:pre-wrap}
+.note{border-left:2px solid var(--signal);padding:10px 14px;background:var(--panel);
+  color:var(--dim);font-size:14px}
+.note.bad{border-color:var(--bad)}
+.manual{color:var(--mute);font-size:13px}
+.manual code{font:500 12px var(--mono);color:var(--dim)}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <span class="eyebrow"><svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M27.8 0 H72.2 A5.5 5.5 0 0 1 77.7 5.5 V22.3 H94.5 A5.5 5.5 0 0 1 100 27.8 V72.2 A5.5 5.5 0 0 1 94.5 77.7 H77.7 V94.5 A5.5 5.5 0 0 1 72.2 100 H5.5 A5.5 5.5 0 0 1 0 94.5 V27.8 A5.5 5.5 0 0 1 5.5 22.3 H22.3 V5.5 A5.5 5.5 0 0 1 27.8 0 Z M22.3 22.3 H77.7 V77.7 H41.0 L22.3 100 Z M39.9 37.3 H60.1 A3.5 3.5 0 0 1 63.6 40.8 V59.2 A3.5 3.5 0 0 1 60.1 62.7 H39.9 A3.5 3.5 0 0 1 36.4 59.2 V40.8 A3.5 3.5 0 0 1 39.9 37.3 Z"/></svg>pixal</span>
+    <h1>Install Pixal</h1>
+    <p class="sub">This finds ComfyUI (or installs it), puts the weights you pick
+      exactly where Pixal looks for them, and leaves a shortcut on the Desktop.
+      Everything downloads to your machine. Nothing is uploaded anywhere.</p>
+  </header>
+
+  <div id="setup">
+    <section id="s-check">
+      <div class="sechead"><span class="n">01</span><h2>This machine</h2></div>
+      <div class="card grid two" id="facts"><span class="k">looking…</span></div>
+      <p class="manual" id="specnote" style="margin-top:10px"></p>
+    </section>
+
+    <section id="s-comfy">
+      <div class="sechead"><span class="n">02</span><h2>ComfyUI</h2></div>
+      <div class="grid" id="comfy"></div>
+      <p class="manual" id="scaninfo" style="margin-top:10px"></p>
+      <div class="card hide" id="freshbox" style="margin-top:10px">
+        <p class="k" style="color:var(--mute);font-size:13px;margin-bottom:9px">
+          Where should ComfyUI go? It needs about 9 GB, plus room for the models.</p>
+        <div class="row">
+          <input type="text" id="freshpath" value="C:\ComfyUI">
+          <button class="ghost small" id="browse">Browse…</button>
+        </div>
+        <p class="manual" id="freshstate" style="margin-top:9px"></p>
+      </div>
+      <div class="card hide" id="tidybox" style="margin-top:10px"></div>
+      <div class="card hide" id="otherbox" style="margin-top:10px">
+        <p class="k" style="color:var(--mute);font-size:13px;margin-bottom:9px">
+          The ComfyUI folder, a portable root that contains one, or the
+          <code>models</code> folder itself — any of the three.</p>
+        <div class="row">
+          <input type="text" id="otherpath" placeholder="D:\something\ComfyUI">
+          <button class="ghost small" id="browseother">Browse…</button>
+        </div>
+        <p class="manual" id="otherstate" style="margin-top:9px"></p>
+      </div>
+    </section>
+
+    <section id="s-home">
+      <div class="sechead"><span class="n">03</span><h2>Where Pixal lives</h2></div>
+      <div class="card">
+        <p class="manual" id="homewhy"></p>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="homepath">
+          <button class="ghost small" id="browsehome">Browse…</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="s-models">
+      <div class="sechead"><span class="n">04</span><h2>What do you want to make?</h2></div>
+      <div class="grid" id="lanes"></div>
+      <div class="total"><span id="totalcount">nothing chosen</span><span id="totalsize">0 GB</span></div>
+      <div id="manual" style="margin-top:14px"></div>
+    </section>
+
+    <section>
+      <div class="row">
+        <button id="go">Install</button>
+        <span class="manual" id="gonote"></span>
+      </div>
+    </section>
+  </div>
+
+  <div id="running" class="hide">
+    <section>
+      <div class="sechead"><span class="n">05</span><h2 id="runhead">Installing</h2></div>
+      <div class="card" style="padding:0" id="steps"></div>
+      <pre class="log" id="log"></pre>
+      <div class="row" style="margin-top:16px">
+        <button id="launch" class="hide">Open Pixal</button>
+        <button id="cancel" class="ghost">Cancel</button>
+        <button id="back" class="ghost hide">Back</button>
+      </div>
+      <div id="endnote" style="margin-top:16px"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const GB = n => (n / 1073741824).toFixed(n < 1073741824 ? 2 : 1) + " GB";
+let P = null, choice = {mode: "use", path: "", update: false}, lanes = new Set();
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"},
+     body: JSON.stringify(body)});
+  return r.json();
+}
+
+function factRow(k, v, cls) {
+  return `<div class="fact"><span class="k">${k}</span>
+          <span class="v ${cls || ""}" title="${v}">${v}</span></div>`;
+}
+
+function freeOnTarget() {
+  const drive = ((choice.path || P.target_drive || "C:").slice(0, 3)).toUpperCase();
+  const key = Object.keys(P.free).find(k => k.toUpperCase().startsWith(drive));
+  return {drive, bytes: key ? P.free[key] : 0};
+}
+
+// 16 GB and up is where everything runs at the quality it was tuned for. Below
+// that the lanes still work on quantized builds, which is a real answer and not
+// a consolation - Anima is a 2B model and never wanted the room in the first
+// place. H3 video is the one hard floor: under ~24 GB free it streams weights
+// from system RAM and renders about 5× slower.
+function vramVerdict(gb) {
+  // "no driver responded" - not "no card". nvidia-smi failing on a fresh
+  // Windows install with a perfectly good 4070 must not tell them they have no
+  // graphics card.
+  if (!gb) return ["bad", "no NVIDIA driver responded"];
+  if (gb >= 24) return ["ok", "everything, video included"];
+  if (gb >= 16) return ["ok", "everything but H3 video"];
+  if (gb >= 8) return ["warn", "use quantized builds — GGUF, INT8, NVFP4"];
+  return ["warn", "tight — Anima only, quantized"];
+}
+
+function drawFacts() {
+  const g = P.gpus[0];
+  const f = freeOnTarget();
+  const [vramCls, verdict] = vramVerdict(g ? P.vram_gb : 0);
+  $("#facts").innerHTML =
+    factRow("Windows", P.windows) +
+    factRow("Graphics", g ? g.name : "none detected", g ? "" : "bad") +
+    factRow("VRAM", g ? `${P.vram_gb} GB` : "—", vramCls) +
+    factRow("Driver", g ? g.driver : "—") +
+    factRow("Free space", `${f.bytes ? GB(f.bytes) : "?"} free on ${f.drive}`) +
+    factRow("Pixal folder", P.pixal);
+  $("#specnote").innerHTML =
+    `<b class="${vramCls}">${verdict}</b> — 16 GB VRAM and up for best results.
+     Below that the same models run as quantized builds (GGUF, INT8, NVFP4) and
+     Anima's 2 B lane is comfortable in 8 GB. H3 video wants 24 GB.`;
+}
+
+function drawComfy() {
+  const rows = P.installs.map((i, n) => `
+    <label class="pick" data-comfy="${n}">
+      <input type="radio" name="comfy" ${n === 0 ? "checked" : ""}>
+      <span><span class="t">Use ${i.root.split("\\").filter(Boolean).pop()}
+          <span class="tag grey">${i.python ? "portable" : "installed"}</span></span>
+        <span class="d">${i.root}<br>version ${i.version || "unknown"} ·
+          ${i.packs.length} node pack${i.packs.length === 1 ? "" : "s"} installed</span>
+      </span>
+    </label>`).join("");
+  const fresh = `
+    <label class="pick" data-comfy="new">
+      <input type="radio" name="comfy" ${P.installs.length ? "" : "checked"}>
+      <span><span class="t">Install ComfyUI ${P.pin}<span class="tag">portable</span></span>
+        <span class="d">The build this Pixal is developed and rendered against.
+          Downloads 2.1 GB and unpacks it — nothing else on the machine is touched.</span>
+      </span>
+      <span class="sz">2.1 GB</span>
+    </label>`;
+  const other = `
+    <label class="pick" data-comfy="other">
+      <input type="radio" name="comfy">
+      <span><span class="t">Use a ComfyUI somewhere else</span>
+        <span class="d">The search only looks two folders deep and gives up after
+          eight seconds. If yours is buried, point at it here.</span>
+      </span>
+    </label>`;
+  const upd = P.installs.length ? `
+    <label class="pick" id="updbox">
+      <input type="checkbox" id="upd">
+      <span><span class="t">Also update it to ${P.pin}</span>
+        <span class="d">Only if it is a git checkout with no local edits. Otherwise skipped, untouched.</span>
+      </span>
+    </label>` : "";
+  $("#comfy").innerHTML = rows + fresh + other + upd;
+  choice = {mode: P.installs.length ? "use" : "install",
+            kind: P.installs.length ? "0" : "new",
+            path: P.installs.length ? P.installs[0].root : $("#freshpath").value,
+            update: false};
+  $("#comfy").querySelectorAll("[data-comfy]").forEach(el => {
+    el.onclick = () => setTimeout(() => {
+      const k = choice.kind = el.dataset.comfy;
+      choice.mode = k === "new" ? "install" : "use";
+      choice.path = k === "new" ? $("#freshpath").value
+                  : k === "other" ? $("#otherpath").value.trim()
+                  : P.installs[+k].root;
+      $("#freshbox").classList.toggle("hide", k !== "new");
+      $("#otherbox").classList.toggle("hide", k !== "other");
+      if (k === "new") validateFresh();
+      if (k === "other") validateOther();
+      if ($("#updbox")) $("#updbox").classList.toggle("hide", k === "new");
+      $("#comfy").querySelectorAll(".pick").forEach(p =>
+        p.classList.toggle("on", p.querySelector("input").checked));
+      drawHome();
+      drawTotal();
+      loadSurvey();
+    }, 0);
+  });
+  const u = $("#upd");
+  if (u) u.onchange = () => { choice.update = u.checked;
+    $("#updbox").classList.toggle("on", u.checked); };
+  $("#freshbox").classList.toggle("hide", choice.mode !== "install");
+  $("#comfy").querySelectorAll(".pick").forEach(p =>
+    p.classList.toggle("on", p.querySelector("input").checked));
+  $("#freshpath").oninput = () => {
+    if (choice.mode === "install") choice.path = $("#freshpath").value;
+    clearTimeout(freshTimer);
+    freshTimer = setTimeout(validateFresh, 400);
+    drawHome();
+  };
+  $("#browse").onclick = async () => {
+    const r = await api("/api/pick", {title: "Where should ComfyUI go?"});
+    if (r.path) { $("#freshpath").value = r.path; choice.path = r.path;
+                  validateFresh(); drawHome(); }
+  };
+  $("#homepath").oninput = () => { homeTouched = true; };
+  $("#browsehome").onclick = async () => {
+    const r = await api("/api/pick", {title: "Where should Pixal live?"});
+    if (r.path) { $("#homepath").value = r.path; homeTouched = true; }
+  };
+  $("#otherpath").oninput = () => { clearTimeout(otherTimer);
+    otherTimer = setTimeout(validateOther, 400); };
+  $("#browseother").onclick = async () => {
+    const r = await api("/api/pick", {title: "Where is ComfyUI?"});
+    if (r.path) { $("#otherpath").value = r.path; validateOther(); }
+  };
+
+  // What the search actually did, small and honest, under the choices. A miss
+  // that reads as "you have no ComfyUI" is how a second ComfyUI gets
+  // installed beside the first.
+  const sc = P.scan;
+  if (sc && sc.searched) {
+    const drives = sc.searched.filter(s => /^[A-Za-z]:\\?$/.test(s))
+                              .map(s => s.replace(/\\$/, ""));
+    const rest = sc.searched.length - drives.length;
+    const where = (drives.join(" ") || "the usual folders") +
+                  (rest ? ` + ${rest} folder${rest === 1 ? "" : "s"}` : "");
+    const pending = (sc.unfinished || [])
+        .filter(s => /^[A-Za-z]:\\?$/.test(s)).map(s => s.replace(/\\$/, ""));
+    $("#scaninfo").textContent = sc.deadline_hit
+      ? `search hit its ${sc.limit || 8} s limit before finishing ` +
+        `${pending.join(" ") || "some folders"} — if yours is missing, point ` +
+        `at it below (searched ${where} in ${sc.seconds} s)`
+      : `searched ${where} in ${sc.seconds} s` +
+        (sc.hits && sc.hits.length ? "" :
+         " — nothing found; if yours is missing, point at it below");
+  }
+}
+
+let otherTimer = 0, otherOk = false, otherComfy = "";
+
+async function validateOther() {
+  const p = $("#otherpath").value.trim();
+  choice.path = p;
+  if (!p) {
+    otherOk = false; otherComfy = ""; $("#otherstate").innerHTML = "";
+    return drawTotal();
+  }
+  const r = await api("/api/validate", {path: p});
+  otherOk = r.ok;
+  otherComfy = r.comfy || "";
+  $("#otherstate").innerHTML = r.ok
+    ? `<span class="ok">ComfyUI ${r.version || "(version unknown)"} at
+       <code>${r.comfy}</code> · ${GB(r.free)} free on that drive</span>`
+    : `<span class="bad">Nothing there — looked for
+       <code>ComfyUI\\models</code> and <code>models</code> under that path.</span>`;
+  drawHome();
+  drawTotal();
+}
+
+let freshTimer = 0, freshClash = false, freshHit = "", freshRoot = "";
+
+// The install lane's own guard, through the same /api/validate the
+// "somewhere else" lane uses. An "ok" answer for a FRESH destination means
+// the folder already resolves to a ComfyUI - installing the portable over it
+// would pave a working install, so Go locks while install-mode targets it
+// and the one-click fix moves the path to a Use lane. The engine re-checks
+// this server-side before the first byte moves; this is the early version.
+async function validateFresh() {
+  if (choice.mode !== "install") return;
+  const p = $("#freshpath").value.trim();
+  choice.path = p;
+  if (!p) {
+    freshClash = false; freshHit = ""; $("#freshstate").innerHTML = "";
+    return drawTotal();
+  }
+  const r = await api("/api/validate", {path: p});
+  if (p !== $("#freshpath").value.trim()) return;   // typed on while asking
+  freshClash = !!r.ok;
+  freshHit = r.comfy || "";
+  freshRoot = p;
+  $("#freshstate").innerHTML = r.ok
+    ? `<span class="ok">ComfyUI ${r.version || "(version unknown)"} at
+       <code>${r.comfy}</code></span><br>
+       <button class="ghost small" id="useinstead" style="margin-top:8px">
+       Use this ComfyUI instead</button>`
+    : "";
+  if (r.ok) $("#useinstead").onclick = useDetectedInstead;
+  drawTotal();
+}
+
+function useDetectedInstead() {
+  // If the scan already listed this install its row carries the details -
+  // switch to that row. Otherwise the "somewhere else" lane, path prefilled.
+  const n = P.installs.findIndex(i =>
+    (i.comfy || "").toLowerCase() === freshHit.toLowerCase());
+  if (n >= 0) {
+    document.querySelector(`[data-comfy="${n}"]`).click();
+  } else {
+    $("#otherpath").value = freshRoot;
+    document.querySelector('[data-comfy="other"]').click();
+  }
+}
+
+let SURVEY = null, tidyOn = true;
+
+// What this ComfyUI already has. Re-read whenever the ComfyUI choice changes,
+// because "you already own this" is only true of one install at a time.
+async function loadSurvey() {
+  SURVEY = null;
+  if (choice.mode !== "install" && choice.path) {
+    SURVEY = await api("/api/survey", {path: choice.path});
+  }
+  drawTidy(); drawLanes(); drawHome();
+}
+
+function drawTidy() {
+  const box = $("#tidybox");
+  const moves = (SURVEY && SURVEY.moves) || [];
+  box.classList.toggle("hide", !moves.length);
+  if (!moves.length) return;
+  box.innerHTML = `
+    <label class="pick ${tidyOn ? "on" : ""}" style="border:0;background:none;padding:0">
+      <input type="checkbox" id="tidy" ${tidyOn ? "checked" : ""}>
+      <span><span class="t">Tidy ${moves.length} model${moves.length === 1 ? "" : "s"}
+        into the folders Pixal reads</span>
+        <span class="d">These are on the machine already, in folders Pixal does not
+          look in — so without this they get downloaded a second time. Moved within
+          the same drive and the same category, never over an existing file, and the
+          list of what moved is written to <code>install\\_work</code> so it can be
+          put back.</span>
+      </span>
+    </label>
+    <div style="margin-top:12px;font:500 12px/1.9 var(--mono);color:var(--mute)">
+      ${moves.map(mv => `<div><span style="color:var(--dim)">${mv.from}</span>
+        → ${mv.to}</div>`).join("")}
+    </div>`;
+  $("#tidy").onchange = () => {
+    tidyOn = $("#tidy").checked;
+    $("#tidybox .pick").classList.toggle("on", tidyOn);
+    drawLanes();
+  };
+}
+
+let homeTouched = false;
+
+// Inside the ComfyUI tree by default (ComfyUI\pixal_dm) — the layout run.bat
+// already knows, and one folder to move or back up. Only when Pixal is
+// somewhere temporary; a settled folder is left exactly where its owner put it.
+function suggestHome() {
+  if (!P.pixal_temporary) return P.pixal;
+  if (choice.mode === "install") {
+    const base = ($("#freshpath").value || "C:\\ComfyUI").replace(/[\\/]+$/, "");
+    return base + "\\ComfyUI\\pixal_dm";
+  }
+  if (choice.kind === "other") return otherComfy ? otherComfy + "\\pixal_dm" : "C:\\Pixal";
+  const inst = P.installs.find(i => i.root === choice.path);
+  return inst ? inst.comfy + "\\pixal_dm" : "C:\\Pixal";
+}
+
+function drawHome() {
+  if (!homeTouched) $("#homepath").value = suggestHome();
+  $("#homewhy").innerHTML = P.pixal_temporary
+    ? `Right now Pixal is running from <code>${P.pixal}</code> — a folder people
+       empty out. It gets copied somewhere permanent, and the shortcut, the
+       config and the models all point at the copy. What you unzipped can go in
+       the bin afterwards.`
+    : `Pixal stays at <code>${P.pixal}</code>. Change this only if you want it
+       somewhere else — the folder is copied, never moved, and an existing
+       install's config, characters and history are left alone.`;
+}
+
+function laneBytes(l) { return l.files.reduce((a, f) => a + f.bytes, 0); }
+
+// What a lane still costs, given what the machine has and whether the misfiled
+// copies are going to be moved into place.
+function laneState(l) {
+  const s = SURVEY && SURVEY.lanes[l.id];
+  if (!s) return {bytes: laneBytes(l), have: 0, of: l.files.length, ready: false,
+                  files: null};
+  const have = s.have + (tidyOn ? s.stray : 0);
+  return {bytes: s.missing_bytes + (tidyOn ? 0 : s.stray_bytes),
+          have, of: s.of, ready: have === s.of, files: s.files};
+}
+
+function fileLine(r) {
+  const label = {have: "on disk", stray: tidyOn ? "moving into place"
+                                              : "wrong folder · re-download",
+                 missing: "download"}[r.state];
+  const cls = r.state === "have" ? "ok" : r.state === "stray" ? "warn" : "";
+  const where = r.state === "have" ? r.at
+              : r.state === "stray" ? r.at
+              : `<a href="${r.page}" target="_blank" rel="noreferrer">${r.repo}</a>`;
+  return `<div class="frow"><span class="${cls}">${label}</span>
+          <span class="fn">${r.name}</span><span class="fw">${where}</span></div>`;
+}
+
+function drawLanes() {
+  $("#lanes").innerHTML = P.catalog.lanes.map(l => {
+    const st = laneState(l);
+    // Tick what is worth finishing: a lane already half here, or the
+    // recommended one on a machine that has none of it. Never a lane that is
+    // complete - there is nothing to do for it.
+    const tick = !st.ready && (st.have > 0 || (l.recommended && !SURVEY) ||
+                               (l.recommended && st.have === 0));
+    return `
+    <label class="pick ${tick ? "on" : ""}" data-lane="${l.id}">
+      <input type="checkbox" ${tick ? "checked" : ""} ${st.ready ? "disabled" : ""}>
+      <span><span class="t">${l.name}
+        ${l.recommended && !st.ready ? '<span class="tag">start here</span>' : ""}
+        ${st.ready ? '<span class="tag have">ready — nothing to download</span>'
+                   : st.have ? `<span class="tag have">${st.have} of ${st.of} here</span>` : ""}</span>
+        <span class="d">${l.tagline}${l.detail ? "<br>" + l.detail : ""}
+        ${l.license ? "<br>" + l.license : ""}</span>
+        ${st.files ? `<span class="files">${st.files.map(fileLine).join("")}</span>` : ""}
+      </span>
+      <span class="sz">${st.bytes ? GB(st.bytes) : ""}</span>
+    </label>`;
+  }).join("");
+  $("#lanes").querySelectorAll("[data-lane]").forEach(el => {
+    const box = el.querySelector("input");
+    lanes.delete(el.dataset.lane);
+    if (box.checked) lanes.add(el.dataset.lane);
+    el.onclick = () => setTimeout(() => {
+      const id = el.dataset.lane;
+      box.checked ? lanes.add(id) : lanes.delete(id);
+      // "Anima Turbo" is an add-on to a model it cannot render without.
+      P.catalog.lanes.forEach(l => {
+        if ((l.requires || []).some(r => lanes.has(id) && id === l.id && !lanes.has(r))) {
+          lanes.add(l.requires[0]);
+          const dep = $(`[data-lane="${l.requires[0]}"]`);
+          if (dep) { dep.querySelector("input").checked = true; dep.classList.add("on"); }
+        }
+      });
+      el.classList.toggle("on", box.checked);
+      drawTotal();
+    }, 0);
+  });
+  $("#manual").innerHTML = P.catalog.manual.map(m => {
+    const rows = (SURVEY && SURVEY.manual) || [];
+    const state = f => rows.find(r => r.dest === f.dest) || {state: "missing"};
+    const here = rows.filter(r => r.state === "have").length;
+    return `
+    <div class="card"><span class="t" style="font-weight:600">${m.name}
+      <span class="tag grey">not automatic</span>
+      ${rows.length && here === rows.length
+        ? '<span class="tag have">all here already</span>' : ""}</span>
+      <p class="manual" style="margin-top:6px">${m.why}
+      Node pack: <code>${m.packs.join(", ")}</code></p>
+      <span class="files">${m.files.map(f => {
+        const r = state(f);
+        const cls = r.state === "have" ? "ok" : r.state === "stray" ? "warn" : "";
+        const label = {have: "on disk", stray: "wrong folder",
+                       missing: "not here"}[r.state];
+        const where = r.state === "missing"
+          ? `<a href="${r.search || ("https://civitai.com/search/models?query=" +
+              encodeURIComponent(f.search || ""))}" target="_blank" rel="noreferrer"
+              onclick="event.stopPropagation()">find on Civitai</a>`
+          : (r.at || f.dest);
+        return `<div class="frow"><span class="${cls}">${label}</span>
+                <span class="fn">${f.dest.split("/").pop()}</span>
+                <span class="fw">${where}</span></div>`;
+      }).join("")}</span>
+    </div>`;
+  }).join("");
+  drawTotal();
+}
+
+function drawTotal() {
+  const chosen = P.catalog.lanes.filter(l => lanes.has(l.id));
+  const seen = new Set(); let bytes = 0;
+  chosen.forEach(l => {
+    const s = SURVEY && SURVEY.lanes[l.id];
+    l.files.forEach((f, i) => {
+      if (seen.has(f.dest)) return;
+      const row = s && s.files[i];
+      if (row && (row.state === "have" || (tidyOn && row.state === "stray"))) return;
+      seen.add(f.dest); bytes += f.bytes;
+    });
+  });
+  if (choice.mode === "install") bytes += P.catalog.comfyui.asset_bytes;
+  $("#totalcount").textContent = seen.size
+    ? `${chosen.length} chosen · ${seen.size} file${seen.size === 1 ? "" : "s"} to download`
+    : chosen.length ? `${chosen.length} chosen · already on this machine`
+                    : "nothing chosen";
+  $("#totalsize").textContent = GB(bytes);
+  const f = freeOnTarget();
+  drawFacts();
+  const needsPath = choice.kind === "other" && !otherOk;
+  // Same hard stop for the install lane: a fresh destination that resolves
+  // to a ComfyUI is a pave-over, not an install.
+  const freshBlock = choice.mode === "install" && freshClash;
+  // Two machine facts are hard stops, because both otherwise fail LATE - after
+  // gigabytes have moved - and read as "Pixal is broken" rather than "this
+  // machine needs one thing first". No NVIDIA blocks everything; an old driver
+  // blocks only the fresh portable we would install (an existing ComfyUI is
+  // already running on a torch its driver supports).
+  const gate = P.gate || {gpu: true, driver: true};
+  const noGpu = !gate.gpu;
+  const oldDriver = !gate.driver && choice.mode === "install";
+  const noRoom = bytes * 1.25 > f.bytes;
+  $("#gonote").innerHTML =
+      noGpu || oldDriver
+    ? `<span class="bad">${gate.why}</span>`
+    : needsPath
+    ? `<span class="bad">Point at a ComfyUI folder first.</span>`
+    : freshBlock
+    ? `<span class="bad">This folder already has ComfyUI — use it, don't install over it.</span>`
+    : noRoom
+    ? `<span class="bad">Only ${GB(f.bytes)} free on ${f.drive} — that is not
+       enough room for this.</span>`
+    : "";
+  // Config, the shortcut and the tidy are work in their own right, so a missing
+  // ComfyUI path, no NVIDIA, and a too-old driver are the hard blocks.
+  $("#go").disabled = needsPath || freshBlock || noGpu || oldDriver;
+}
+
+function drawSteps(st) {
+  $("#steps").innerHTML = st.steps.map(s => `
+    <div class="step ${s.status}">
+      <span class="dot"></span>
+      <span class="lab">${s.label}${s.note ? ` <span style="color:var(--faint)">· ${s.note}</span>` : ""}</span>
+      <span class="det">${s.detail || ""}</span>
+      ${s.status === "run" && s.pct ? `<span class="bar"><i style="width:${s.pct}%"></i></span>` : ""}
+    </div>`).join("");
+  const log = $("#log");
+  const stuck = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  log.textContent = st.log.slice(-60).join("\n");
+  if (stuck) log.scrollTop = log.scrollHeight;
+}
+
+async function poll() {
+  const st = await api("/api/state");
+  drawSteps(st);
+  if (st.phase === "done") {
+    $("#runhead").textContent = "Installed";
+    $("#launch").classList.remove("hide");
+    $("#cancel").classList.add("hide");
+    $("#endnote").innerHTML = st.done_note
+      ? `<div class="note">${st.done_note}</div>` : "";
+    return;
+  }
+  if (st.phase === "error") {
+    $("#runhead").textContent = "Stopped";
+    $("#cancel").classList.add("hide");
+    $("#back").classList.remove("hide");
+    $("#endnote").innerHTML = `<div class="note bad">${st.error}<br>
+      Nothing half-downloaded was discarded — fix the cause and run the
+      installer again; it picks up from where it stopped.</div>`;
+    return;
+  }
+  if (st.phase === "idle") { location.reload(); return; }
+  setTimeout(poll, 700);
+}
+
+$("#go").onclick = async () => {
+  if (choice.mode === "install") choice.path = $("#freshpath").value.trim();
+  $("#setup").classList.add("hide");
+  $("#running").classList.remove("hide");
+  await api("/api/start", {comfy: choice, home: $("#homepath").value.trim(),
+                           tidy: tidyOn && !!(SURVEY && SURVEY.moves.length),
+                           lanes: [...lanes]});
+  poll();
+};
+$("#cancel").onclick = () => api("/api/cancel", {});
+$("#back").onclick = () => location.reload();
+$("#launch").onclick = async () => {
+  await api("/api/launch", {});
+  $("#launch").textContent = "Opening…";
+  setTimeout(() => api("/api/quit", {}), 2500);
+};
+
+(async () => {
+  // A closed tab does not stop the install - the worker is a thread in the
+  // process behind this page. Reopening it during one has to land on the
+  // progress, not on a set of choices that have already been made.
+  const st = await api("/api/state");
+  if (st.phase !== "idle") {
+    $("#setup").classList.add("hide");
+    $("#running").classList.remove("hide");
+    poll();
+    return;
+  }
+  P = await api("/api/probe");
+  drawFacts(); drawComfy(); drawHome(); drawLanes();
+  loadSurvey();
+  validateFresh();
+})();
+</script>
+</body>
+</html>

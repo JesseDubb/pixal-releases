@@ -1,0 +1,341 @@
+{
+ "ki:unet": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "Flux\\flux-2-klein-9b_bf16.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "Load Diffusion Model (FLUX.2 Klein 9B)"
+  }
+ },
+ "ki:clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors",
+   "type": "flux2",
+   "device": "default"
+  },
+  "_meta": {
+   "title": "Load CLIP (Qwen3 8B, flux2)"
+  }
+ },
+ "ki:vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "Flux\\flux2-vae.safetensors"
+  },
+  "_meta": {
+   "title": "Load VAE (Flux2)"
+  }
+ },
+ "ki:img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "example-source.png"
+  },
+  "_meta": {
+   "title": "Load Source (mask painted into alpha)"
+  }
+ },
+ "ki:scale": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "ki:img",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 2.0,
+   "resolution_steps": 16
+  },
+  "_meta": {
+   "title": "Sampling Canvas (capped; native passes through untouched)"
+  }
+ },
+ "ki:maskimg_src": {
+  "class_type": "MaskToImage",
+  "inputs": {
+   "mask": [
+    "ki:img",
+    1
+   ]
+  },
+  "_meta": {
+   "title": "Mask as Image (for the sampling canvas)"
+  }
+ },
+ "ki:maskscale": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "ki:maskimg_src",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 2.0,
+   "resolution_steps": 16
+  },
+  "_meta": {
+   "title": "Mask onto the Sampling Canvas (same math = same size)"
+  }
+ },
+ "ki:workmask": {
+  "class_type": "ImageToMask",
+  "inputs": {
+   "image": [
+    "ki:maskscale",
+    0
+   ],
+   "channel": "red"
+  },
+  "_meta": {
+   "title": "Sampling-Canvas Mask"
+  }
+ },
+ "ki:latent": {
+  "class_type": "VAEEncodeForInpaint",
+  "inputs": {
+   "pixels": [
+    "ki:scale",
+    0
+   ],
+   "vae": [
+    "ki:vae",
+    0
+   ],
+   "mask": [
+    "ki:workmask",
+    0
+   ],
+   "grow_mask_by": 15
+  },
+  "_meta": {
+   "title": "Masked Inpaint Latent"
+  }
+ },
+ "ki:pos": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "ki:clip",
+    0
+   ],
+   "text": "TEMPLATE_PLACEHOLDER_INSTRUCTION"
+  },
+  "_meta": {
+   "title": "Encode Inpaint Instruction"
+  }
+ },
+ "ki:reffull": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "ki:scale",
+    0
+   ],
+   "vae": [
+    "ki:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Encode Full-Frame Reference Latent"
+  }
+ },
+ "ki:refinpaint": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "ki:pos",
+    0
+   ],
+   "latent": [
+    "ki:latent",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Reference Latent (inpaint)"
+  }
+ },
+ "ki:ref": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "ki:refinpaint",
+    0
+   ],
+   "latent": [
+    "ki:reffull",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Reference Latent (full frame)"
+  }
+ },
+ "ki:neg": {
+  "class_type": "ConditioningZeroOut",
+  "inputs": {
+   "conditioning": [
+    "ki:pos",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Zeroed Negative"
+  }
+ },
+ "ki:sampler": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "ki:unet",
+    0
+   ],
+   "positive": [
+    "ki:ref",
+    0
+   ],
+   "negative": [
+    "ki:neg",
+    0
+   ],
+   "latent_image": [
+    "ki:latent",
+    0
+   ],
+   "seed": 11111,
+   "steps": 4,
+   "cfg": 1.0,
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "denoise": 1.0
+  },
+  "_meta": {
+   "title": "KSampler (Klein is 4-step distilled)"
+  }
+ },
+ "ki:decode": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "ki:sampler",
+    0
+   ],
+   "vae": [
+    "ki:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "ki:growmask": {
+  "class_type": "GrowMask",
+  "inputs": {
+   "mask": [
+    "ki:img",
+    1
+   ],
+   "expand": 15,
+   "tapered_corners": true
+  },
+  "_meta": {
+   "title": "Grow Mask (match sampler's grow 15)"
+  }
+ },
+ "ki:maskimg": {
+  "class_type": "MaskToImage",
+  "inputs": {
+   "mask": [
+    "ki:growmask",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Mask as Image"
+  }
+ },
+ "ki:maskblur": {
+  "class_type": "ImageBlur",
+  "inputs": {
+   "image": [
+    "ki:maskimg",
+    0
+   ],
+   "blur_radius": 8,
+   "sigma": 6.0
+  },
+  "_meta": {
+   "title": "Feather Seam"
+  }
+ },
+ "ki:softmask": {
+  "class_type": "ImageToMask",
+  "inputs": {
+   "image": [
+    "ki:maskblur",
+    0
+   ],
+   "channel": "red"
+  },
+  "_meta": {
+   "title": "Soft Composite Mask"
+  }
+ },
+ "ki:back": {
+  "class_type": "ImageScale",
+  "inputs": {
+   "image": [
+    "ki:decode",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "width": 1024,
+   "height": 1024,
+   "crop": "disabled"
+  },
+  "_meta": {
+   "title": "Edited Region Back to Native (builder writes the source's own size)"
+  }
+ },
+ "ki:comp": {
+  "class_type": "ImageCompositeMasked",
+  "inputs": {
+   "destination": [
+    "ki:img",
+    0
+   ],
+   "source": [
+    "ki:back",
+    0
+   ],
+   "x": 0,
+   "y": 0,
+   "resize_source": false,
+   "mask": [
+    "ki:softmask",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Composite Back Over Source (untouched pixels stay original)"
+  }
+ },
+ "ki:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "ki:comp",
+    0
+   ],
+   "filename_prefix": "pixal_dm/klein_inpaint"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

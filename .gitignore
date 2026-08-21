@@ -1,0 +1,120 @@
+# Private runtime configuration and state
+# config.json* (not just config.json): a stray backup or a hand-written
+# "config.json.defaults" carries the same live access key, and the bare name
+# left those one `git add -A` away from being published.
+config.json*
+config.local.json
+.local_llm.json
+_lora_titles.json
+_civitai_models.json
+history.jsonl
+input_ref_types.json*
+lane.json
+chats/*
+!chats/.gitkeep
+characters/*
+!characters/.gitkeep
+# Saved styles are the user's own recipes. The folder ships, its contents do
+# not - the shared/community ones will live in their own repo, not this one.
+recipes/*
+!recipes/.gitkeep
+.env
+.env.*
+!.env.example
+*.local.json
+UI_HANDOFF.md
+
+# Netlify CLI scratch. Auto-written, and it bakes an absolute local path into
+# `publish` plus a build command for a generator this site does not use.
+.netlify/
+
+# A PowerShell hashtable that got piped to a file instead of a variable, so the
+# TYPE NAME became the filename. It is lane prompt state, which is ignored under
+# its real name anyway.
+System.Collections.Specialized.OrderedDictionary
+
+# Runtime logs and process files
+*.log
+*.out
+*.pid
+*.bak
+*.prof/
+# Whole directory: comfy_tui also leaves a last-error headline and a measured
+# boot profile here, neither of which is a .log and neither of which belongs to
+# anyone but this machine.
+logs/
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Node dependencies and build caches
+node_modules/
+.npm/
+.parcel-cache/
+.esbuild/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+web/*.map
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+.pixal_spawn.lock
+
+# Installer scratch: the interpreter it chose for THIS machine, the archives and
+# wheels it downloaded, and the embeddable python it unpacks when the machine
+# had none. All per-machine, none of it belongs in the package.
+.pixal_python
+install/_work/
+install/runtime/
+
+# Sibling repo, not Pixal code: ComfyUI-Fantastic-MiniMaxH3-PromptBuilder
+# develops here but ships as its own ComfyUI node pack (credited in
+# THIRD_PARTY_NOTICES.md, listed in PACKAGING.md as an install-time pack).
+h3pb/
+
+# Full-size example downloads on the marketing site (115 MB: a 4224x7552 PNG
+# and two H3 clips). The page links them, the repo must not carry them - they
+# are uploaded to the host alongside the build. Regenerate/copy from
+# ComfyUI/output/pixal_dm before a deploy.
+site/assets/dl/
+
+# EXE build artifacts
+install/_build/
+Pixal-Setup-*.exe
+
+# generated wizard bitmaps
+install/wizard/
+/Pixal-Setup-*.exe
+
+# Working notes, not product docs. Untracked 2026-08-20 ahead of possibly
+# publishing the source tree: AI executor briefs, dated working docs, planning
+# and strategy files. They stay on disk - they are just not part of the
+# publishable tree. Mirrors build_installer.py's INTERNAL list, which already
+# kept these out of the installer on the same reasoning.
+briefs/
+docs/
+SOL_PLAN.md
+PRODUCT_NOTES.md
+pixal-dm-ssot.md
+scratch_prompt.txt
+
+# The source zip published alongside each release (built by git archive,
+# same tree the installer lays down). Regenerated per release, not tracked.
+pixal-*-source.zip

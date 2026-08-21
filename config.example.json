@@ -1,0 +1,19 @@
+{
+  "llm": {
+    "base_url": "https://api.moonshot.ai/v1",
+    "api_key": "",
+    "model": "kimi-k3",
+    "local_model": "",
+    "local_keep": true
+  },
+  "critic": {
+    "model": "Qwen3-VL-4B-Instruct"
+  },
+  "extra_model_roots": [],
+  "comfy_url": "http://127.0.0.1:8188",
+  "comfy_root": "",
+  "setup_done": false,
+  "vram_profile": "auto",
+  "chrome_app_id": "ghdcpmocbcbgkbnfncifmfbpedjkgamk",
+  "access_key": ""
+}

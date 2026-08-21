@@ -1,0 +1,81 @@
+{
+ "uv:load": {
+  "class_type": "VHS_LoadVideoPath",
+  "inputs": {
+   "video": "example-clip.mp4",
+   "force_rate": 0,
+   "custom_width": 0,
+   "custom_height": 0,
+   "frame_load_cap": 0,
+   "skip_first_frames": 0,
+   "select_every_nth": 1
+  },
+  "_meta": {
+   "title": "Load Clip"
+  }
+ },
+ "uv:info": {
+  "class_type": "VHS_VideoInfoLoaded",
+  "inputs": {
+   "video_info": [
+    "uv:load",
+    3
+   ]
+  },
+  "_meta": {
+   "title": "Clip Info"
+  }
+ },
+ "uv:vsr": {
+  "class_type": "DenoRTXVFXEasyUpscale",
+  "inputs": {
+   "images": [
+    "uv:load",
+    0
+   ],
+   "mode": "VSR High",
+   "resize_type": "Scale",
+   "scale": 2.0,
+   "megapixels": 2.0,
+   "width": 1920,
+   "height": 1080,
+   "divisible_by": "8",
+   "device": 0,
+   "ratio_preset": "16:9",
+   "resize_method": "Center Crop (Fill)"
+  },
+  "_meta": {
+   "title": "RTX Video Super Resolution"
+  }
+ },
+ "uv:save": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "images": [
+    "uv:vsr",
+    0
+   ],
+   "audio": [
+    "uv:load",
+    2
+   ],
+   "frame_rate": [
+    "uv:info",
+    0
+   ],
+   "loop_count": 0,
+   "filename_prefix": "pixal_dm/upscaled",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 14,
+   "bitrate": 0,
+   "megabit": true,
+   "save_metadata": true,
+   "pingpong": false,
+   "save_output": true
+  },
+  "_meta": {
+   "title": "Save Clip"
+  }
+ }
+}

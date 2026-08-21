@@ -1,0 +1,337 @@
+; Pixal Setup - Inno Setup script
+;
+; Built by install\build_installer.py, which stages the tree, generates
+; components.iss from catalog.json and passes the version in. Do not run ISCC
+; on this directly.
+;
+; Everything happens on the wizard's own pages. The setup engine still does the
+; work - same plan, same downloads, same resume - but it runs with --headless
+; and reports through a file, so there is no local web server, no browser tab
+; and nothing left open when the wizard closes.
+;
+; Per-user by design: {localappdata}\Programs\Pixal, PrivilegesRequired=lowest
+; and NO install-mode dialog. "Never asks for admin" means never asking.
+
+#ifndef MyVersion
+  #define MyVersion "1.0.1b"
+#endif
+#ifndef MyStage
+  #define MyStage "_build\stage"
+#endif
+
+#define MyName    "Pixal"
+#define MyExeName "Pixal.exe"
+
+[Setup]
+AppId={{8F3A6C21-4B7E-4E2A-9C5D-1A7B2E9F4D63}
+AppName={#MyName}
+AppVersion={#MyVersion}
+AppVerName={#MyName} {#MyVersion}
+AppPublisher=Pixal
+VersionInfoVersion=1.0.0
+VersionInfoDescription=Pixal Setup
+DefaultDirName={localappdata}\Programs\Pixal
+DefaultGroupName={#MyName}
+DisableProgramGroupPage=yes
+DisableWelcomePage=no
+AllowNoIcons=yes
+PrivilegesRequired=lowest
+OutputDir=..\
+OutputBaseFilename=Pixal-Setup-{#MyVersion}-win-x64
+SetupIconFile=..\web\icons\pixal-block.ico
+UninstallDisplayIcon={app}\web\icons\pixal-block.ico
+UninstallDisplayName={#MyName} {#MyVersion}
+LicenseFile=..\LICENSE
+WizardStyle=modern
+WizardImageFile=wizard\wizard.bmp,wizard\wizard@125.bmp,wizard\wizard@150.bmp,wizard\wizard@175.bmp,wizard\wizard@200.bmp
+WizardSmallImageFile=wizard\wizard-small.bmp,wizard\wizard-small@125.bmp,wizard\wizard-small@150.bmp,wizard\wizard-small@175.bmp,wizard\wizard-small@200.bmp
+WizardImageStretch=yes
+Compression=lzma2/max
+SolidCompression=yes
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
+CloseApplications=yes
+RestartApplications=no
+DirExistsWarning=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
+
+; Lanes are generated from install\catalog.json at build time so this file and
+; the catalog can never drift apart.
+#include "_build\components.iss"
+
+[Files]
+Source: "{#MyStage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{group}\{#MyName}";           Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Comment: "Open Pixal"
+Name: "{group}\Pixal Setup";         Filename: "{app}\{#MyExeName}"; Parameters: "--setup"; IconFilename: "{app}\web\icons\pixal-block.ico"; Comment: "Add or repair ComfyUI and models"
+Name: "{group}\Uninstall {#MyName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyName}";     Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\{#MyExeName}"; Description: "Open &Pixal now"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Everything created AFTER install, which Inno's own file list cannot know
+; about. Without these the folder survives an uninstall with a venv in it and
+; "uninstalling is deleting a folder" stops being true.
+Type: filesandordirs; Name: "{app}\install\_work"
+Type: filesandordirs; Name: "{app}\install\runtime"
+Type: filesandordirs; Name: "{app}\.venv"
+Type: filesandordirs; Name: "{app}\logs"
+Type: filesandordirs; Name: "{app}\__pycache__"
+Type: filesandordirs; Name: "{app}\chats"
+Type: files;          Name: "{app}\config.json"
+Type: files;          Name: "{app}\.pixal_python"
+Type: files;          Name: "{app}\history.jsonl"
+Type: filesandordirs; Name: "{localappdata}\Pixal\_setup"
+Type: dirifempty;     Name: "{localappdata}\Pixal"
+Type: dirifempty;     Name: "{app}"
+
+[Messages]
+WelcomeLabel1=Welcome to Pixal
+WelcomeLabel2=Pixal is a studio for making images and video on your own machine.%n%nThis installs Pixal itself, then downloads ComfyUI and the models you choose. Everything stays on this computer - nothing is uploaded.
+FinishedHeadingLabel=Pixal is ready
+ClickFinish=Click Finish to close Setup.
+
+[Code]
+var
+  ComfyPage:  TInputDirWizardPage;
+  WorkPage:   TOutputProgressWizardPage;
+  FreshComfy: Boolean;
+  RanEngine:  Boolean;
+  DriverMajor: Integer;
+  GpuName: String;
+
+const
+  DRIVER_MIN = 580;   { torch cu130, what the pinned ComfyUI portable ships }
+  { A line whose first character is a hash is read by Inno's preprocessor
+    even inside code, so a wrapped string can never start with one.
+    Naming it once avoids the trap entirely. }
+  NL2 = #13#10#13#10;
+
+function ReadKey(const FileName, Key: String): String;
+var
+  Lines: TArrayOfString;
+  i: Integer;
+begin
+  Result := '';
+  if not FileExists(FileName) then Exit;
+  if not LoadStringsFromFile(FileName, Lines) then Exit;
+  for i := 0 to GetArrayLength(Lines) - 1 do
+    if Pos(Key + '=', Lines[i]) = 1 then begin
+      Result := Copy(Lines[i], Length(Key) + 2, MaxInt);
+      Exit;
+    end;
+end;
+
+function JsonPath(const S: String): String;
+begin
+  Result := S;
+  StringChangeEx(Result, '\', '\\', True);
+end;
+
+{ nvidia-smi through cmd so its output can be redirected to a file. Pascal has
+  no pipe, and the two facts needed here - is there a driver, and how old is
+  it - are one line of CSV. }
+procedure DetectGpu;
+var
+  Tmp, S: String;
+  Code, i: Integer;
+  Lines: TArrayOfString;
+begin
+  DriverMajor := 0;
+  Tmp := ExpandConstant('{tmp}\gpu.txt');
+  Exec(ExpandConstant('{cmd}'),
+       '/c nvidia-smi --query-gpu=name,driver_version --format=csv,noheader > "' +
+       Tmp + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  if not FileExists(Tmp) then Exit;
+  if not LoadStringsFromFile(Tmp, Lines) then Exit;
+  if GetArrayLength(Lines) = 0 then Exit;
+  S := Trim(Lines[0]);
+  i := Pos(',', S);
+  if i = 0 then Exit;
+  GpuName := Trim(Copy(S, 1, i - 1));
+  S := Trim(Copy(S, i + 1, MaxInt));
+  i := Pos('.', S);
+  if i > 0 then S := Copy(S, 1, i - 1);
+  DriverMajor := StrToIntDef(Trim(S), 0);
+end;
+
+function LooksLikeComfy(const Dir: String): Boolean;
+begin
+  Result := FileExists(Dir + '\main.py') or DirExists(Dir + '\models');
+end;
+
+{ Shallow and cheap: the top level of every drive, plus the usual user folders.
+  A deep walk is minutes of disk for a question the user can answer by typing,
+  and this only has to fill in a default they can correct. }
+function DetectComfy: String;
+var
+  Drives, Names: TArrayOfString;
+  FR: TFindRec;
+  d, n: Integer;
+  Root, Cand: String;
+begin
+  Result := '';
+  Drives := ['C:', 'D:', 'E:', 'F:', 'G:', 'X:', 'Y:', 'Z:'];
+  Names  := [ExpandConstant('{userdocs}'), ExpandConstant('{userdesktop}'),
+             ExpandConstant('{localappdata}\Programs')];
+  for d := 0 to GetArrayLength(Drives) - 1 do begin
+    Root := Drives[d] + '\';
+    if not DirExists(Root) then Continue;
+    if FindFirst(Root + '*Comfy*', FR) then try
+      repeat
+        if (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then begin
+          Cand := Root + FR.Name;
+          if LooksLikeComfy(Cand) then begin Result := Cand; Exit; end;
+          if LooksLikeComfy(Cand + '\ComfyUI') then begin Result := Cand; Exit; end;
+        end;
+      until not FindNext(FR);
+    finally
+      FindClose(FR);
+    end;
+  end;
+  for n := 0 to GetArrayLength(Names) - 1 do begin
+    Cand := Names[n] + '\ComfyUI';
+    if LooksLikeComfy(Cand) then begin Result := Cand; Exit; end;
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  ComfyPage := CreateInputDirPage(wpSelectComponents,
+    'ComfyUI', 'Pixal renders through ComfyUI.',
+    'If you already have ComfyUI, point Pixal at it - nothing inside it is ' +
+    'changed except the node packs Pixal needs. If you do not have it, Pixal ' +
+    'will install its own copy at this location.', False, '');
+  ComfyPage.Add('');
+  WorkPage := CreateOutputProgressPage('Setting up',
+    'Downloading ComfyUI and the models you chose. This resumes if it is ' +
+    'interrupted - you can close Setup and run it again without losing work.');
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Found: String;
+begin
+  Result := True;
+  if CurPageID = wpWelcome then begin
+    DetectGpu;
+    if DriverMajor = 0 then begin
+      MsgBox('No NVIDIA driver responded.' + NL2 +
+             'Pixal renders on NVIDIA GPUs. If you have one, install its ' +
+             'driver from nvidia.com and run Setup again.',
+             mbCriticalError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if DriverMajor < DRIVER_MIN then begin
+      MsgBox('Your NVIDIA driver is ' + IntToStr(DriverMajor) + '.x.' + NL2 +
+             'The ComfyUI build Pixal installs needs ' + IntToStr(DRIVER_MIN) +
+             ' or newer. Update at nvidia.com/drivers, then run Setup again.',
+             mbCriticalError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+  if CurPageID = wpSelectComponents then begin
+    if ComfyPage.Values[0] = '' then begin
+      Found := DetectComfy;
+      FreshComfy := Found = '';
+      if FreshComfy then
+        ComfyPage.Values[0] := ExpandConstant('{sd}\ComfyUI')
+      else
+        ComfyPage.Values[0] := Found;
+    end;
+  end;
+  if CurPageID = ComfyPage.ID then begin
+    if Trim(ComfyPage.Values[0]) = '' then begin
+      MsgBox('Choose where ComfyUI is, or where it should go.', mbError, MB_OK);
+      Result := False;
+    end else
+      { Both shapes DetectComfy accepts, or a portable root (ComfyUI one
+        level down) gets reclassified as a fresh target - which aimed a
+        2.1 GB unpack at a real install on 2026-08-19. The engine guard
+        would now refuse it, but the lane must read right here too. }
+      FreshComfy := not (LooksLikeComfy(ComfyPage.Values[0])
+        or LooksLikeComfy(ComfyPage.Values[0] + '\ComfyUI'));
+  end;
+end;
+
+function ChosenLanes: String;
+var
+  i: Integer;
+  Ids: TArrayOfString;
+begin
+  Result := '';
+  Ids := LaneIds;                       { generated into components.iss }
+  for i := 0 to GetArrayLength(Ids) - 1 do
+    if WizardIsComponentSelected(Ids[i]) then begin
+      if Result <> '' then Result := Result + ',';
+      Result := Result + '"' + Ids[i] + '"';
+    end;
+end;
+
+{ Hands the engine exactly what the wizard already asked, then watches the
+  progress file it writes. Same worker the browser flow drove - same plan,
+  same downloads, same resume - reporting through a file instead of a socket,
+  so nothing is left listening and no tab stays open. }
+procedure RunEngine;
+var
+  ChoicesFile, ProgFile, Json, Phase, Err: String;
+  Code, Pct, Idle: Integer;
+begin
+  ForceDirectories(ExpandConstant('{app}\install\_work'));
+  ChoicesFile := ExpandConstant('{app}\install\_work\choices.json');
+  ProgFile    := ExpandConstant('{app}\install\_work\progress.txt');
+  DeleteFile(ProgFile);
+
+  Json := '{"lanes":[' + ChosenLanes + '],"comfy":{"mode":"';
+  if FreshComfy then Json := Json + 'install' else Json := Json + 'use';
+  Json := Json + '","path":"' + JsonPath(ComfyPage.Values[0]) +
+          '"},"home":"' + JsonPath(ExpandConstant('{app}')) +
+          '","tidy":true}';
+  SaveStringToFile(ChoicesFile, Json, False);
+
+  WorkPage.SetProgress(0, 100);
+  WorkPage.SetText('Starting', '');
+  WorkPage.Show;
+  try
+    if not Exec(ExpandConstant('{app}\install\runtime\pythonw.exe'),
+      '"' + ExpandConstant('{app}\install\pixal_install.py') + '" --headless "' +
+      ChoicesFile + '" "' + ProgFile + '"', ExpandConstant('{app}'),
+      SW_HIDE, ewNoWait, Code) then begin
+      MsgBox('Could not start the setup engine.', mbCriticalError, MB_OK);
+      Exit;
+    end;
+    Idle := 0;
+    repeat
+      Sleep(400);
+      Phase := ReadKey(ProgFile, 'phase');
+      Pct   := StrToIntDef(ReadKey(ProgFile, 'pct'), 0);
+      if Phase = '' then Idle := Idle + 1 else Idle := 0;
+      WorkPage.SetProgress(Pct, 100);
+      WorkPage.SetText(ReadKey(ProgFile, 'step'), ReadKey(ProgFile, 'detail'));
+    until (Phase = 'done') or (Phase = 'error') or (Idle > 150);
+    Err := ReadKey(ProgFile, 'error');
+    if (Phase <> 'done') and (Err <> '') then
+      MsgBox('Setup could not finish everything:' + NL2 + Err + NL2 +
+             'Nothing is lost. Open Pixal Setup from the Start Menu and ' +
+             'it picks up where it stopped.', mbError, MB_OK);
+  finally
+    WorkPage.Hide;
+  end;
+  RanEngine := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and (not RanEngine) then RunEngine;
+end;

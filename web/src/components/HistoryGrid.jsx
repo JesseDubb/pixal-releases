@@ -28,18 +28,30 @@ const CSS = `
 @keyframes px-shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
 @keyframes px-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .px-tile-reveal { animation: px-reveal 360ms cubic-bezier(0.16,1,0.3,1) both; }
-/* Tile actions: icon-only rounds; the label slides out of the pill on hover
-   (armed delete keeps its label out). Icon-first buys the room, but the count
-   has grown past what any fixed width holds - eight rounds want 282px and the
-   narrowest tile gives 256 - so the row wraps rather than clipping its tail.
-   A hover label pushes the row wider too; wrapping absorbs that as well. */
-.px-act { display: inline-flex; align-items: center; height: 28px; padding: 0 7px;
-  border-radius: 999px; }
+/* Tile actions: a vertical rail of icon-only rounds, absolutely positioned over
+   the image and anchored to its RIGHT edge. Both halves of that matter.
+     Vertical + absolute: eight actions no longer have to fit a 256px tile
+   width, so nothing wraps and nothing clips - the two failure modes this row
+   has had in turn.
+     Right-anchored: a button that gets wider grows LEFTWARD, over the image,
+   moving no sibling. That is what makes the armed-delete label free.
+     And no hover label. It used to slide out on :hover, which cost up to 78px;
+   in a wrapping row anchored to the panel's bottom edge that tipped the row
+   onto a second line, pushed it UP, and moved the button out from under the
+   cursor - so hover dropped, the label collapsed, the row fell back under the
+   cursor, and it oscillated at frame rate for as long as you pointed at it.
+   The name lives in the title attribute instead, which costs no layout. Only the
+   armed delete still opens, because a click is not a pointer position and
+   cannot feed back into itself. */
+.px-act { display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; min-width: 28px; padding: 0 7px; border-radius: 999px; }
 .px-act .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
   margin-left: 0;
   transition: max-width 200ms cubic-bezier(0.22,1,0.36,1), opacity 150ms ease,
               margin-left 200ms cubic-bezier(0.22,1,0.36,1); }
-.px-act:hover .lbl, .px-act.px-armed .lbl { max-width: 72px; opacity: 1; margin-left: 6px; }
+.px-act.px-armed .lbl { max-width: 72px; opacity: 1; margin-left: 6px; }
+.px-rail { position: absolute; top: 8px; right: 8px; z-index: 2;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .px-tile-reveal { animation: none !important; }
   .px-act .lbl { transition: none !important; } }
 /* Render-quiet: a gradient shimmer is a full repaint every frame, and a grid of
@@ -235,9 +247,10 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
             overflow: "hidden", display: "-webkit-box",
             WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
           }}>{e.scene}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", rowGap: SPACE[6],
-                        columnGap: SPACE[6], marginTop: SPACE[6] }}
-               onClick={(ev) => ev.stopPropagation()}>
+        </div>
+      )}
+      {hov && (
+        <div className="px-rail" onClick={(ev) => ev.stopPropagation()}>
             {[
               ...(!isVideo ? [
                 { a: "animate", Icon: FilmStrip, fn: onAnimate },
@@ -276,7 +289,6 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
               <Trash size={14} weight="duotone" />
               <span className="lbl">{armDel ? "sure?" : "delete"}</span>
             </button>
-          </div>
         </div>
       )}
     </div>

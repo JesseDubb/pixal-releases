@@ -1,6 +1,6 @@
-// SettingsMenu.jsx — ultra-simple settings: three plain-language sections
-// (Chat brain / Image reviewer / Model folders), progressive disclosure (the
-// base-url field only appears on Custom), bubbly pills, one obvious Save row.
+// SettingsMenu.jsx — five tabs split by medium (General / Image / Video /
+// Brain / About). The model decisions used to share one Models tab until it
+// grew too crowded to scan (Jesse, 2026-08-22). Every control auto-saves.
 // Two presentations, same content: `docked` (default path on wide viewports)
 // fills the dock lane beside the rail as a sibling surface card — non-modal,
 // so the theme toggle previews against the live chat; the fallback is the old
@@ -236,19 +236,18 @@ const QUICK_APIS = [
 ];
 const LOCAL_URL = "http://127.0.0.1:8191/v1";
 
-// The wall of nine sections became four rooms (2026-08-11). Grouping rule:
-// General is what everyone touches, Chat brain is one decision with many
-// fields, Render models is every "which weights" picker, Folders is the disk.
-// About is the credits card — who made it, how to reach him, whose tech it
-// stands on.
 const SETTINGS_TAB_KEY = "pixal.settings.tab";
-// Three rooms (2026-08-18, was five): General is the machine, Models is every
-// model decision - the chat brain, the render pickers, the folders they load
-// from - and About is the credits. Short labels; the GroupLabel clusters
-// inside Models carry the old tab names.
+// Five rooms (2026-08-22, was three): Models grew too crowded to scan, so the
+// model decisions split by medium. General is the machine (appearance, the
+// ComfyUI box, VRAM, folders), Image and Video each hold their medium's model
+// choices and finishers, Brain is the chat brain and the reviewer, About the
+// credits. A stale saved id (e.g. "models") fails the TABS check where `tab`
+// is initialised and lands on "general".
 const TABS = [
   { id: "general", label: "General" },
-  { id: "models", label: "Models" },
+  { id: "image", label: "Image" },
+  { id: "video", label: "Video" },
+  { id: "brain", label: "Brain" },
   { id: "about", label: "About" },
 ];
 
@@ -330,23 +329,6 @@ const inputStyle = {
   borderRadius: RADIUS.pill, padding: `0 ${SPACE[16]}px`, fontSize: TYPE.ui,
   color: "var(--text)", fontFamily: FONT, outline: "none", width: "100%",
 };
-
-// ONE typeface for every pill (model ids included) — the mono/Geist mix read
-// as "different fonts"; nowrap+ellipsis so a label can never wrap inside a pill.
-const Pill = ({ children, active, onClick, grow }) => (
-  <button type="button" onClick={onClick}
-    style={{
-      height: 32, minHeight: 32, flexShrink: 0, padding: `0 ${SPACE[12]}px`, cursor: "pointer",
-      fontSize: TYPE.ui, fontFamily: FONT,
-      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-      borderRadius: RADIUS.pill, border: "1px solid",
-      borderColor: active ? "var(--accent)" : "var(--border)",
-      background: active ? "var(--accentMut)" : "transparent",
-      color: active ? "var(--accent)" : "var(--textSec)",
-      transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
-      ...(grow ? { flex: 1 } : null),
-    }}>{children}</button>
-);
 
 // tiny capability tag on model rows: accent = content rating, neutral = capability
 const MiniChip = ({ children, accent }) => (
@@ -650,30 +632,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Field>
           </div>
         </Section>
-        </>)}
 
-        
+        <div style={{ borderTop: "1px solid var(--border)" }} />
 
-        {tab === "models" && (<>
-        <GroupLabel>rendering</GroupLabel>
-        <Section title="Explicit content"
-                 gloss="Whether a render may be explicit. Only bites with Prompt
-                        enhance off - with it on, the chat brain still decides.">
-          <SegRadio ariaLabel="Explicit content" value={explicit}
-            onChange={(id) => {
-              setExplicit(id);
-              apply({ explicit: id },
-                    id === "auto" ? "reading it from your words"
-                      : id === "on" ? "explicit allowed" : "explicit off");
-            }}
-            options={[{ v: "auto", label: "auto" },
-                      { v: "on", label: "allow" },
-                      { v: "off", label: "never" }]} />
-          <span style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
-            Auto reads your words; never keeps subjects dressed; allow leaves
-            your prompt alone.
-          </span>
-        </Section>
         <Section title="VRAM profile"
                  gloss={`What this machine can hold resident.${
                    cfg && cfg.vram && cfg.vram.detected_gb
@@ -696,6 +657,88 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             still manages the card at render time.
           </span>
         </Section>
+        <Section title="Explicit content"
+                 gloss="Whether a render may be explicit. Only bites with Prompt
+                        enhance off - with it on, the chat brain still decides.">
+          <SegRadio ariaLabel="Explicit content" value={explicit}
+            onChange={(id) => {
+              setExplicit(id);
+              apply({ explicit: id },
+                    id === "auto" ? "reading it from your words"
+                      : id === "on" ? "explicit allowed" : "explicit off");
+            }}
+            options={[{ v: "auto", label: "auto" },
+                      { v: "on", label: "allow" },
+                      { v: "off", label: "never" }]} />
+          <span style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
+            Auto reads your words; never keeps subjects dressed; allow leaves
+            your prompt alone.
+          </span>
+        </Section>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        <Section title="Model folders"
+                 gloss={`Where your checkpoints and LoRAs live.${cfg ? ` Found ${cfg.catalog_size} files.` : ""}`}>
+          {roots.map((r) => (
+            <div key={r} style={{ display: "flex", alignItems: "center", gap: SPACE[8],
+                                  fontFamily: MONO, fontSize: 10, color: "var(--textSec)" }}>
+              <FolderOpen size={12} weight="duotone" style={{ color: "var(--textTer)",
+                                                             flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis",
+                             whiteSpace: "nowrap" }}>{r}</span>
+            </div>
+          ))}
+          {extraRoots.map((r) => (
+            <div key={r} style={{ display: "flex", alignItems: "center", gap: SPACE[8],
+                                  fontFamily: MONO, fontSize: 10, color: "var(--text)" }}>
+              <FolderOpen size={12} weight="duotone" style={{ color: "var(--accent)",
+                                                             flexShrink: 0 }} />
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis",
+                             whiteSpace: "nowrap" }}>{r}</span>
+              <button type="button" onClick={() => {
+                  const next = extraRoots.filter((x) => x !== r);
+                  setExtraRoots(next);
+                  apply({ extra_model_roots: next }, "folder removed");
+                }}
+                title="remove folder"
+                style={{ background: "none", border: "none", color: "var(--textTer)",
+                         cursor: "pointer", padding: 2 }}>
+                <X size={10} weight="bold" />
+              </button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: SPACE[6], alignItems: "center" }}>
+            <input style={{ ...inputStyle, fontFamily: MONO, fontSize: 10 }} value={newRoot}
+                   onChange={(e) => setNewRoot(e.target.value)}
+                   placeholder="add a folder, e.g. D:\models"
+                   onKeyDown={(e) => e.key === "Enter" && addRoot()} />
+            <button type="button" onClick={addRoot} title="add folder"
+              style={{
+                width: 38, height: 38, flexShrink: 0, cursor: "pointer",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                background: "var(--bg2)", border: "1px solid var(--border)",
+                borderRadius: RADIUS.pill, color: "var(--textSec)",
+                transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
+              }}>
+              <Plus size={14} weight="bold" />
+            </button>
+          </div>
+          <div style={{ display: "flex" }}>
+            <Btn onClick={async () => {
+              setNote(null); setBusy(true);
+              try {
+                await fetch("/api/settings/rescan", { method: "POST" });
+                setNote({ ok: true, text: "rescanning - watch the status row" });
+              } catch (e) { setNote({ ok: false, text: e.message }); }
+              setBusy(false);
+            }} disabled={busy}>rescan folders</Btn>
+          </div>
+        </Section>
+        </>)}
+
+        {tab === "video" && (<>
+        <GroupLabel>defaults</GroupLabel>
         <Section title="Video engine"
                  gloss={"Which engine the Animate popup opens on. The popup " +
                         "still switches freely per clip - this only sets where " +
@@ -739,27 +782,36 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                     id ? `${label} opens first` : "first available");
             }} />
         </Section>
-        <GroupLabel>model choices</GroupLabel>
-        <Section title="Image reviewer"
-                 gloss={"Looks at what you made and suggests fixes. When the chat " +
-                        "brain has vision, it reviews directly - this ComfyUI model " +
-                        "is the fallback for brains without eyes."}>
-          <ScrollPicker required
-            value={criticModel}
-            placeholder="choose a reviewer model…"
-            options={criticInstalled.map((m) => ({
-              name: m.name || m, label: m.name || m,
-              badge: m.nsfw ? "NSFW" : "",
-            }))}
-            onPick={(nm) => {
-              if (!nm) return;
-              setCriticModel(nm);
-              apply({ critic: { model: nm } }, "reviewer applied");
-            }} />
-          <span style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
-            Bigger models read hands and text better. First use takes ~30s to warm up.
-          </span>
+        <GroupLabel>finishing</GroupLabel>
+        <Section title="Upscaler"
+                 gloss="Used by the upscale button on a finished clip.">
+          {upscale ? (
+            <Field label="video clips"
+                   hint={(upscale.video_mode || "").startsWith("LTX")
+                     ? "Re-rendered at 2× through the LTX 2.5 latent upsampler — real new detail, audio untouched."
+                     : upscale.video_available
+                       ? `Doubled at ${upscale.video_scale}× with audio kept.`
+                       : "Install the Deno RTX VFX node pack to upscale clips."}>
+              <SegRadio ariaLabel="Video upscale engine"
+                value={upscale.video_mode || ""}
+                onChange={(m) => {
+                  setUpscale({ ...upscale, video_mode: m });
+                  apply({ upscale: { video_mode: m } }, "clip quality applied");
+                }}
+                options={(upscale.video_modes || []).map((m) => ({
+                  v: m, label: m.replace("VSR ", ""),
+                  disabled: !(m.startsWith("LTX")
+                    ? upscale.ltx25_video_available : upscale.video_available),
+                }))} />
+            </Field>
+          ) : (
+            <span style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>loading…</span>
+          )}
         </Section>
+        </>)}
+
+        {tab === "image" && (<>
+        <GroupLabel>model choices</GroupLabel>
         <Section title="Z-Image decoder"
                  gloss="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Optional: they can over-sharpen on a single pass.">
           {vae ? (
@@ -853,25 +905,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 {(upscale.installed || []).length} installed. The model's own factor
                 decides the size — a 4× model on a 1024-wide frame gives 4096.
               </span>
-
-              <Field label="video clips"
-                     hint={(upscale.video_mode || "").startsWith("LTX")
-                       ? "Re-rendered at 2× through the LTX 2.5 latent upsampler — real new detail, audio untouched."
-                       : upscale.video_available
-                         ? `Doubled at ${upscale.video_scale}× with audio kept.`
-                         : "Install the Deno RTX VFX node pack to upscale clips."}>
-                <SegRadio ariaLabel="Video upscale engine"
-                  value={upscale.video_mode || ""}
-                  onChange={(m) => {
-                    setUpscale({ ...upscale, video_mode: m });
-                    apply({ upscale: { video_mode: m } }, "clip quality applied");
-                  }}
-                  options={(upscale.video_modes || []).map((m) => ({
-                    v: m, label: m.replace("VSR ", ""),
-                    disabled: !(m.startsWith("LTX")
-                      ? upscale.ltx25_video_available : upscale.video_available),
-                  }))} />
-              </Field>
             </div>
           ) : (
             <span style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>loading…</span>
@@ -906,25 +939,35 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
         </>)}
 
-        {tab === "models" && (<>
-        <GroupLabel>brain</GroupLabel>
+        {tab === "brain" && (<>
         <Section title="Chat brain"
                  gloss="The AI you talk to. It writes the prompts and drives ComfyUI.">
-          <div style={{ display: "flex", gap: SPACE[6] }}>
-            <Pill grow active={mode === "api"} onClick={() => {
-              setMode("api"); applyApi();
-            }}>API</Pill>
-            <Pill grow active={mode === "local"} onClick={() => {
-              setMode("local");
-              if (cfg) setCfg({ ...cfg, llm: { ...cfg.llm, base_url: LOCAL_URL, model: "local" } });
-              apply({ llm: { base_url: LOCAL_URL, model: "local", local_model: localModel } },
-                    localModel ? "local brain on" : "local brain on - pick a model below");
-            }}>Local (on this PC)</Pill>
-          </div>
+          {/* API | Local swaps the whole panel below it — a control that
+              changes what else is on the screen is navigation, so it wears
+              the same tab strip as the top-level settings nav, not a pill
+              row (Jesse, 2026-08-22). The value controls stay SegRadio. */}
+          <TabStrip
+            tabs={[{ id: "api", label: "API" }, { id: "local", label: "Local" }]}
+            value={mode}
+            onChange={(m) => {
+              if (m === mode) return;
+              setMode(m);
+              if (m === "local") {
+                if (cfg) setCfg({ ...cfg, llm: { ...cfg.llm, base_url: LOCAL_URL, model: "local" } });
+                apply({ llm: { base_url: LOCAL_URL, model: "local", local_model: localModel } },
+                      localModel ? "local brain on" : "local brain on - pick a model below");
+              } else {
+                applyApi();
+              }
+            }} />
           {mode === "local" ? (<>
+            {/* maxHeight bounds whole rows — 6 rows × 36px + 5 × 6px gaps
+                = 246. The old 230 sliced a row through its middle at the top
+                edge ("Gemma 3 12B Heretic" cut horizontally), which read as a
+                rendering fault rather than a scroll. */}
             {localList.length ? (
               <div className="px-scroll" style={{ display: "flex", flexDirection: "column",
-                                                  gap: SPACE[6], maxHeight: 230, overflowY: "auto" }}>
+                                                  gap: SPACE[6], maxHeight: 246, overflowY: "auto" }}>
                 {localList.map((m) => {
                   const sel = localModel === m.path;
                   return (
@@ -973,17 +1016,18 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 no .gguf chat models found in your model folders
               </div>
             )}
-            <div style={{ display: "flex", gap: SPACE[6] }}>
-              <Pill grow active={localKeep} onClick={() => {
-                setLocalKeep(true);
-                apply({ llm: { local_keep: true } }, "model stays loaded - fast replies");
-              }}>keep in memory</Pill>
-              <Pill grow active={!localKeep} onClick={() => {
-                setLocalKeep(false);
-                apply({ llm: { local_keep: false } },
-                      "will unload after each reply - frees VRAM for renders");
-              }}>unload after reply</Pill>
-            </div>
+            {/* A stored value, not navigation — stays a SegRadio. With
+                "brain runs on" below that is two segment rows in this panel,
+                the cap; a third would mean the grouping is wrong. */}
+            <SegRadio ariaLabel="memory policy" value={localKeep}
+              onChange={(keep) => {
+                setLocalKeep(keep);
+                apply({ llm: { local_keep: keep } },
+                      keep ? "model stays loaded - fast replies"
+                           : "will unload after each reply - frees VRAM for renders");
+              }}
+              options={[{ v: true, label: "keep in memory" },
+                        { v: false, label: "unload after reply" }]} />
             <Field label="brain runs on"
                    hint={"GPU replies fast but holds VRAM next to the render; " +
                          "CPU chat is slow but frees the card for rendering."}>
@@ -1007,13 +1051,17 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               model holds a few GB of VRAM; unload = slower first reply, free VRAM.
             </div>
           </>) : (<>
+            {/* The quick chips are one-press actions (they prefill the two
+                fields below), so they wear Btn — a chosen segment and a
+                pressable button must never share one shape, and these hold
+                no state of their own. */}
             <div style={{ display: "flex", gap: SPACE[6] }}>
               {QUICK_APIS.map((q) => (
-                <Pill key={q.label} grow active={baseUrl === q.url} onClick={() => {
+                <Btn key={q.label} onClick={() => {
                   setBaseUrl(q.url);
                   if (q.model) setModel(q.model);
                   applyApi(q.url, q.model || model);
-                }}>{q.label}</Pill>
+                }}>{q.label}</Btn>
               ))}
             </div>
             <input style={inputStyle} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
@@ -1066,66 +1114,28 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         <div style={{ display: "flex" }}>
           <Btn onClick={test} disabled={busy}>Test connection</Btn>
         </div>
-        </>)}
 
-        {tab === "models" && (<>
-        <GroupLabel>folders</GroupLabel>
-        <Section title="Model folders"
-                 gloss={`Where your checkpoints and LoRAs live.${cfg ? ` Found ${cfg.catalog_size} files.` : ""}`}>
-          {roots.map((r) => (
-            <div key={r} style={{ display: "flex", alignItems: "center", gap: SPACE[8],
-                                  fontFamily: MONO, fontSize: 10, color: "var(--textSec)" }}>
-              <FolderOpen size={12} weight="duotone" style={{ color: "var(--textTer)",
-                                                             flexShrink: 0 }} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis",
-                             whiteSpace: "nowrap" }}>{r}</span>
-            </div>
-          ))}
-          {extraRoots.map((r) => (
-            <div key={r} style={{ display: "flex", alignItems: "center", gap: SPACE[8],
-                                  fontFamily: MONO, fontSize: 10, color: "var(--text)" }}>
-              <FolderOpen size={12} weight="duotone" style={{ color: "var(--accent)",
-                                                             flexShrink: 0 }} />
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis",
-                             whiteSpace: "nowrap" }}>{r}</span>
-              <button type="button" onClick={() => {
-                  const next = extraRoots.filter((x) => x !== r);
-                  setExtraRoots(next);
-                  apply({ extra_model_roots: next }, "folder removed");
-                }}
-                title="remove folder"
-                style={{ background: "none", border: "none", color: "var(--textTer)",
-                         cursor: "pointer", padding: 2 }}>
-                <X size={10} weight="bold" />
-              </button>
-            </div>
-          ))}
-          <div style={{ display: "flex", gap: SPACE[6], alignItems: "center" }}>
-            <input style={{ ...inputStyle, fontFamily: MONO, fontSize: 10 }} value={newRoot}
-                   onChange={(e) => setNewRoot(e.target.value)}
-                   placeholder="add a folder, e.g. D:\models"
-                   onKeyDown={(e) => e.key === "Enter" && addRoot()} />
-            <button type="button" onClick={addRoot} title="add folder"
-              style={{
-                width: 38, height: 38, flexShrink: 0, cursor: "pointer",
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                background: "var(--bg2)", border: "1px solid var(--border)",
-                borderRadius: RADIUS.pill, color: "var(--textSec)",
-                transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
-              }}>
-              <Plus size={14} weight="bold" />
-            </button>
-          </div>
-          <div style={{ display: "flex" }}>
-            <Btn onClick={async () => {
-              setNote(null); setBusy(true);
-              try {
-                await fetch("/api/settings/rescan", { method: "POST" });
-                setNote({ ok: true, text: "rescanning - watch the status row" });
-              } catch (e) { setNote({ ok: false, text: e.message }); }
-              setBusy(false);
-            }} disabled={busy}>rescan folders</Btn>
-          </div>
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        <Section title="Image reviewer"
+                 gloss={"Looks at what you made and suggests fixes. When the chat " +
+                        "brain has vision, it reviews directly - this ComfyUI model " +
+                        "is the fallback for brains without eyes."}>
+          <ScrollPicker required
+            value={criticModel}
+            placeholder="choose a reviewer model…"
+            options={criticInstalled.map((m) => ({
+              name: m.name || m, label: m.name || m,
+              badge: m.nsfw ? "NSFW" : "",
+            }))}
+            onPick={(nm) => {
+              if (!nm) return;
+              setCriticModel(nm);
+              apply({ critic: { model: nm } }, "reviewer applied");
+            }} />
+          <span style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
+            Bigger models read hands and text better. First use takes ~30s to warm up.
+          </span>
         </Section>
         </>)}
 

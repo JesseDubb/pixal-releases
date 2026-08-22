@@ -517,7 +517,7 @@ builds with their sizes and a verdict per file — "fits", "too big", or
 ### Video defaults in Settings
 
 The dialog always opens on your defaults. Change them under **Settings →
-Models**:
+Video**:
 
 - **Video engine** — "Which engine the Animate popup opens on. The popup
   still switches freely per clip - this only sets where it starts." Leave it
@@ -532,8 +532,10 @@ Models**:
 
 ## 5. Finishing
 
-**upscale** on a card runs whatever Settings → Models → **Upscaler** has
-configured. The result lands in the chat as a new card, in Past generations
+**upscale** on a card runs whatever the Settings upscaler has
+configured — still frames under Settings → Image, video clips under
+Settings → Video. The result lands in the chat as a new card, in Past
+generations
 (marked with a "4×" chip), and on disk under `ComfyUI\output\pixal_dm\…`
 beside everything else.
 
@@ -578,10 +580,10 @@ PiD's 1024-class presets and comes back 4× (2:3 → 2688×4032)."
 
 ## 6. Settings reference
 
-Open Settings from the rail's gear. Three tabs — **General**, **Models**,
-**About** — and every control saves the moment you change it; the strip at
-the bottom confirms ("saved", "upscaler applied", …). The tab you used last
-is remembered.
+Open Settings from the rail's gear. Five tabs — **General**, **Image**,
+**Video**, **Brain**, **About** — and every control saves the moment you
+change it; the strip at the bottom confirms ("saved", "upscaler applied", …).
+The tab you used last is remembered.
 
 ### General
 
@@ -618,29 +620,26 @@ closing that window stops ComfyUI." The meters console has keys: `E` opens
 the errors log, `L` the full transcript, `V` toggles the raw output, `Q`
 stops ComfyUI.
 
-### Models — rendering
-
-**Explicit content** — "Whether a render may be explicit. Only bites with
-Prompt enhance off - with it on, the chat brain still decides." Three
-positions: "auto", "allow", "never". The footnote: "Auto reads your words;
-never keeps subjects dressed; allow leaves your prompt alone."
-
 **VRAM profile** — "What this machine can hold resident." Once ComfyUI has
 booted it tells you what it found ("The card reads as 16 GB."). "auto"
 follows the detected card; pin 32, 24 or 16 GB to preview what that tier
 honestly gets. This is advisory — pickers flag what a tier holds poorly;
 the card itself is still managed at render time.
 
-**Video engine** / **Video model** — the Animate dialog's defaults; see
-Section 4.
+**Explicit content** — "Whether a render may be explicit. Only bites with
+Prompt enhance off - with it on, the chat brain still decides." Three
+positions: "auto", "allow", "never". The footnote: "Auto reads your words;
+never keeps subjects dressed; allow leaves your prompt alone."
 
-### Models — model choices
+**Model folders** — "Where your checkpoints and LoRAs live." plus the count
+it indexed ("Found 412 files."). The list is every folder Pixal scans: your
+ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
+e.g. D:\models"), remove one with its ×, then **rescan folders** — the note
+says "rescanning - watch the status row" and the status row above the message
+box narrates the scan. This is how your existing checkpoint and LoRA library
+joins Pixal without moving a file.
 
-**Image reviewer** — "Looks at what you made and suggests fixes. When the
-chat brain has vision, it reviews directly - this ComfyUI model is the
-fallback for brains without eyes." Pick from the reviewer models you have
-installed (NSFW-capable ones are badged). Footnote: "Bigger models read
-hands and text better. First use takes ~30s to warm up."
+### Image
 
 **Z-Image decoder** — "Z-Image and Flux share a VAE, so sharper drop-in
 decoders exist. Optional: they can over-sharpen on a single pass." Default
@@ -664,20 +663,26 @@ is trained against one set of weights, so the wrong accelerator does not
 error — it quietly ruins the edit. `config.json` is re-read on every edit,
 so the next one picks the change up; no restart.
 
-### Models — finishing
-
-**Upscaler** — the still-frame mode (Model / PiD 4×), the upscale model
-picker, and the video-clips engine; all walked in Section 5.
+**Upscaler** — the still-frame mode (Model / PiD 4×) and the upscale model
+picker; both walked in Section 5. The clip side sits on the Video tab.
 
 **PiD finish** — the Identity Edit decode switch; walked in Section 5.
 
-### Models — brain
+### Video
+
+**Video engine** / **Video model** — the Animate dialog's defaults; see
+Section 4.
+
+**Upscaler** — the "video clips" engine (VSR, or LTX 2.5 2x); walked in
+Section 5.
+
+### Brain
 
 **Chat brain** — "The AI you talk to. It writes the prompts and drives
-ComfyUI." Two pills: **API** and **Local (on this PC)**. Section 7 covers
-both in depth. In short:
+ComfyUI." Two tabs: **API** and **Local**. Section 7 covers both in depth.
+In short:
 
-- API: quick chips for Kimi, DeepSeek and OpenRouter prefill the two fields
+- API: the Kimi, DeepSeek and OpenRouter buttons prefill the two fields
   ("server address (e.g. https://api.deepseek.com/v1)", "model name (e.g.
   deepseek-chat)"); the key field shows "API key (sk-…)" until one is saved,
   then "API key saved (ends …XXXX) - blank keeps it". The lock note: "what
@@ -688,15 +693,11 @@ both in depth. In short:
   with its quant, size, and VISION / NSFW chips; "keep in memory" vs "unload
   after reply"; and **brain runs on** — GPU or CPU.
 
-### Models — folders
-
-**Model folders** — "Where your checkpoints and LoRAs live." plus the count
-it indexed ("Found 412 files."). The list is every folder Pixal scans: your
-ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
-e.g. D:\models"), remove one with its ×, then **rescan folders** — the note
-says "rescanning - watch the status row" and the status row above the message
-box narrates the scan. This is how your existing checkpoint and LoRA library
-joins Pixal without moving a file.
+**Image reviewer** — "Looks at what you made and suggests fixes. When the
+chat brain has vision, it reviews directly - this ComfyUI model is the
+fallback for brains without eyes." Pick from the reviewer models you have
+installed (NSFW-capable ones are badged). Footnote: "Bigger models read
+hands and text better. First use takes ~30s to warm up."
 
 ### About
 
@@ -713,16 +714,16 @@ MiniMax (video with native audio) — and a thank-you to the ComfyUI team,
 ## 7. The local brain
 
 The chat brain is the model that reads your messages, writes the prompts,
-and decides which recipe renders them. Settings → Models → **Chat brain**
+and decides which recipe renders them. Settings → Brain → **Chat brain**
 gives you two ways to have one.
 
 **API** means any OpenAI-compatible chat-completions endpoint. The Kimi,
-DeepSeek and OpenRouter chips only prefill the address and model fields;
+DeepSeek and OpenRouter buttons only prefill the address and model fields;
 point it at whatever provider you like. Your messages — and, for reference
 images, the images themselves — go to that provider under your key and their
 policies.
 
-**Local (on this PC)** is a GGUF model on your own disk that Pixal starts
+**Local** is a GGUF model on your own disk that Pixal starts
 and stops for you (a llama.cpp server on `127.0.0.1:8191`). The installer's
 brain component is a 4.8 GB vision-capable build; its own pitch is "Chat,
 prompt writing and routing run on your own GPU. No API key, no account."
@@ -738,7 +739,7 @@ Three local behaviors to know:
   the model holds a few GB of VRAM next to your renders. Unloaded: the card
   is free for rendering, but the first message after a render waits for the
   model to load again ("waking the local brain - …"). The "free brain"
-  button in Settings → Compute unloads it on demand.
+  button in Settings → General → Compute unloads it on demand.
 - **brain runs on** — GPU or CPU. The hint is the whole trade: "GPU replies
   fast but holds VRAM next to the render; CPU chat is slow but frees the
   card for rendering."
@@ -804,7 +805,7 @@ ComfyUI** lets you into the app anyway.
 ComfyUI holds its port but is not answering yet. That is a load, not a
 wedge — wait. Past two minutes the note escalates: "ComfyUI holds port 8188
 but isn't answering — it may still be loading a large model, or it may be
-wedged. Restart ComfyUI from Settings → Compute if this doesn't clear."
+wedged. Restart ComfyUI from Settings → General → Compute if this doesn't clear."
 
 **"ComfyUI didn’t start".**
 The boot gave up, and the message under the heading is the specific reason:
@@ -816,7 +817,8 @@ The boot gave up, and the message under the heading is the specific reason:
   is crash-looping).
 - "no ComfyUI launcher (.bat) found beside the ComfyUI folder - start it
   yourself" — Pixal looked next to your ComfyUI for its launcher and found
-  nothing it can run. Check the ComfyUI path (Settings → Compute shows where
+  nothing it can run. Check the ComfyUI path (Settings → General →
+  Compute shows where
   it renders; the installer wrote the root into `config.json`), or start
   ComfyUI yourself — Pixal adopts whatever is already answering on its
   address.
@@ -842,7 +844,7 @@ holding the port is called out with the exact `taskkill` line to free it.
 
 **"pick a local chat model in settings first" / "local model file is gone:
 …".** The brain is set to Local but no model is chosen (or the chosen file
-was moved). Settings → Models → Chat brain → pick one of the listed .gguf
+was moved). Settings → Brain → Chat brain → pick one of the listed .gguf
 files.
 
 **"the local brain crashed loading … - inspect llama_server.log"** (also:
@@ -897,7 +899,8 @@ Pixal watches the card and manages it in the open. The notes you can meet:
   right … If it is unbearable, restarting ComfyUI is the quick way out.*"
 
 What to do, in escalating order: let it finish (it will be right, just
-slow); **free VRAM** and **free brain** in Settings → Compute; set the chat
+slow); **free VRAM** and **free brain** in Settings → General → Compute;
+set the chat
 brain to "unload after reply" or CPU; drop the megapixels or the clip
 length; use the Animate dialog's "find a lighter build".
 
@@ -1001,7 +1004,7 @@ your models and writes only to its own corner: `output\pixal_dm` for renders,
 `input` for your uploads.
 
 **Why is chat suddenly slow?**
-Usually the local brain is unloading after each reply (Settings → Models →
+Usually the local brain is unloading after each reply (Settings → Brain →
 "keep in memory" fixes it) or running on CPU on purpose ("brain runs on").
 If neither is set, its CUDA backend may have failed to load and silently
 dropped it to the CPU — `llama_server.log` says which. Section 9 walks all
@@ -1042,7 +1045,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.3b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.4b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

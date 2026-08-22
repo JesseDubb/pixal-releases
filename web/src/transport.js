@@ -96,9 +96,19 @@ async function post(path, body) {
 export const chat = (text, cid, opts) => post("/api/chat", { text, cid, opts });
 // `seed` is the held lock (0 = free dice). `lock_seed` stays on the wire for a
 // server that predates it, where it means "replay this card's own seed".
-export const reroll = (id, cid, seed, loraPlans, model) =>
+export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials) =>
   post("/api/reroll", { id, cid, seed: seed || 0, lock_seed: !!seed,
-                        lora_plans: loraPlans || {}, model: model || "" });
+                        lora_plans: loraPlans || {}, model: model || "",
+                        // absent, never "" - an empty canvas must not read as
+                        // "the user asked for empty" server-side
+                        ...(aspect ? { aspect } : {}),
+                        ...(mp ? { mp } : {}),
+                        // The recipe dials ride resolved (the override, or the
+                        // recipe's own value), keyed by builder parameter just
+                        // like the canvas; a recipe declaring none sends none.
+                        // Choice dials (brief 9.15's bypass variant) ride the
+                        // same spread.
+                        ...(dials || {}) });
 export const stop = (jobId) => post("/api/stop", { job_id: jobId });
 export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
                         shots, script, speed, lastId) =>

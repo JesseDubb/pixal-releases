@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, CaretUp, Cube, DotsSixVertical,
   FilmSlate, ImageSquare, Lightning, LockSimple, Monitor, Palette, PencilSimple, Plus,
-  Sparkle, Stack, TagSimple, Trash, TShirt, UserCircle, UserCircleCheck,
+  Sparkle, SlidersHorizontal, Stack, TagSimple, Trash, TShirt, UserCircle, UserCircleCheck,
   UserCircleDashed, UserCirclePlus, UserFocus, X,
 } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
@@ -744,6 +744,25 @@ const loraMatchesProfile = (lora, profile) => !!lora?.supported &&
 const recipeStageLabel = (stage, meta) => stage?.title || meta?.title ||
   (stage?.slot ? stage.slot.replaceAll("_", " ") : short(stage?.name));
 
+// The one number-dial idiom in the composer. LoRA strengths and the recipe
+// card's advanced dials are the same kind of control, so they share geometry
+// and behaviour - type, arrows, spinner - and the same gesture home: a value
+// back on the recipe's own number clears the override (the store drops it).
+// No second slider idiom for the same kind of number (brief 9.14).
+const StrengthInput = ({ value, onChange, label, step = 0.05, disabled = false,
+                         min, max }) => (
+  <input type="number" step={step} value={value} aria-label={label}
+    disabled={disabled}
+    {...(min !== undefined ? { min } : {})}
+    {...(max !== undefined ? { max } : {})}
+    onChange={(event) => onChange(event.target.value)}
+    style={{ width: 56, height: 30, background: "var(--bg1)",
+             border: "1px solid var(--border)", borderRadius: RADIUS.input,
+             padding: "0 5px", fontFamily: "ui-monospace, Consolas, monospace",
+             fontSize: 10, color: "var(--text)", textAlign: "center",
+             outline: "none" }} />
+);
+
 const MiniAction = ({ label, disabled, onClick, children }) => (
   <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick}
     style={{ width: 25, height: 25, display: "inline-flex", alignItems: "center",
@@ -754,6 +773,45 @@ const MiniAction = ({ label, disabled, onClick, children }) => (
     {children}
   </button>
 );
+
+// Ported from Lumen's SegmentedToggle (desklight: apps/backoffice/src/
+// components/ui/SegmentedToggle.jsx) - the grid original, not the flex variant:
+// grid columns cannot shrink below their own label (DESIGN.md's measured
+// proof), which is exactly what a two-option "2-vector / 3-vector" switch
+// needs. One fix carried over the port and raised against Lumen too: the
+// radiogroup gets an accessible name via ariaLabel (DESIGN.md §6).
+const SegmentedToggle = ({ options, value, onChange, ariaLabel, size = "sm", style }) => {
+  const fontSize = size === "sm" ? TYPE.label : TYPE.ui;
+  const height = size === "sm" ? 28 : 32;
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${options.length}, 1fr)`,
+      gap: SPACE[4],
+      ...style,
+    }}>
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button key={String(opt.value)} type="button" role="radio"
+            aria-checked={active} title={opt.title}
+            onClick={() => onChange(opt.value)}
+            style={{
+              height, padding: `0 ${SPACE[8]}px`,
+              border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+              background: active ? "var(--accentMut)" : "transparent",
+              color: active ? "var(--accent)" : "var(--textTer)",
+              borderRadius: RADIUS.input, fontSize, fontFamily: FONT,
+              fontWeight: W.nav, cursor: "pointer", outline: "none",
+              transition: `all ${MOTION.state}`, whiteSpace: "nowrap",
+            }}>
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const LoraToggle = ({ checked, disabled = false, label, onChange, title: hint }) => {
   const action = checked ? "Disable" : "Enable";
@@ -1063,7 +1121,11 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   return (
     <section ref={sectionRef} aria-label={`${recipe.label || recipe.id} LoRA chain`} style={{
       marginBottom: rail ? 0 : SPACE[8], minHeight: 0,
-      display: "flex", flexDirection: "column", height: rail ? "100%" : undefined,
+      // Rail: a flex child of the aside, not a 100%-height box, so the recipe
+      // card's extender (RecipeDials) can share the column below the chain -
+      // alone, flex:1 fills the aside exactly like height:100% did.
+      display: "flex", flexDirection: "column",
+      flex: rail ? "1 1 auto" : undefined,
       maxHeight: rail ? "100%" : undefined,
       // In the rail the <aside> IS the surface - it already owns the width, the
       // padding and the dividing border. Painting a second tinted, bordered box
@@ -1205,16 +1267,10 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                   {on ? " · core" : " · bypassed"}
                 </div>
               </div>
-              <input type="number" step="0.05" value={coreStrength}
-                aria-label={`${label} strength`}
+              <StrengthInput value={coreStrength} label={`${label} strength`}
                 disabled={!setCoreStrength}
-                onChange={(event) => setCoreStrength &&
-                  setCoreStrength(stage.slot, event.target.value)}
-                style={{ width: 56, height: 30, background: "var(--bg1)",
-                         border: "1px solid var(--border)", borderRadius: RADIUS.input,
-                         padding: "0 5px", fontFamily: "ui-monospace, Consolas, monospace",
-                         fontSize: 10, color: "var(--text)", textAlign: "center",
-                         outline: "none" }} />
+                onChange={(value) => setCoreStrength &&
+                  setCoreStrength(stage.slot, value)} />
               <LoraToggle checked={on} disabled={!setCoreEnabled} label={label}
                           title={on
                             ? `Bypass ${label} — it is a core ${recipe?.label || "recipe"} stage, so this is an override`
@@ -1307,15 +1363,10 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                 </div>
               </div>
               {strengthEditable ? (
-                <input type="number" step="0.05" value={entry.strength}
-                  aria-label={`${stage ? recipeStageLabel(stage, meta)
+                <StrengthInput value={entry.strength}
+                  label={`${stage ? recipeStageLabel(stage, meta)
                     : (entry.title || short(name))} strength`}
-                  onChange={(event) => changeStrength(index, event.target.value)}
-                  style={{ width: 56, height: 30, background: "var(--bg1)",
-                           border: "1px solid var(--border)", borderRadius: RADIUS.input,
-                           padding: "0 5px", fontFamily: "ui-monospace, Consolas, monospace",
-                           fontSize: 10, color: "var(--text)", textAlign: "center",
-                           outline: "none" }} />
+                  onChange={(value) => changeStrength(index, value)} />
               ) : (
                 <span style={{ width: 56, textAlign: "center",
                                fontFamily: "ui-monospace, Consolas, monospace", fontSize: 10,
@@ -1337,6 +1388,130 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
       {addControl}
 
         </>
+      )}
+    </section>
+  );
+};
+
+// The recipe card's extender: the active recipe's advanced dials, declared
+// server-side (RECIPE_SPECS[..].dials, riding /api/options like lora_stages)
+// and rendered generically - a later recipe gets its own extender by declaring
+// it, with no client change (brief 9.14). Two dial kinds render: numbers use
+// the LoRA strength box unchanged - same geometry, same behaviour - and
+// choices (brief 9.15's bypass variant) use the ported Lumen SegmentedToggle.
+// Closed until there is something to see: an override must never hide inside
+// a collapsed panel, so the card opens on its own while one is set, and the
+// collapsed line always states the resolved values (the style dialog's
+// tuning-row rule, 4b7bbc0). A dial back on the recipe's own value clears
+// the override: always a way home.
+export const RecipeDials = ({ opts, options, recipeId, onDial, rail = false }) => {
+  const recipe = (options?.recipes || []).find((item) => item.id === recipeId);
+  const dials = recipe?.dials || [];
+  const overrides = ((opts?.dials || {})[recipeId]) || {};
+  const [open, setOpen] = useState(() => Object.keys(overrides).length > 0);
+  if (!dials.length) return null;
+  const anySet = Object.keys(overrides).length > 0;
+  const isSet = (key) => overrides[key] !== undefined;
+  const resolved = (dial) => overrides[dial.key] ?? dial.default;
+  // A choice dial's display label is the option's own ("2-vector"), not the
+  // bare value - in the collapsed summary and the "recipe" home marker alike.
+  const valueLabel = (dial, v) => dial.kind === "choice"
+    ? (((dial.choices || []).find((c) => c.value === v) || {}).label ?? String(v))
+    : v;
+  // A choice the machine cannot run is never offered: the server sends only
+  // installed variants, and a one-option switch is no choice at all, so the
+  // row stays hidden until a second variant exists (brief 9.15). The summary
+  // above still names a set override, so a choice can never hide set state.
+  const visible = (dial) => dial.kind !== "choice" || (dial.choices || []).length >= 2;
+  return (
+    <section aria-label={`${recipe.label || recipe.id} advanced dials`} style={{
+      marginBottom: rail ? 0 : SPACE[8], flexShrink: rail ? 0 : undefined,
+      // In the rail the aside owns the surface (see LoraChain), so a divider
+      // alone marks the extender; in-flow it is its own mini card under the
+      // chain's.
+      marginTop: rail ? SPACE[8] : 0,
+      padding: rail ? `${SPACE[8]}px 0 0` : SPACE[10],
+      background: rail ? "transparent" : "rgba(255,255,255,0.025)",
+      border: rail ? "none" : "1px solid var(--border)",
+      borderTop: rail ? "1px solid var(--border)" : undefined,
+      borderRadius: rail ? 0 : RADIUS.card,
+    }}>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        title={open ? "collapse the advanced dials" : "expand the advanced dials"}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: SPACE[8],
+                 padding: 0, border: "none", background: "transparent",
+                 cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+        <SlidersHorizontal size={14} weight="duotone"
+          style={{ color: "var(--accent)", flexShrink: 0 }} />
+        <span style={{ fontSize: TYPE.ui, fontWeight: W.heading, color: "var(--text)",
+                       flexShrink: 0 }}>
+          Advanced
+        </span>
+        <span style={{ marginLeft: "auto", minWidth: 0, textAlign: "right",
+                       // Wraps rather than truncates: at rail width the resolved
+                       // numbers take a second line, and a hidden value is the
+                       // one thing this line exists to prevent.
+                       whiteSpace: "normal", lineHeight: 1.5,
+                       fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                       color: "var(--textTer)" }}>
+          {!anySet && "follows the recipe · "}
+          {dials.map((dial, i) => (
+            <span key={dial.key}>
+              {i > 0 && " · "}
+              <span style={isSet(dial.key) ? { color: "var(--accent)" } : undefined}>
+                {dial.label.toLowerCase()} {valueLabel(dial, resolved(dial))}
+              </span>
+            </span>
+          ))}
+        </span>
+        <span style={{ height: 24, width: 24, display: "inline-flex", alignItems: "center",
+                       justifyContent: "center", flexShrink: 0,
+                       border: "1px solid var(--border)", borderRadius: RADIUS.control,
+                       background: "var(--bg2)", color: "var(--textTer)" }}>
+          {open ? <CaretUp size={11} weight="bold" /> : <CaretDown size={11} weight="bold" />}
+        </span>
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE[8],
+                      marginTop: SPACE[8] }}>
+          {dials.filter(visible).map((dial) => (
+            <div key={dial.key} style={{ display: "flex", alignItems: "center",
+                                         gap: SPACE[8] }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: TYPE.ui, color: "var(--textSec)" }}>
+                  {dial.label}
+                  {isSet(dial.key) && (
+                    <span style={{ fontFamily: "ui-monospace, Consolas, monospace",
+                                   fontSize: 9, color: "var(--accent)" }}>
+                      {" "}· recipe {valueLabel(dial, dial.default)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                              color: "var(--textMut)", lineHeight: 1.5,
+                              whiteSpace: "normal" }}>
+                  {dial.help}
+                </div>
+              </div>
+              {dial.kind === "choice" ? (
+                <SegmentedToggle size="sm" ariaLabel={`${dial.label} variant`}
+                  style={{ flexShrink: 0, minWidth: 132 }}
+                  options={(dial.choices || []).map((c) =>
+                    ({ value: c.value, label: c.label, title: c.name }))}
+                  value={resolved(dial)}
+                  onChange={(v) => onDial(dial.key, v)} />
+              ) : (
+                <StrengthInput value={resolved(dial)} step={dial.step}
+                  min={dial.min} max={dial.max} label={`${dial.label} dial`}
+                  onChange={(value) => onDial(dial.key, value)} />
+              )}
+            </div>
+          ))}
+          <div style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                        color: "var(--textMut)", lineHeight: 1.5 }}>
+            Blank or back on the recipe's number follows the recipe again.
+          </div>
+        </div>
       )}
     </section>
   );

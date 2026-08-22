@@ -371,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.3b"
+PIXAL_VERSION = "1.0.4b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -547,6 +547,25 @@ def installed_vl_models():
     joycaption = [p.name for p in llm.iterdir()
                   if p.is_dir() and "joycaption" in p.name.lower()] if llm.is_dir() else []
     return sorted(set(out + joycaption))
+
+def critic_weights():
+    """(name, on-disk) for the reviewer chosen in Settings - the ONE check
+    every ComfyUI VL fallback passes before submitting.
+
+    A submit without these weights is what pulled ~16GB from HuggingFace
+    mid-render - the "Fetching 12 files" stall of 2026-08-22. The look got
+    this guard in 9c089d9 and the review never did, and the two drifted
+    within a day (brief 9.22); frame_inventory and review() both ask here
+    now, so they cannot drift again."""
+    critic = load_config()["critic"]["model"]
+    return critic, critic in installed_vl_models()
+
+def vl_download_gb(name):
+    """Rough FP16 download size of an AILab_QwenVL checkpoint - ~2GB per
+    billion parameters, read off the name. Good enough to warn with, which
+    is all a warning needs; None when the name carries no size."""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", name, re.I)
+    return round(float(m.group(1)) * 2) if m else None
 
 def save_config(cfg):
     CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -1315,6 +1334,11 @@ FANTASY_LORA = "ZImage\\Base\\DnDPainterlyCleanZBase.safetensors"
 # under the name CivitAI ships. Naming the download is what lets a fresh
 # install find it; see _catalog_has for the folder half of the same problem.
 KREA_BYPASS_LORA = "Krea 2\\krea2filterbypass.safetensors"
+# The variant every render to date used (CivitAI model 2728234, version
+# "2vector" = 3066812, "This modifies 2 vectors of the affected layer"). The
+# 3vector sibling (3067151) moves one more. This default is what keeps an
+# untouched composer byte-identical (brief 9.15).
+KREA_BYPASS_VECTORS = 2
 REALISM_LORA = "Krea 2\\RealisticSnapshotKrea2.safetensors"
 # r128 export: half the file, likeness indistinguishable from full-rank in the
 # 2026-08-11 face-off (same seed, same ref, bf16 encoder).
@@ -1326,6 +1350,99 @@ IDENTITY_LORA = "Krea 2\\krea2_identity_edit_v1_2_r128.safetensors"
 # defaults it to 1.0, meaning off, so it has to be set to do anything.
 IDENTITY_GROUNDING_PX = 768
 IDENTITY_REF_BOOST = 4.0
+# The composer recipe-card extender's dials for Identity Edit (brief 9.14), in
+# the LoRA author's own ranges (the model card at huggingface.co/conradlocke/
+# krea2-identity-edit): ref_boost is "the fidelity dial" - "~4 is a strong-
+# likeness starting point", below 1 "loosens toward creative freedom", above
+# 10 "starts breaking removals". grounding_px's trained range is 384-768 with
+# 768 the default; the card allows that 1024 "often still works", so the UI
+# range runs higher - with the failure signature named on the dial, since it
+# is the one a user will actually hit. "key" IS the build_zara_edit parameter,
+# so submit's SIGS filter is the gate keeping dials off every other recipe's
+# graph. A later recipe declares its own list in RECIPE_SPECS and the same
+# plumbing carries it: validation, the re-roll and the extender all read the
+# declaration. A saved style carrying dials is deliberately OUT of scope - the
+# composer sends them itself, and _apply_opts applies them over the style's
+# file exactly like the composer's LoRA stack.
+IDENTITY_DIALS = [
+    {"key": "ref_boost", "label": "Likeness",
+     "min": 0.0, "max": 10.0, "step": 0.1, "default": IDENTITY_REF_BOOST,
+     "help": ("How hard the edit holds the reference. ~4 is a strong-likeness "
+              "start; below 1 loosens toward creative freedom; above 10 starts "
+              "breaking removals.")},
+    {"key": "grounding", "label": "Grounding",
+     "min": 384, "max": 1536, "step": 64, "default": IDENTITY_GROUNDING_PX,
+     "help": ("Lower = stronger edit adherence, higher = stronger identity. "
+              "Trained range 384-768. Duplicated or split compositions mean "
+              "lower it.")},
+]
+
+# The bypass A/B (brief 9.15): the same extender, a choice dial rather than a
+# number. "key" IS the build_zara_edit parameter, exactly like the dials
+# above; "choices_from" names the scan that fills the live options at
+# /api/options time, so only INSTALLED variants are ever offered. The value
+# is the vector count itself, read out of each patch's tensor - never the
+# filename, which this box proves lies (the authoritative 2-vector is
+# krea2filterbypass.safetensors, no digit in the name). Declared on
+# identity_edit so identity and bypass advanced controls live in one place;
+# any recipe with a vector_bypass stage can declare it and the same plumbing
+# (validation, re-roll, extender) carries it.
+BYPASS_VARIANT_DIAL = {"key": "bypass_variant", "kind": "choice",
+                       "choices_from": "vector_bypass",
+                       "label": "Bypass", "default": KREA_BYPASS_VECTORS,
+                       "help": ("How many vectors of the text-fusion projector the "
+                                "bypass moves. 2 is what every render so far used; "
+                                "3 is the stronger CivitAI variant.")}
+
+
+def recipe_dial_value(dial, value):
+    """One declared dial on the way in: a finite in-range number passes,
+    coerced the way the builder coerces so the stored spec says what ran;
+    anything else lands on the recipe constant. Degrades, never dies - None,
+    bool, non-numeric and out-of-range all fall back rather than raise, the
+    same policy as reroll's canvas block."""
+    if dial.get("choices_from"):
+        return _recipe_choice_value(dial, value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) \
+            or value < dial["min"] or value > dial["max"]:
+        return dial["default"]
+    return int(value) if isinstance(dial["default"], int) else float(value)
+
+
+def _recipe_dials_payload(spec):
+    """The extender's declared dials, with choice dials carrying their LIVE
+    options: the scan runs here so only installed variants are ever offered
+    (brief 9.15) - never a variant that would fail at queue time. The choice
+    label is the count itself ("2-vector"), keyed on the tensor, and `name`
+    is the loader-listed rel the graph will actually load."""
+    out = []
+    for dial in spec.get("dials", []):
+        d = dict(dial)
+        if d.get("choices_from") == "vector_bypass":
+            d["choices"] = [{"value": count, "label": f"{count}-vector",
+                             "name": rel}
+                            for count, rel in sorted(vector_bypass_variants().items())]
+        out.append(d)
+    return out
+
+
+def _recipe_choice_value(dial, value):
+    """A declared choice passes only when it names an INSTALLED option - the
+    control never offers what would fail at queue time, so a value that
+    arrives anyway (a stale composer, a file deleted since /api/options)
+    lands on the default rather than raising. The default itself always
+    passes: it names the authored stage, which runs exactly as it always has.
+    Same degrade-never-die policy as the number dials."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value != int(value):
+        return dial["default"]
+    value = int(value)
+    if value == dial["default"]:
+        return value
+    installed = vector_bypass_variants() \
+        if dial["choices_from"] == "vector_bypass" else {}
+    return value if value in installed else dial["default"]
 # New Face repaints the whole frame, so its cap IS the output size - there is
 # nothing underneath to composite back over. Matched to the edit lane's ceiling
 # because it is the same Krea 2 sampler at the same resolutions.
@@ -1537,6 +1654,12 @@ RECIPE_SPECS = {
         "no_gguf": True,
         "aspect": "9:16 (Portrait Widescreen)", "mp": 2.36,
         "required_loras": [KREA_BYPASS_LORA, IDENTITY_LORA],
+        # The recipe-card extender's advanced dials (Likeness, Grounding) plus
+        # the bypass variant A/B (brief 9.15). Declared here so intake
+        # validation, the re-roll and /api/options all read one declaration;
+        # the defaults ARE the recipe's own numbers, so an untouched composer
+        # renders exactly what it did before the dials became reachable.
+        "dials": IDENTITY_DIALS + [BYPASS_VARIANT_DIAL],
         "lora_stack_revision": 1, "lora_boundary": "identity patch",
         "lora_stages": [
             {"slot": "vector_bypass", "name": KREA_BYPASS_LORA, "strength": 1.0,
@@ -1751,6 +1874,57 @@ def _vector_patch_count(path_text, mtime_ns, size):
             return None
         return sum(1 for v in values if v != 0.0) or None
     return None
+
+
+@lru_cache(maxsize=256)
+def _vector_patch_sha(path_text, mtime_ns, size):
+    """sha256 of a projector patch - 160 bytes, so this is free, and it is
+    what tells a byte-identical twin apart from a genuinely different patch
+    that happens to move the same number of vectors."""
+    if size > _VECTOR_PATCH_MAX_BYTES:
+        return None
+    try:
+        return hashlib.sha256(Path(path_text).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def vector_bypass_variants():
+    """Installed projector patches as {vectors: catalog rel} (brief 9.15).
+
+    The tensor is the identity, never the filename: this box's authoritative
+    2-vector is `Krea 2\\krea2filterbypass.safetensors` - no digit anywhere in
+    the name - and its byte-identical twin spent weeks filed next to it as
+    krea2filterbypass2vector.safetensors. So the LoRA catalog is scanned for
+    projector patches and each one's count read out of its own tensor; two
+    files with the same count AND the same sha256 are ONE option, never two.
+    Within one count the lowest-sorting rel represents the option (on this box
+    that is the authored name itself, which sorts ahead of its `2vector`
+    twin). Deliberately uncached: the catalog scan behind it carries a 30s
+    TTL, and the per-file work is cached by (path, mtime, size) above, so a
+    freshly downloaded variant appears on the next catalog refresh.
+    """
+    found = {}
+    for entry in model_catalog("loras"):
+        try:
+            patch_file = Path(entry["root"]) / entry["kind"] / entry["rel"]
+            stat = patch_file.stat()
+        except (KeyError, TypeError, OSError):
+            continue
+        count = _vector_patch_count(str(patch_file), stat.st_mtime_ns,
+                                    stat.st_size)
+        if not count:
+            continue
+        sha = _vector_patch_sha(str(patch_file), stat.st_mtime_ns, stat.st_size)
+        # The dedupe the whole control keys on: same count, same bytes -> one
+        # option. Same count, DIFFERENT bytes is not a thing the two-way
+        # control can express; the lowest-sorting rel stands for the count.
+        found.setdefault((count, sha), entry["rel"])
+    out = {}
+    for (count, _sha), rel in sorted(found.items(),
+                                     key=lambda item: (item[0][0], item[1].lower())):
+        out.setdefault(count, rel)
+    return out
 
 
 def lora_profile(rel):
@@ -2520,8 +2694,25 @@ def _resolved_recipe_stage(recipe_id, stage, strength=None):
     }
 
 
+def _bypass_variant_stage(stage, variant):
+    """Swap the locked vector-bypass stage's file for the chosen variant
+    (brief 9.15). Only the NAME changes - slot, strength, role, zone and the
+    chain's order are the stage's own, so a 3-vector graph is today's graph
+    with one loader's lora_name swapped and nothing else. The default variant
+    and anything uninstalled keep the authored stage: intake validation has
+    already landed bad values on the default, so this is the builder-side
+    guard for direct calls, and it degrades rather than dies."""
+    if stage.get("slot") != "vector_bypass" or \
+            isinstance(variant, bool) or not isinstance(variant, int):
+        return stage
+    if variant == KREA_BYPASS_VECTORS:
+        return stage
+    rel = vector_bypass_variants().get(variant)
+    return {**stage, "name": rel} if rel else stage
+
+
 def resolve_recipe_lora_stack(recipe_id, loras=(), lora_plan=None,
-                              family=None, variant=None):
+                              family=None, variant=None, bypass_variant=None):
     """Recipe stages + either legacy appended extras or a replacement editable lane.
 
     Structural/core stages always come from RECIPE_SPECS. A new lora_plan owns the
@@ -2543,8 +2734,9 @@ def resolve_recipe_lora_stack(recipe_id, loras=(), lora_plan=None,
         override = overrides.get(stage["slot"]) or {}
         if override.get("enabled") is False:
             continue
-        core.append(_resolved_recipe_stage(recipe_id, stage,
-                                           override.get("strength")))
+        core.append(_resolved_recipe_stage(
+            recipe_id, _bypass_variant_stage(stage, bypass_variant),
+            override.get("strength")))
     # Recomputed from what SURVIVED: a bypassed core LoRA is no longer a locked
     # stage, so the user may add it back by name in the editable lane.
     core_names = {e["name"].lower() for e in core}
@@ -2778,7 +2970,8 @@ def build_face_mint(scene, seed, image=None, denoise=None, eta=None,
 
 def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
                     ref_boost=IDENTITY_REF_BOOST, overrides=(), model=None, aspect=None,
-                    mp=None, loras=(), character=None, lora_plan=None, pid=None):
+                    mp=None, loras=(), character=None, lora_plan=None, pid=None,
+                    bypass_variant=None):
     """THE settled moments recipe (2026-08-07), captured verbatim from
     edit_fast.py: mxfp8 + Wan VAE, linear/euler + simple, 10 steps, cfg 1.0,
     eta 0.0, no base realism LoRA, 1152x2048. RawGirlV3 rode along in the
@@ -2817,11 +3010,14 @@ def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
         w, h = dims_for("9:16 (Portrait Widescreen)", mp)
         g["30:5"]["inputs"]["width"], g["30:5"]["inputs"]["height"] = w, h
     # Rebuild the complete pre-patch chain. In particular, vector bypass is a
-    # locked first stage: UNET -> bypass -> identity LoRA -> editable lane -> patch.
+    # locked first stage: UNET -> bypass -> identity LoRA -> editable lane ->
+    # patch. bypass_variant (brief 9.15) swaps only that stage's FILE - the
+    # chain's shape and order never change.
     for node_id in ("30:15", "30:22", "ed:lora", "ed:extra0"):
         g.pop(node_id, None)
     entries, dropped = resolve_recipe_lora_stack(
-        "identity_edit", loras, lora_plan, family="krea2")
+        "identity_edit", loras, lora_plan, family="krea2",
+        bypass_variant=bypass_variant)
     tail = apply_lora_nodes(g, "30:10", entries, "ed:lora")
     g["ed:patch"]["inputs"]["model"] = [tail, 0]
     use_pid = load_config()["pid"]["identity_finish"] if pid is None else bool(pid)
@@ -3324,14 +3520,22 @@ def _catalog_resolve(kind, rel):
     matched by is a queue-time rejection (Z-Image's first VAE candidate died
     exactly that way on a box whose only ae.safetensors lives under Flux\\).
     """
+    # Normalise for COMPARISON only, and return the catalog's own string. The
+    # catalog stores `str(p.relative_to(base))`, which carries os.sep - so on
+    # Linux it is `ZiT/z_image_turbo_bf16.safetensors` and the backslash copy
+    # is a name ComfyUI does not list. Returning the normalised form was the
+    # very failure this function exists to prevent ("not in list" at queue
+    # time), just moved to the other platform: on Windows the two coincide, on
+    # Linux every model in a subfolder was rejected - which is all four starter
+    # styles, since both ZiT\ and Anima\ are subfolders.
+    entries = model_catalog(kind)
     want = str(rel).replace("/", "\\").lower()
-    rels = [e["rel"].replace("/", "\\") for e in model_catalog(kind)]
-    low = [r.lower() for r in rels]
+    low = [e["rel"].replace("/", "\\").lower() for e in entries]
     if want in low:
-        return rels[low.index(want)]
+        return entries[low.index(want)]["rel"]
     stem = want.rsplit("\\", 1)[-1]
-    hits = [r for r in rels if r.rsplit("\\", 1)[-1].lower() == stem]
-    return hits[0] if len(hits) == 1 else None
+    hits = [e for e, r in zip(entries, low) if r.rsplit("\\", 1)[-1] == stem]
+    return hits[0]["rel"] if len(hits) == 1 else None
 
 
 def _catalog_has(kind, rel):
@@ -7651,6 +7855,7 @@ class Hub:
                              "lora_stack_revision": spec["lora_stack_revision"],
                              "lora_boundary": spec["lora_boundary"],
                              "lora_stages": lora_stages,
+                             "dials": _recipe_dials_payload(spec),
                              "needs_character": bool(spec.get("needs_character")),
                              "available": not missing, "missing": missing})
         # Saved styles carry their own model, so missing_for's generic "you own
@@ -7938,14 +8143,21 @@ TOOLS = [{
                                          "subjects uninvited).")},
                 "ref": {"type": "string", "description": "identity_edit only, identity reference "
                                                          "filename in ComfyUI/input"},
-                "grounding": {"type": "integer", "description": "identity_edit only, default 1536. "
-                                                                "Lower = stronger edit, higher = stronger identity."},
+                "grounding": {"type": "integer",
+                              "description": ("identity_edit only, default 768. Lower = stronger "
+                                              "edit adherence and more uniform scene changes; "
+                                              "higher = stronger identity/likeness. The trained "
+                                              "range is 384-768; 1024 often still works. "
+                                              "Duplicated or split compositions ('double "
+                                              "pictures') mean lower it - running far above the "
+                                              "trained range is the most common cause.")},
                 "ref_boost": {"type": "number",
-                              "description": ("identity_edit only. OMIT for normal moments (the "
-                                              "recipe carries identity via grounding + the "
-                                              "reference). 1.5-2.5 = unmasked identity nudge "
-                                              "when a render drifts; it also drags composition "
-                                              "toward the reference, so never by default.")},
+                              "description": ("identity_edit only, default 4.0. The fidelity "
+                                              "dial: how hard the edit holds the reference. ~4 "
+                                              "is a strong-likeness starting point; below 1 "
+                                              "loosens toward creative freedom; above 10 starts "
+                                              "breaking removals. Lower it when the likeness "
+                                              "lands too hard.")},
                 "seed": {"type": "integer",
                          "description": ("reuse a prior render's seed to keep its "
                                          "composition while making a small prompt "
@@ -8927,6 +9139,12 @@ LLM_LOG = HERE / "llama_server.log"      # survives sidecar restarts (adopt, don
 # butler already evicts before a render (free_brain_vram), so this is purely
 # the idle case - and idle is most of the time.
 LLM_LAST_USED = 0.0
+# Calls currently awaiting the brain. The reaper measures IDLE, and a call
+# in flight is the opposite of idle - without this it could kill the brain
+# mid-generation, because LLM_LAST_USED is stamped when a call STARTS and
+# llm_call's own ceiling (180s) can exceed a local_idle_minutes of 1 or 2,
+# which Settings accepts.
+LLM_IN_FLIGHT = 0
 LLM_IDLE_EVICT_S = 600          # 10 min; cfg llm.local_idle_minutes overrides
 LLM_REAP_TICK_S = 60
 _PROCESS_START = time.time()    # so an adopted orphan counts as idle from boot
@@ -9338,6 +9556,8 @@ async def brain_idle_reaper():
                 idle_after = float(mins) * 60
             if not _llm_state().get("pid"):
                 continue            # nothing of ours is up
+            if LLM_IN_FLIGHT:
+                continue            # somebody IS talking to it - that is not idle
             # LLM_LAST_USED is 0 for a brain this process never used - an
             # orphan adopted across a sidecar restart. Those are exactly the
             # ones worth reaping, so treat unknown as "idle since boot".
@@ -9943,12 +10163,21 @@ async def llm_call(messages, timeout=180, tools=None, cid=None):
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    async with aiohttp.ClientSession() as s:
-        async with s.post(cfg["base_url"].rstrip("/") + "/chat/completions",
-                          json=payload, timeout=timeout,
-                          headers={"Authorization": "Bearer " + cfg["api_key"],
-                                   "Content-Type": "application/json"}) as r:
-            status, data = r.status, await r.json()
+    global LLM_IN_FLIGHT, LLM_LAST_USED
+    LLM_IN_FLIGHT += 1
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(cfg["base_url"].rstrip("/") + "/chat/completions",
+                              json=payload, timeout=timeout,
+                              headers={"Authorization": "Bearer " + cfg["api_key"],
+                                       "Content-Type": "application/json"}) as r:
+                status, data = r.status, await r.json()
+    finally:
+        # In `finally` so a timeout, a 500 or a cancelled turn cannot strand the
+        # count above zero - a stranded count disables the reaper for the life
+        # of the process, which is the failure the reaper exists to prevent.
+        LLM_IN_FLIGHT -= 1
+        LLM_LAST_USED = time.time()   # idle is measured from the END of a call
     if status == 200 and data.get("choices"):
         _localize(data["choices"][0].get("message") or {})
     return status, data
@@ -10131,29 +10360,162 @@ H3_BRIDGE_NOTE = (
     "described moment must match Picture 2 exactly.")
 
 
+# The canonical sighted brain, mirrored from install/catalog.json's "brain"
+# lane: the 4B heretic gguf plus the base model's f16 projector (the heretic
+# repo publishes none), ~4.8GB total. When the look has no eyes it provisions
+# THIS - never the ~16GB FP16 AILab critic, whose first-run HuggingFace pull
+# inside a render is what read as "Animate hangs" (Jesse, 2026-08-22: "force
+# the download of the smaller model and projector, if it is not present").
+BRAIN_VL_MODEL = {"repo": "DreamFast/Qwen3-VL-4b-Heretic-GGUF",
+                  "path": "qwen3-vl-4b-heretic-Q8_0.gguf",
+                  "bytes": 4280406176}
+BRAIN_VL_MMPROJ = {"repo": "unsloth/Qwen3-VL-4B-Instruct-GGUF",
+                   "path": "mmproj-F16.gguf",
+                   "name": "qwen3-vl-4b-heretic.mmproj-f16.gguf",
+                   "bytes": 836180640}
+# A cold look is a Q8 load + projector load + a ~1024-vision-token read on a
+# card that may still be busy from the render the user just made. The 120s
+# chat default was never chosen for that; the warm retry gets room for the
+# cold load instead of falling to the critic for what is really just patience.
+BRAIN_VL_COLD_TIMEOUT = 300
+_BRAIN_VL_FETCH = {"at": 0.0, "error": None}   # latch: a failed download is
+                                               # not retried on every look
+_BRAIN_VL_FETCH_LOCK = asyncio.Lock()
+
+
+def _vl_miss(reason):
+    """Every way the look leaves the brain names itself, logged exactly once.
+
+    The fallback it precedes costs 16GB and minutes; a silent one is not
+    allowed to exist (brief 9.16). The reason also rides to the caller, which
+    decides the fallback and says so in the lane."""
+    print(f"[pixal] the look left the brain: {reason}", flush=True)
+    return None, reason
+
+
+async def _brain_vl_fetch(entry, dest, label, cid=None):
+    """One catalog file from HuggingFace, visibly. The .part/byte-count
+    discipline of _quant_fetch_run; progress rides the lane in GB, because the
+    download that prompted all this looked exactly like a hang."""
+    part = dest.with_name(dest.name + ".part")
+    url = f"https://huggingface.co/{entry['repo']}/resolve/main/{entry['path']}"
+    total, got, said = entry["bytes"], 0, 0
+    if cid:
+        HUB.broadcast(type="text", cid=cid,
+                      text=f"*downloading {label}: {dest.name} "
+                           f"({total / 2**30:.1f} GB) - one time, then the look "
+                           f"stays on the brain*")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        async with aiohttp.ClientSession(headers=_hf_headers()) as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(
+                    total=None, connect=15, sock_read=120)) as r:
+                if r.status != 200:
+                    raise aiohttp.ClientError(f"{entry['repo']}: HTTP {r.status}")
+                with part.open("wb") as fh:
+                    async for chunk in r.content.iter_chunked(1 << 22):
+                        await asyncio.to_thread(fh.write, chunk)
+                        got += len(chunk)
+                        if cid and got - said >= 512 * 2**20:
+                            said = got
+                            HUB.broadcast(
+                                type="thinking", cid=cid,
+                                note=f"downloading {dest.name} - "
+                                     f"{got / 2**30:.1f} of {total / 2**30:.1f} GB")
+        if got != total:
+            raise aiohttp.ClientError(f"truncated at {got} of {total} bytes")
+        os.replace(part, dest)
+    except Exception:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    if cid:
+        HUB.broadcast(type="text", cid=cid,
+                      text=f"*{dest.name} is in - the brain can see*")
+
+
+async def ensure_sighted_brain(cfg, cid=None):
+    """Give the look a seeing brain when it has none: fetch the 4B + its
+    projector and leave the config pointing at a model with eyes. Returns an
+    error string (the reason the brain stays blind) or None when a sighted
+    brain is ready to spawn.
+
+    Only the Qwen3-VL 4B pair is provisioned: a projector is size-specific,
+    so a Gemma (or an 8B) with no projector keeps the old ComfyUI fallback
+    rather than growing mismatched eyes."""
+    model = (cfg.get("local_model") or "").strip()
+    have_model = bool(model) and Path(model).is_file()
+    if have_model:
+        if not (_local_llm_family(model) == "qwen3-vl"
+                and "4b" in Path(model).name.lower()):
+            return (f"no projector sits beside {Path(model).name}, and the "
+                    "shipped projector only fits the Qwen3-VL 4B brain")
+        dest_model = Path(model)
+    else:
+        dest_model = CDIR / "models" / "LLM" / "GGUF" / BRAIN_VL_MODEL["path"]
+    latch = _BRAIN_VL_FETCH
+    if latch["error"] and time.time() - latch["at"] < 600:
+        return (f"the 4B brain download failed earlier ({latch['error']}) - "
+                "not retrying on every look")
+    dest_proj = dest_model.parent / BRAIN_VL_MMPROJ["name"]
+    async with _BRAIN_VL_FETCH_LOCK:
+        try:
+            if not dest_model.is_file():
+                await _brain_vl_fetch(BRAIN_VL_MODEL, dest_model,
+                                      "the sighted brain (Qwen3-VL 4B)", cid)
+            if not dest_proj.is_file():
+                await _brain_vl_fetch(BRAIN_VL_MMPROJ, dest_proj,
+                                      "the brain's projector", cid)
+        except Exception as exc:
+            latch.update(at=time.time(), error=str(exc))
+            return f"the 4B brain could not be fetched ({exc})"
+    if not have_model:
+        # The configured model was gone (or never picked): point the setting
+        # at the pair that just landed, or ensure_local_llm keeps reporting a
+        # file that is not there.
+        full = load_config()
+        full["llm"]["local_model"] = str(dest_model)
+        save_config(full)
+    return None
+
+
 async def brain_vl_read(staged, question, cid=None, timeout=120):
     """Ask the sighted LOCAL brain a question about one staged frame.
 
-    Returns the answer text, or None meaning "use the ComfyUI critic graph
-    instead": remote preset, no verified projector, or any failure. Brain-first
-    is the rule (Jesse, 2026-08-18): the brain is ~5GB and already resident
-    for chat, while the AILab critic is a 16GB FP16 load the butler must clear
-    room for - that graph survives only as the blind-preset fallback.
+    Returns (text, None) on an answer, or (None, reason) meaning "use the
+    ComfyUI critic graph instead" - and every one of the eight ways out names
+    itself, because the fallback is a 16GB FP16 load and a silent one once
+    read as "Animate hangs" (Jesse, 2026-08-22). Brain-first is the rule
+    (Jesse, 2026-08-18): the brain is ~5GB and already resident for chat,
+    while the critic graph survives only as the blind-preset fallback, and
+    only when its weights are already local (frame_inventory checks).
     """
     import base64
     cfg = load_config()["llm"]
     if f"127.0.0.1:{LOCAL_LLM_PORT}" not in cfg["base_url"]:
-        return None
+        return _vl_miss("the chat preset is remote - only the managed local "
+                        "brain can see")
     state = _llm_state()
-    if state.get("pid") and not state.get("mmproj"):
-        return None                     # running and demoted-blind: don't ask
-    if not state.get("pid") and not _local_llm_mmproj(cfg.get("local_model") or ""):
-        return None                     # not running and no projector on disk
+    mmproj = _local_llm_mmproj(cfg.get("local_model") or "")
+    if state.get("pid") and not state.get("mmproj") and mmproj:
+        # Running and demoted-blind (its projector failed the smoke test this
+        # session): a respawn changes nothing, so don't ask.
+        return _vl_miss("the brain is running blind - its projector failed "
+                        "this session's smoke test")
+    if not mmproj:
+        # No projector on disk - or no model at all. Fetch the small sighted
+        # pair and keep the look on the brain; the 16GB critic is not allowed
+        # to be the way vision arrives.
+        err = await ensure_sighted_brain(cfg, cid)
+        if err:
+            return _vl_miss(err)
     path = CDIR / "input" / staged
     try:
         b64 = base64.b64encode(path.read_bytes()).decode()
-    except OSError:
-        return None
+    except OSError as exc:
+        return _vl_miss(f"the staged frame could not be read ({exc})")
     messages = [{"role": "user", "content": [
         {"type": "text", "text": question},
         {"type": "image_url",
@@ -10162,17 +10524,40 @@ async def brain_vl_read(staged, question, cid=None, timeout=120):
     try:
         status, data = await llm_call(messages, timeout=timeout, cid=cid)
     except Exception:
-        return None
+        # Cold, most likely: the butler evicts the brain before renders, and a
+        # Q8 load + projector + vision read can outrun a chat-sized timeout.
+        # That is patience, not failure - warm the brain through the same
+        # ensure path chat uses, then ask ONCE more, before ComfyUI is even
+        # considered.
+        if cid:
+            HUB.broadcast(type="thinking", cid=cid,
+                          note="the brain is cold - warming it for one more look")
+        err = await ensure_local_llm(cid)
+        if err:
+            return _vl_miss(f"the brain would not wake for a second look "
+                            f"({err})")
+        try:
+            status, data = await llm_call(messages,
+                                          timeout=BRAIN_VL_COLD_TIMEOUT,
+                                          cid=cid)
+        except Exception as exc:
+            return _vl_miss(f"the brain did not answer even warmed ({exc})")
+    if status != 200:
+        return _vl_miss(f"the brain answered HTTP {status}")
     # The spawn's smoke test can demote a blind brain mid-call; a demoted
-    # brain answered from imagination, so its text must not count.
-    if status != 200 or not _llm_state().get("mmproj"):
-        return None
+    # brain answered from imagination, so its text must not count. (This also
+    # catches a server with no registered projector, e.g. an external one.)
+    if not _llm_state().get("mmproj"):
+        return _vl_miss("the brain that answered has no live projector - its "
+                        "read cannot be trusted")
     msg = (data.get("choices") or [{}])[0].get("message") or {}
     text = msg.get("content")
     if isinstance(text, list):
         text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
     text = " ".join(str(text or "").split())
-    return text or None
+    if not text:
+        return _vl_miss("the brain answered empty")
+    return text, None
 
 
 async def frame_inventory(frame, ref_id, cid=None):
@@ -10181,7 +10566,9 @@ async def frame_inventory(frame, ref_id, cid=None):
     Best-effort by design - any failure returns "" and the brief rides the
     scene caption alone, exactly as before the look existed. A sighted local
     brain answers directly (no extra model load); the vl_look ComfyUI job is
-    the fallback, butler-managed like a review."""
+    the fallback, butler-managed like a review - and submitted ONLY when the
+    critic's weights are already on disk, because a first-run HuggingFace pull
+    inside a render is the hang this stage was rebuilt to kill (brief 9.16)."""
     name = input_ref_name(frame)
     if not name or not (CDIR / "input" / name).is_file():
         return ""
@@ -10190,8 +10577,24 @@ async def frame_inventory(frame, ref_id, cid=None):
         # inventory, a fraction of the vision tokens.
         name = stage_critic_input(CDIR / "input" / name,
                                   f"pixal_look_{ref_id}.png")
-        text = await brain_vl_read(name, LOOK_Q, cid=cid)
+        text, reason = await brain_vl_read(name, LOOK_Q, cid=cid)
         if text is None:
+            critic, on_disk = critic_weights()
+            if not on_disk:
+                # The critic's weights are NOT local: submitting this job is
+                # what pulled ~16GB from HuggingFace mid-render - the
+                # "Fetching 12 files" stall of 2026-08-22. The look is
+                # optional; the brief rides the caption and the lane says why.
+                if cid:
+                    HUB.broadcast(type="text", cid=cid,
+                                  text=f"*the look is skipped: {reason} - and "
+                                       f"the critic ({critic}) is not downloaded, "
+                                       f"so the brief rides the caption*")
+                return ""
+            if cid:
+                HUB.broadcast(type="text", cid=cid,
+                              text=f"*the brain could not look ({reason}) - the "
+                                   f"critic on disk reads the frame instead*")
             job = await HUB.submit(cid or uuid.uuid4().hex[:8], "look", "vl_look",
                                    f"look at #{ref_id}", {"image": name}, 1)
             if job.get("error"):
@@ -10815,6 +11218,16 @@ def _apply_opts(args, opts):
         args["aspect"] = opts["aspect"]
     if opts.get("mp"):
         args["mp"] = opts["mp"]
+    # Identity Edit's likeness dials ride like the canvas: present = the user
+    # moved one, absent = the recipe default. They mean nothing to any other
+    # graph, so they are read only when an identity source is driving, and a
+    # bad value degrades to the recipe constant rather than killing the turn.
+    # They apply over a saved style's file exactly like the composer's LoRA
+    # stack does - a style carrying dials is out of scope (brief 9.14).
+    if identity_source:
+        for dial in RECIPE_SPECS["identity_edit"].get("dials", ()):
+            if dial["key"] in opts:
+                args[dial["key"]] = recipe_dial_value(dial, opts.get(dial["key"]))
     # The held seed is deliberately NOT applied here - see freeze_seed().
     return recipe
 
@@ -13706,20 +14119,51 @@ async def review(req):
 
     async def _review():
         # Brain-first: a sighted local brain critiques with no extra model
-        # load; the vl_review ComfyUI job is the blind-preset fallback.
-        text = await brain_vl_read(dst, CRITIC_Q, cid=cid)
-        if text is None:
-            await HUB.submit(cid, "chat", "vl_review",
-                             f"review of #{entry['id']}", {"image": dst},
-                             1, parent=entry["id"])
-            return
-        fix_m = re.search(r"^FIX:\s*(.+)$", text, re.M)
-        HUB.broadcast(type="review", job_id=uuid.uuid4().hex[:8], cid=cid,
-                      parent=entry["id"], text=text,
-                      fix=fix_m.group(1).strip() if fix_m else None)
-        if HUB.convo is not None:
-            HUB.convo.append({"role": "system",
-                              "content": f"[critic on #{entry['id']}: {text}]"})
+        # load; the vl_review ComfyUI job is the blind-preset fallback,
+        # submitted ONLY when the reviewer's weights are already on disk -
+        # the same guard the look passes (brief 9.22), because a first-run
+        # fetch behind a button click is the stall 9c089d9 killed.
+        try:
+            try:
+                text, why = await brain_vl_read(dst, CRITIC_Q, cid=cid)
+            except Exception as exc:
+                # brain_vl_read is built to return its reasons; a raise is
+                # shaped like one, so the routing below stays the only routing.
+                text, why = None, f"the brain's read failed ({exc})"
+            if text is None:
+                critic, on_disk = critic_weights()
+                if not on_disk:
+                    # A review is the whole point of the click, so where the
+                    # look rides the caption quietly, this names the missing
+                    # reviewer, its size and the way out - and ends the
+                    # "reading the shot" spinner with the answer.
+                    gb = vl_download_gb(critic)
+                    size = f", ~{gb} GB" if gb else ""
+                    HUB.broadcast(type="thinkingdone", cid=cid)
+                    HUB.broadcast(
+                        type="text", cid=cid,
+                        text=(f"*the review cannot run: {why} - and the "
+                              f"reviewer ({critic}{size}) is not downloaded; "
+                              f"pick another in Settings or download it, "
+                              f"then click review again*"))
+                    return
+                await HUB.submit(cid, "chat", "vl_review",
+                                 f"review of #{entry['id']}", {"image": dst},
+                                 1, parent=entry["id"])
+                return
+            fix_m = re.search(r"^FIX:\s*(.+)$", text, re.M)
+            HUB.broadcast(type="review", job_id=uuid.uuid4().hex[:8], cid=cid,
+                          parent=entry["id"], text=text,
+                          fix=fix_m.group(1).strip() if fix_m else None)
+            if HUB.convo is not None:
+                HUB.convo.append({"role": "system",
+                                  "content": f"[critic on #{entry['id']}: {text}]"})
+        except Exception as exc:
+            # The click already got its 200; a silent death here strands the
+            # "reading the shot" spinner forever. Say what happened instead.
+            HUB.broadcast(type="thinkingdone", cid=cid)
+            HUB.broadcast(type="text", cid=cid,
+                          text=f"*the review failed: {exc}*")
 
     asyncio.create_task(_review())
     return web.json_response({"ok": True, "cid": cid})
@@ -13841,6 +14285,35 @@ async def reroll(req):
                 spec["model"] = model
         except Exception:
             pass
+    # The live canvas obeys the same rule as the LoRA plan and model above: a
+    # re-roll rolls at the settings the user is LOOKING at. It degrades, never
+    # dies - an unknown aspect or a non-positive mp falls back to the stored
+    # spec rather than 4xx-ing, and an omitted canvas leaves the stored one
+    # untouched (absent != empty; a stale bundle sends neither).
+    # Recipes whose own aspect is "" - keyed on the recipe's "aspect" field,
+    # not a name list - take their dimensions from the source image instead of
+    # the composer (qwen_edit, face_mint, klein_inpaint), so no live canvas
+    # may be forced onto them.
+    if RECIPE_SPECS.get(tmpl, {}).get("aspect"):
+        aspect = body.get("aspect")
+        if isinstance(aspect, str) and aspect in ASPECTS:
+            spec["aspect"] = aspect
+        mp = body.get("mp")
+        if isinstance(mp, (int, float)) and not isinstance(mp, bool) \
+                and math.isfinite(mp) and mp > 0:
+            spec["mp"] = mp
+    # The live identity dials obey the same rule as the canvas above: a
+    # re-roll rolls at the likeness the user is LOOKING at, or "adjust and
+    # re-roll" - the exact loop a likeness dial is FOR - silently uses the old
+    # value. Present-but-bad degrades to the recipe constant, never a 4xx and
+    # never the stored value the user moved away from; an omitted key keeps
+    # the stored one (absent != empty, a stale bundle sends neither). Only a
+    # recipe that DECLARES dials can receive them - the declaration names
+    # builder parameters, so submit's SIGS filter is the same gate the graph
+    # build uses.
+    for dial in RECIPE_SPECS.get(tmpl, {}).get("dials") or ():
+        if dial["key"] in body:
+            spec[dial["key"]] = recipe_dial_value(dial, body.get(dial["key"]))
     # A locked card replays its exact seed - same shot, same dice - instead
     # of submit's fresh draw. The stored spec never carries a seed (submit
     # pops it before persisting), so this is the only way one gets back in.

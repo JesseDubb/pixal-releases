@@ -1,5 +1,72 @@
 # Changelog
 
+## 1.0.4b — 2026-08-22
+
+New controls for likeness and for the filter bypass, a Settings you can actually
+scan, and fixes for six things that were quietly wrong — two of them introduced
+by the build before this one.
+
+**Identity Edit's likeness is yours to set.** The two dials that decide how hard
+an edit holds your reference were reachable only by the chat brain; there was no
+way to see what they were set to, let alone move them. They now sit in a fold on
+the recipe card. **Likeness** runs 0–10 and starts at 4, which is the model
+author's own recommended starting point — and the useful half is *below* it, for
+when a face is landing too exactly. **Grounding** balances edit strength against
+identity; if you ever see duplicated or split compositions, lower it. Drag either
+back to the recipe's own number and your override disappears.
+
+**The 3-vector filter bypass is reachable.** Krea 2's bypass ships in two
+versions that differ in how much of the text projector they move, and Pixal could
+only ever load one — the 2-vector. If you have the 3-vector installed, it's now a
+choice in the same fold. Pixal identifies them by reading the file itself rather
+than trusting its name, so a renamed download still lands in the right place.
+
+**Settings is organised by what you're making.** Image and video choices were
+interleaved — the video engine under one heading, the video upscaler two
+headings away, the image upscaler beside it under a name that fit neither. There
+are now Image, Video and Brain tabs holding the choices for one kind of work
+each. Choosing between an API brain and a local one is a tab now rather than
+another pill, so it reads as the structural choice it is.
+
+**Animate stops stalling on a download nobody asked for.** Before writing a
+motion brief, Pixal looks at your start frame. That look is meant to run on the
+chat brain — the reason the vision projector sits beside it — but when anything
+went wrong it silently fell back to a separate 16 GB reviewer, and if that wasn't
+on disk the node fetched it from the internet mid-render. Clicking Animate could
+hang for minutes with no explanation. The look now stays on the brain, warms it
+and retries if it was cold, and never triggers a surprise download inside a
+render. Where vision is genuinely missing, Pixal fetches the small brain and its
+projector instead — about 4.8 GB, with visible progress.
+
+**Review, the same.** The Review button carried the identical hidden download.
+It now tells you which reviewer is missing and what to do about it instead of
+stalling.
+
+**Re-roll now uses the settings you're looking at.** Changing the aspect ratio or
+megapixels and hitting re-roll did nothing — the canvas never left the browser,
+so the render came back at the size the original card was made with. Re-roll now
+takes the live canvas, the same way it already took your LoRA strengths and
+model. Edit and inpaint recipes still read their dimensions from the source
+image, as they should.
+
+**Pointing at a button on a gallery tile no longer makes it run away.** Hovering
+a tile action made the row grow, which pushed the button out from under your
+cursor, which collapsed it again — a flicker that repeated as long as you pointed
+at it. The eight actions are now a vertical rail down the edge of the image,
+where nothing can reflow underneath them.
+
+**The chat brain isn't killed mid-answer.** Pixal releases an idle brain to free
+your graphics card, but "idle" was measured from when a question *started*, not
+whether one was still being answered. If you'd shortened the idle timeout, a slow
+answer could have the brain shut down underneath it — which surfaced as a
+connection error with no visible cause. Idle now means nothing in flight and
+nothing recent.
+
+**Models kept in subfolders work on Linux.** Pixal matched a model by path
+without accounting for Linux's separators, so it handed ComfyUI a filename it
+doesn't list and the render failed validation. This affected every model in a
+subfolder, including all four starter styles. Windows was never affected.
+
 ## 1.0.3b — 2026-08-22
 
 Pixal used to ship a style system with no styles in it. This build is mostly

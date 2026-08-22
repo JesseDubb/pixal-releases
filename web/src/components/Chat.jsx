@@ -19,8 +19,8 @@ import { VideoPlayer } from "../lib/VideoPlayer.jsx";
 import { renderRichText } from "../lib/richtext.js";
 import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
 import { imgUrl } from "../transport.js";
-import { useJobLive, useStore } from "../store.js";
-import { ComposerBar, LoraChain, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
+import { useJobLive, useStore, dialOverrides, recipeDials } from "../store.js";
+import { ComposerBar, LoraChain, RecipeDials, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
 import { CharacterForm } from "./CharacterForm.jsx";
 import { InstallNudge } from "./InstallNudge.jsx";
 import { StyleForm } from "./StyleForm.jsx";
@@ -868,6 +868,9 @@ export const Chat = () => {
     }
     const character = o.character || "";
     const loraPlan = store.activeLoraPlan;
+    // The recipe-card extender's overrides for the active recipe (sparse: only
+    // dials moved off the recipe's own number appear here).
+    const dialSet = dialOverrides(o, store.options);
     setCharacterNotice(null);
     // A held seed counts as composer intent on its own: with no other pick set,
     // `active` stayed false, no body was built, and the frozen seed never left
@@ -876,7 +879,8 @@ export const Chat = () => {
     const savedStyle = store.savedStyle;
     const active = o.style || o.quality || (o.engine !== "auto") || o.model || o.aspect || o.mp ||
                    o.loras.length || o.refs.length || character || loraPlan || !promptEnhance ||
-                   o.editSource || o.cinematic || heldSeed || savedStyle;
+                   o.editSource || o.cinematic || heldSeed || savedStyle ||
+                   Object.keys(dialSet).length;
     let summary = null, body;
     if (active) {
       const bits = [];
@@ -904,6 +908,12 @@ export const Chat = () => {
       if (o.model) bits.push(o.model.split("\\").pop().replace(".safetensors", ""));
       if (o.aspect) bits.push(o.aspect.split(" ")[0] + (o.mp ? "@" + o.mp + "MP" : ""));
       else if (o.mp) bits.push(o.mp + "MP");
+      // A moved dial is render-affecting, so the note names it like every other
+      // pick - only overrides, never the recipe's own numbers.
+      const liveDials = recipeDials(store.activeRecipeId, store.options)
+        .filter((d) => dialSet[d.key] !== undefined);
+      for (const d of liveDials)
+        bits.push(`${d.label.toLowerCase()} ${dialSet[d.key]}`);
       if (o.loras.length) bits.push("+" + o.loras.length + " lora");
       if (o.refs.length) bits.push(o.refs.length + " ref");
       if (heldSeed) bits.push("seed " + heldSeed + " locked");
@@ -925,6 +935,11 @@ export const Chat = () => {
       if (o.model) body.model = o.model;
       if (o.aspect) body.aspect = o.aspect;
       if (o.mp) body.mp = o.mp;
+      // The extender's dials ride as sparse overrides, keyed by builder
+      // parameter exactly like the canvas: an untouched dial is absent, so an
+      // untouched composer submits precisely what it did before the dials
+      // became reachable (the byte-identical-graph rule, brief 9.14).
+      for (const d of liveDials) body[d.key] = dialSet[d.key];
       if (o.loras.length) body.loras = o.loras;
       if (loraPlan) body.lora_plan = executableLoraPlan(loraPlan);
       if (o.refs.length) body.refs = o.refs;
@@ -1182,6 +1197,9 @@ export const Chat = () => {
                            store.setCoreStageStrength(slot, value)}
                          resetPlan={() => store.resetActiveLoraPlan()} />
             )}
+            <RecipeDials opts={store.opts} options={store.options}
+                         recipeId={store.activeRecipeId}
+                         onDial={(key, value) => store.setRecipeDial(key, value)} />
           </div>
           {/* Concentric grid: shell radius 24, uniform pad 12, so anything
               touching a corner (pills, send) rounds at control(12). One shared
@@ -1432,6 +1450,9 @@ export const Chat = () => {
           width: vw < 1100 ? 288 : 320, height: "100%", flexShrink: 0,
           boxSizing: "border-box", padding: SPACE[12], overflow: "hidden",
           borderLeft: "1px solid var(--border)", zIndex: 4,
+          // The extender shares the rail below the chain: the column flexes so
+          // the chain keeps the leftover height and its list still scrolls.
+          display: "flex", flexDirection: "column",
         }}>
           <LoraChain rail opts={store.opts} options={store.options}
                      recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
@@ -1441,6 +1462,9 @@ export const Chat = () => {
                        // 2026-08-21: core rows edit strength through the same store-owned plan.
                        store.setCoreStageStrength(slot, value)}
                      resetPlan={() => store.resetActiveLoraPlan()} />
+          <RecipeDials rail opts={store.opts} options={store.options}
+                       recipeId={store.activeRecipeId}
+                       onDial={(key, value) => store.setRecipeDial(key, value)} />
         </aside>
       )}
       </div>

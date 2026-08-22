@@ -45,12 +45,13 @@ function loadOpts() {
   const defaults = { engine: "auto", style: "realism", quality: "standard",
                      model: "", aspect: "", mp: null, cinematic: false,
                      loras: [], lora_plans: {}, refs: [], character: "",
-                     saved_style: "" };
+                     saved_style: "", dials: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(OPTS_KEY)) || {};
     const o = { ...defaults, ...saved };
     o.loras = Array.isArray(o.loras) ? o.loras : [];
     o.lora_plans = o.lora_plans && typeof o.lora_plans === "object" ? o.lora_plans : {};
+    o.dials = o.dials && typeof o.dials === "object" ? o.dials : {};
     o.refs = Array.isArray(o.refs) ? o.refs : [];
     o.cinematic = o.cinematic === true;
     o.saved_style = typeof o.saved_style === "string" ? o.saved_style : "";
@@ -386,6 +387,36 @@ export function loraPlanFor(opts, options) {
   const plan = (opts?.lora_plans || {})[id];
   if (!recipe || !plan || plan.recipe_revision !== recipe.lora_stack_revision) return null;
   return plan;
+}
+
+// The recipe-card extender's dials are declared server-side per recipe
+// (RECIPE_SPECS[..].dials) and ride /api/options exactly like lora_stages, so
+// a later recipe gets its own extender by declaring it - no client change.
+export function recipeDials(recipeId, options) {
+  return recipeById(recipeId, options)?.dials || [];
+}
+
+// The composer's dial state is a sparse per-recipe override map, keyed exactly
+// like lora_plans: a dial appears only while it deviates from the recipe's own
+// number, so dragging back onto it clears the override - there is always a way
+// home. Saved styles never carry dials (out of scope, brief 9.14): the composer
+// sends them itself and the server applies them over the style's file, the same
+// precedence the composer's LoRA stack already has.
+export function dialOverrides(opts, options) {
+  return ((opts?.dials || {})[activeRecipeId(opts, options)]) || {};
+}
+
+// What the composer is LOOKING at: the override where one is set, the recipe's
+// own value where it is not. The re-roll sends these so it lands on the
+// settings on screen rather than the ones the card was born with - the likeness
+// dials and the bypass variant alike (brief 9.15).
+export function resolvedDials(opts, options) {
+  const id = activeRecipeId(opts, options);
+  const overrides = ((opts?.dials || {})[id]) || {};
+  const out = {};
+  for (const dial of recipeDials(id, options))
+    out[dial.key] = overrides[dial.key] ?? dial.default;
+  return out;
 }
 
 function identityCompatibleSelections(options = state.options) {
@@ -724,6 +755,32 @@ export const api = {
     return true;
   },
 
+  // One dial on the recipe-card extender. Shape-checked only - the server owns
+  // the range (and the installed choice set, brief 9.15) and degrades a bad
+  // value to the recipe constant. A value back on the recipe's own setting
+  // DELETES the override instead of storing it: the same way home the core
+  // strength boxes have, where a retune that lands on the authored strength
+  // serialises exactly as before. A blanked box clears too (the style dialog's
+  // "blank follows the recipe" gesture) - Number("") is 0, and 0 is a real
+  // likeness value, not "unset".
+  setRecipeDial(key, value) {
+    const options = state.options;
+    const recipeId = activeRecipeId(state.opts, options);
+    const spec = recipeDials(recipeId, options).find((d) => d.key === key);
+    if (!spec) return false;
+    const raw = value === null || value === undefined ? "" : String(value).trim();
+    const n = raw === "" ? null : Number(raw);
+    if (raw !== "" && !Number.isFinite(n)) return false;
+    const map = { ...(state.opts.dials || {}) };
+    const current = { ...(map[recipeId] || {}) };
+    if (raw === "" || n === spec.default) delete current[key];
+    else current[key] = n;
+    if (Object.keys(current).length) map[recipeId] = current;
+    else delete map[recipeId];
+    this.setOpts({ dials: map });
+    return true;
+  },
+
   get savedStyle() { return savedStyleFor(state.opts, state.options); },
 
   // Selecting a saved style MIRRORS the file into ordinary opts - model,
@@ -991,8 +1048,15 @@ export const api = {
     try {
       const rid = activeRecipeId(state.opts, state.options);
       const plan = rid && (state.opts.lora_plans || {})[rid];
+      // The recipe dials ride resolved - the override, or the recipe's own
+      // number - so the re-roll lands on the likeness the composer SHOWS. An
+      // untouched dial reads "follows the recipe" on screen; keeping the card's
+      // stored value instead would silently roll a likeness nobody is looking
+      // at. A recipe declaring no dials sends none, and the stored ones win.
       const result = await transport.reroll(jobId, c, frozen,
-                             plan ? { [rid]: plan } : {}, state.opts.model || "");
+                             plan ? { [rid]: plan } : {}, state.opts.model || "",
+                             state.opts.aspect || "", state.opts.mp || 0,
+                             resolvedDials(state.opts, state.options));
       // The server refuses with {ok:false} when the ledger entry is already
       // gone - surface it like every sibling does, and release the pending
       // seed lock here too: the catch only sees a network throw, so a

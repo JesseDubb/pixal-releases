@@ -1,5 +1,100 @@
 # Changelog
 
+## 1.0.3b — 2026-08-22
+
+Pixal used to ship a style system with no styles in it. This build is mostly
+about a fresh install being useful on a machine that isn't the author's.
+
+**Styles you can actually run.** A new install's recipe folder was empty, so the
+first thing Pixal asked a newcomer to do was invent a base, a model, a sampler
+and a LoRA chain — the node soup you installed Pixal to get away from. Four
+starter styles now ship with it: Everyday, Portrait, Widescreen and Anime Art.
+They're built on models the setup already fetches, so they run on your machine
+rather than describing someone else's.
+
+**The style dialog opens on the render you're looking at.** Hit "new style"
+while running Identity Edit and it opened on Anime, with a model list that
+matched nothing you were using and a LoRA chain you'd never seen — and there was
+no way to save the setup actually on screen. Character-based recipes were
+excluded from being styles at all, so the form quietly fell back to the first
+recipe in the list. A style can now name a character-based recipe and record
+that it needs an anchor, picked when the style is used. If a recipe genuinely
+can't be a style, the form says which one it moved to and why instead of showing
+you a menu with nothing in it. It also stops clipping — the name field and the
+save button stay on screen no matter how long the LoRA chain gets.
+
+**Z-Image works.** Every Z-Image recipe failed at validation on machines that
+keep their VAEs in folders — Pixal matched a file by its bare name, found one
+belonging to a different model family, and handed ComfyUI a path it doesn't
+offer. On a fresh install the two names happen to coincide, which is why this
+shipped and stayed invisible. Pixal now resolves to the path the loader actually
+lists, and an ambiguous name falls through to the next candidate instead of
+poisoning the graph.
+
+**Upscales are about ten times faster.** Upscaling anything under 1024px took a
+staggeringly long way round: 26 sampling passes to reach 4096, via a 16k canvas
+it then threw away. Measured on the same frame, same settings: 223s down to 24s
+— and the result comes out *bigger* (4096 rather than 3328). A/B'd at 1:1 on
+hair and skin, there's no difference worth the extra three and a half minutes.
+
+**The chat brain stops sitting on your graphics card.** Setting the brain to CPU
+wrote the setting down and left the running brain exactly where it was, on the
+GPU, sometimes for hours. Changing the brain's model or placement now actually
+evicts it — measured here at 12.6 GB down to 4.2 GB the moment it went. Beyond
+that, an idle brain is now released after ten minutes rather than holding memory
+until something else needs it. It only ever touches a brain Pixal started
+itself; one you launched yourself is left alone.
+
+**Animate a subject into a scene that never existed.** H3 ships two model
+checkpoints and Pixal only ever loaded one. Picking a still now offers a choice:
+animate that frame, or carry its subject somewhere new. The second is a
+different task with its own prompt format, so it gets its own director rather
+than reusing instructions that assume the composition stays put. Images only,
+one reference, for now.
+
+**Mouths stop moving after the words run out.** A spoken line with no stated
+ending kept articulating past the dialogue, and that tail is where faces come
+apart. Pixal now detects a line that hangs and spends one brain call closing it.
+
+**Buttons at the end of a row stop disappearing.** The delete control on a
+character anchor and on gallery tiles was being painted past the edge of what
+the panel clips — present, but invisible. Both rows now stay inside their
+container at every window width.
+
+**A render that starts healthy and then crawls says so.** Pixal watches its own
+step rate and notes when a job collapses mid-render, writing the numbers next to
+the render in your history. Nothing acts on it yet; it's the measurement a later
+build needs. A render that's uniformly slow from the first step is just a big
+render, and won't trip it.
+
+**Pixal no longer asks for a seat at Windows startup.** A leftover script could
+add Pixal to your login items, which since a recent build also meant opening
+ComfyUI's console at every login. It's gone.
+
+## 1.0.2b — 2026-08-21
+
+Pixal now lets you dial in a recipe's built-in LoRAs instead of just switching
+them on and off.
+
+**Softer likenesses.** Identity Edit's face LoRA used to run at full strength or
+not at all. You can now pull it back for a lighter resemblance — useful when a
+face is landing too hard and eating the rest of the image. The Krea vector
+bypass is tunable the same way. Drag a stage back to the value the recipe
+shipped with and your override disappears, so there's always a way home.
+Anything you saved before this build is untouched.
+
+**Fewer mystery slowdowns.** A render that started on a nearly-full graphics
+card could crawl for minutes without a word about why. If the previous render
+finished close to the edge, Pixal now clears out cached memory before starting
+the next one — even if it looked like it would fit. It only trims what isn't
+needed. It won't unload a model you're about to use again, and it won't touch
+the chat brain to do it.
+
+Pixal also started keeping notes on how full your card was when each render
+began, next to what it expected to use and what it actually used. Nothing reads
+those numbers yet. They're groundwork for a later build that prices renders from
+what really happens on your machine instead of guessing.
+
 ## 1.0.1b — 2026-08-21
 
 Fixed:

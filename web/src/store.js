@@ -693,6 +693,26 @@ export const api = {
     return true;
   },
 
+  // Retune a structural stage without touching its bypass: the raw value goes
+  // into the same core override map and normalizeCoreOverrides coerces it and
+  // keeps it only when it deviates from the authored strength, so an edit that
+  // lands back on the recipe's own number serialises exactly as before.
+  setCoreStageStrength(slot, strength) {
+    const options = state.options;
+    const recipeId = activeRecipeId(state.opts, options);
+    const recipe = recipeById(recipeId, options);
+    if (!recipe || !(recipe.lora_stages || [])
+        .some((stage) => stage.slot === slot && stage.zone === "core")) return false;
+    const existing = (state.opts.lora_plans || {})[recipeId];
+    const core = { ...(existing?.core || {}),
+                   [slot]: { ...(existing?.core || {})[slot], strength } };
+    const plan = makeLoraPlan(recipe, existing?.entries || defaultPlanEntries(recipe),
+                              options, state.opts, core);
+    this.setOpts({ lora_plans: { ...(state.opts.lora_plans || {}), [recipeId]: plan },
+                   loras: planMirror(plan, recipe, options) });
+    return true;
+  },
+
   resetActiveLoraPlan() {
     const options = state.options;
     const recipeId = activeRecipeId(state.opts, options);
@@ -739,17 +759,27 @@ export const api = {
   // editor can open pre-filled. This is the "save what I am looking at" path -
   // the one that makes authoring a style cost nothing.
   styleDraftFromComposer() {
+    // The base is the recipe actually running - never a stand-in. (The old
+    // bases[0] fallback quietly rewrote an Identity Edit draft into "Anime",
+    // which is the bug Jesse reported on 2026-08-22.) If the composer state is
+    // somehow unset, the most recent render's recipe is the honest fallback:
+    // it is the look the user is looking at.
     const recipeId = activeRecipeId(state.opts, state.options);
     const plan = loraPlanFor(state.opts, state.options);
-    const bases = (state.options || {}).style_bases || [];
+    const lastRendered = (state.history || []).find((e) => e && e.template);
+    // loraPlanFor also returns null when the stored stack's revision predates
+    // the recipe's current one. That must be SAID, not silently swapped for
+    // the default chain - the flag lets the form name what happened.
+    const stackDropped = !plan && !!((state.opts.lora_plans || {})[recipeId]);
     return {
       schema_version: 1,
       name: "",
-      base: bases.includes(recipeId) ? recipeId : (bases[0] || "realism"),
+      base: recipeId || (lastRendered || {}).template || "realism",
       model: state.opts.model || "",
       ...(state.opts.aspect ? { aspect: state.opts.aspect } : {}),
       ...(state.opts.mp ? { mp: state.opts.mp } : {}),
       ...(plan ? { lora_plan: plan } : {}),
+      ...(stackDropped ? { lora_stack_dropped: true } : {}),
       tuning: {},
     };
   },

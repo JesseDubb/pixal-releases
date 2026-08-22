@@ -29,8 +29,10 @@ const CSS = `
 @keyframes px-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .px-tile-reveal { animation: px-reveal 360ms cubic-bezier(0.16,1,0.3,1) both; }
 /* Tile actions: icon-only rounds; the label slides out of the pill on hover
-   (armed delete keeps its label out). Icon-first means five actions fit the
-   narrowest tile with zero cutoff. */
+   (armed delete keeps its label out). Icon-first buys the room, but the count
+   has grown past what any fixed width holds - eight rounds want 282px and the
+   narrowest tile gives 256 - so the row wraps rather than clipping its tail.
+   A hover label pushes the row wider too; wrapping absorbs that as well. */
 .px-act { display: inline-flex; align-items: center; height: 28px; padding: 0 7px;
   border-radius: 999px; }
 .px-act .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
@@ -233,7 +235,8 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
             overflow: "hidden", display: "-webkit-box",
             WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
           }}>{e.scene}</div>
-          <div style={{ display: "flex", gap: SPACE[6], marginTop: SPACE[6] }}
+          <div style={{ display: "flex", flexWrap: "wrap", rowGap: SPACE[6],
+                        columnGap: SPACE[6], marginTop: SPACE[6] }}
                onClick={(ev) => ev.stopPropagation()}>
             {[
               ...(!isVideo ? [

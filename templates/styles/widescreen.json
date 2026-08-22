@@ -1,0 +1,15 @@
+{
+ "schema_version": 1,
+ "id": "widescreen",
+ "name": "Widescreen",
+ "base": "zimage",
+ "model": "ZiT\\z_image_turbo_bf16.safetensors",
+ "tuning": {},
+ "aspect": "16:9 (Widescreen)",
+ "mp": 1.05,
+ "provenance": {
+  "created": 1787374800.0,
+  "updated": 1787374800.0,
+  "author": "pixal"
+ }
+}

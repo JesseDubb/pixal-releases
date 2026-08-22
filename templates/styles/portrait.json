@@ -1,0 +1,15 @@
+{
+ "schema_version": 1,
+ "id": "portrait",
+ "name": "Portrait",
+ "base": "zimage",
+ "model": "ZiT\\z_image_turbo_bf16.safetensors",
+ "tuning": {},
+ "aspect": "3:4 (Portrait Standard)",
+ "mp": 1.2,
+ "provenance": {
+  "created": 1787374800.0,
+  "updated": 1787374800.0,
+  "author": "pixal"
+ }
+}

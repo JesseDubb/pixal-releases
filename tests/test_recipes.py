@@ -1,4 +1,5 @@
 import asyncio
+import time
 import unittest
 from contextlib import ExitStack, contextmanager
 from importlib.util import module_from_spec, spec_from_file_location
@@ -51,6 +52,8 @@ def assets(entry):
     with ExitStack() as stack:
         stack.enter_context(patch.object(server, "resolve_model_entry", return_value=entry))
         stack.enter_context(patch.object(server, "_catalog_has", return_value=True))
+        stack.enter_context(patch.object(server, "_catalog_resolve",
+                                         side_effect=lambda kind, rel: rel))
         stack.enter_context(patch.object(server, "resolve_lora", side_effect=lambda name: name))
         yield
 
@@ -678,6 +681,23 @@ class RecipeTests(unittest.TestCase):
                          expected)
         self.assertNotIn(server.REALISM_LORA, [name for name, _ in expected])
 
+    def test_core_strength_override_reaches_the_identity_lora(self):
+        """The composer's core strength input writes core.<slot>.strength: the
+        identity LoRA runs at the user's 0.6 instead of the authored 1.0, and
+        the bypass ahead of it keeps its own authored strength. The plan must
+        validate first - this is the same core override map the bypass toggle
+        already writes, so no revision bump came with the unlock."""
+        entry = model("Krea 2\\krea2_turbo_mxfp8.safetensors", "krea2")
+        requested = plan("identity_edit", [])
+        requested["core"] = {"identity_edit": {"strength": 0.6}}
+        server.validate_lora_plan("identity_edit", requested)
+        with identity_anchor(), assets(entry):
+            graph, _, _info = server.build_zara_edit(
+                "restage", 5, character="hero", lora_plan=requested)
+        self.assertEqual(lora_chain(graph, "ed:patch"),
+                         [(server.KREA_BYPASS_LORA, 1.0),
+                          (server.IDENTITY_LORA, 0.6)])
+
     def test_replace_editable_plan_drives_all_non_identity_builders(self):
         cases = [
             ("realism", model("Krea 2\\real.safetensors", "krea2"),
@@ -1257,6 +1277,7 @@ class _StubHub:
         self.jobs = {}
         self.resident_heavies = dict(resident or {})
         self.critic_hot = critic_hot
+        self.prev_job_free_min = None
         self.flushed = False
         self.texts = []
 
@@ -1409,6 +1430,213 @@ class VramButlerBehavior(unittest.TestCase):
         brain.assert_awaited_once()
         self.assertTrue(any("rested the chat brain" in t for t in hub.texts))
         self.assertNotIn("model_switch", job)
+
+
+class _StopWatch(Exception):
+    """Breaks gpu_watch's infinite poll once the scripted ticks are spent."""
+
+
+class _FakeStatsResp:
+    async def json(self):
+        return {}                    # no cuda device -> the SSE block bows out
+
+
+class _FakeStatsGet:
+    async def __aenter__(self):
+        return _FakeStatsResp()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeStatsSession:
+    """Just enough aiohttp for gpu_watch's /system_stats fetch."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def get(self, *a, **kw):
+        return _FakeStatsGet()
+
+
+class _WatchHub:
+    """Just enough Hub for gpu_watch's in-flight sampling: the real loop,
+    synthetic nvidia-smi readings, no GPU anywhere near it."""
+
+    def __init__(self):
+        self.jobs = {}
+        self.gpu = None
+        self.paging_streak = 0
+
+    def broadcast(self, **kw):
+        pass
+
+    gpu_watch = server.Hub.gpu_watch
+
+
+class VramStartOccupancy(unittest.TestCase):
+    """Task 1 of brief 9.8: a job's VRAM story was missing its first page.
+    The peak and the floor were recorded, but never how full the card already
+    WAS when the job started - so 'the job got hungrier' and 'the card
+    started fuller' were indistinguishable in every logged line."""
+
+    def run_watch(self, job, readings):
+        """Feed gpu_watch synthetic (free, used, gpu%, membus%) ticks, one per
+        loop iteration, then raise out of the poll sleep."""
+        hub = _WatchHub()
+        hub.jobs[job["id"]] = job
+        with patch.object(server.aiohttp, "ClientSession", _FakeStatsSession), \
+             patch.object(server, "gpu_stats", side_effect=readings), \
+             patch.object(server.asyncio, "sleep",
+                          AsyncMock(side_effect=[None] * (len(readings) - 1)
+                                    + [_StopWatch()])):
+            with self.assertRaises(_StopWatch):
+                asyncio.run(hub.gpu_watch())
+
+    def test_start_occupancy_is_set_once_and_never_moved(self):
+        gb = 2**30
+        job = {"id": "w1", "cid": "c", "started": time.time()}
+        # A later, larger read must move the peak but NOT the start figure -
+        # the whole point is where the card was when the job arrived.
+        self.run_watch(job, [(12 * gb, 20 * gb, 10, 5),
+                             (4 * gb, 28 * gb, 10, 5)])
+        self.assertEqual(job.get("_vram_start_used"), 20 * gb)
+        self.assertEqual(job["_vram_peak"], 28 * gb)
+        self.assertEqual(job["_vram_free_min"], 4 * gb)
+
+
+class PrevFloorGuard(unittest.TestCase):
+    """Task 2 of brief 9.8 as a pure decision: the previous job's floor and
+    the guard band in, trim/no-trim out. No GPU read, no ComfyUI call, no
+    render - injected numbers only (the LIVE-MACHINE RULE's sanctioned
+    simulation)."""
+
+    def test_a_previous_job_below_the_band_trims(self):
+        self.assertTrue(server.prev_floor_below_guard(
+            int(0.9 * 2**30), server.PREV_JOB_FREE_GUARD))
+
+    def test_a_comfortable_previous_job_does_not_trim(self):
+        self.assertFalse(server.prev_floor_below_guard(
+            int(8.0 * 2**30), server.PREV_JOB_FREE_GUARD))
+
+    def test_an_unsampled_previous_job_is_no_signal_not_zero(self):
+        # The stale-value bug class busy_elsewhere and forget_residency were
+        # written against: an absent floor must never read as 0.0GB and
+        # switch the trim on forever.
+        self.assertFalse(server.prev_floor_below_guard(
+            None, server.PREV_JOB_FREE_GUARD))
+
+    def test_sitting_exactly_on_the_band_is_not_below_it(self):
+        self.assertFalse(server.prev_floor_below_guard(
+            server.PREV_JOB_FREE_GUARD, server.PREV_JOB_FREE_GUARD))
+
+
+class VramPrevFloorTrim(unittest.TestCase):
+    """The guard-band rule wired into the butler: 27 of the last 126 priced
+    renders ended under 1.0GB free, so a job that fits as the card stands
+    still trims torch's reclaimable pool when the LAST job ended inside the
+    band - and that is the whole escalation. Never an unload (the reload IS
+    the bill), never the chat brain."""
+
+    GRAPH = {"u": {"class_type": "UNETLoader",
+                   "inputs": {"unet_name": "Krea 2\\m.safetensors"}}}
+
+    def run_butler(self, prev_min):
+        hub = _StubHub(resident={"Krea 2\\m.safetensors": 12 * 2**30})
+        hub.prev_job_free_min = prev_min
+        with ExitStack() as st:
+            st.enter_context(patch.object(
+                server, "_weight_file_bytes", return_value=12 * 2**30))
+            st.enter_context(patch.object(
+                server, "comfy_vram_free_bytes",
+                AsyncMock(return_value=8 * 2**30)))
+            st.enter_context(patch.object(
+                server, "gpu_free_bytes", return_value=25 * 2**30))
+            st.enter_context(patch.object(
+                server, "ram_free_bytes", return_value=32 * 2**30))
+            st.enter_context(patch.object(
+                server.asyncio, "sleep", AsyncMock()))
+            asyncio.run(hub.ensure_vram("realism_ii", dict(self.GRAPH),
+                                      {"id": "j9", "cid": "c"}))
+        return hub
+
+    def test_a_near_miss_last_job_trims_the_pool_without_unloading(self):
+        hub = self.run_butler(int(0.9 * 2**30))
+        self.assertTrue(hub.flushed)             # the trim happened...
+        self.assertEqual(hub.resident_heavies,   # ...but unload=False: the
+                         {"Krea 2\\m.safetensors": 12 * 2**30})  # stack stayed
+        self.assertEqual(hub.texts, [])          # silent in the lane
+
+    def test_a_comfortable_last_job_costs_the_next_one_nothing(self):
+        hub = self.run_butler(int(8 * 2**30))
+        self.assertFalse(hub.flushed)
+        self.assertEqual(hub.texts, [])
+
+
+class _FinalizeHub:
+    """Just enough Hub for finalize's vram bookkeeping: the real method,
+    a job that errored before any output, no ledger write."""
+
+    def __init__(self):
+        self.critic_hot = False
+        self.prev_job_free_min = None
+        self.ledgered = []
+
+    def broadcast(self, **kw):
+        pass
+
+    def ledger_append(self, entry):
+        self.ledgered.append(entry)
+
+    finalize = server.Hub.finalize
+
+
+class FinalizeVramHandoff(unittest.TestCase):
+    """finalize is where the previous job's floor reaches the butler - and
+    where a job that was never sampled must overwrite a low predecessor,
+    or one bad night trims every later job forever."""
+
+    def job(self, **extra):
+        return {"id": "f1", "cid": "c", "template": "realism",
+                "started": time.time(), "images": [], "error": "boom",
+                **extra}
+
+    def test_finalize_hands_the_butler_the_jobs_floor(self):
+        hub = _FinalizeHub()
+        hub.finalize(self.job(_vram_peak=28 * 2**30,
+                              _vram_free_min=int(0.8 * 2**30)))
+        self.assertEqual(hub.prev_job_free_min, int(0.8 * 2**30))
+
+    def test_an_unsampled_job_clears_a_low_floor_to_no_signal(self):
+        hub = _FinalizeHub()
+        hub.prev_job_free_min = int(0.8 * 2**30)   # a low predecessor
+        hub.finalize(self.job())                    # never got a gpu sample
+        self.assertIsNone(hub.prev_job_free_min)
+
+    def test_the_ledger_entry_carries_the_delta_not_just_the_console(self):
+        """The log rotates; ACT_PROFILES gets fitted against peak MINUS start,
+        so both numbers have to reach history.jsonl or phase 2 has nothing."""
+        hub = _FinalizeHub()
+        hub.finalize(self.job(images=[{"filename": "a.png"}], error=None,
+                              scene="s", seed=1, count=1, spec={}, elapsed=3,
+                              _priced={"est": 20 * 2**30},
+                              _vram_start_used=11 * 2**30,
+                              _vram_peak=28 * 2**30,
+                              _vram_free_min=int(0.8 * 2**30)))
+        self.assertEqual(len(hub.ledgered), 1)
+        vram = hub.ledgered[0]["vram"]
+        self.assertEqual(vram["start"], 11 * 2**30)
+        self.assertEqual(vram["peak"], 28 * 2**30)
+        self.assertEqual(vram["peak"] - vram["start"], 17 * 2**30)
+
+    def test_an_unsampled_job_writes_no_vram_block(self):
+        hub = _FinalizeHub()
+        hub.finalize(self.job(images=[{"filename": "a.png"}], error=None,
+                              scene="s", seed=1, count=1, spec={}, elapsed=3))
+        self.assertNotIn("vram", hub.ledgered[0])
 
 
 class _RetryHub:
@@ -1843,3 +2071,154 @@ class CanvasMath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogMatching(unittest.TestCase):
+    """_catalog_has decides what a fresh install is told it is MISSING.
+
+    Nobody who downloads from CivitAI inherits our folder layout, so an
+    exact-path-only check called a recipe unusable on machines that owned
+    every file - while resolve_lora, which has always fallen back to a unique
+    basename, would have built the graph fine.
+    """
+
+    def catalog(self, *rels):
+        return lambda kind=None: [{"rel": r} for r in rels]
+
+    def test_the_exact_path_still_matches(self):
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog(r"Krea 2\bypass.safetensors")):
+            self.assertTrue(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))
+
+    def test_the_same_file_in_another_folder_is_still_found(self):
+        """The portability fix: their folder, our name."""
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog(r"downloads\bypass.safetensors")):
+            self.assertTrue(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))
+
+    def test_a_file_loose_in_the_lora_root_is_found(self):
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog("bypass.safetensors")):
+            self.assertTrue(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))
+
+    def test_an_ambiguous_basename_stays_unmatched(self):
+        """Two files, one name, no way to tell which - refuse, as before."""
+        with patch.object(server, "model_catalog", side_effect=self.catalog(
+                r"Krea 2\bypass.safetensors", r"other\bypass.safetensors")):
+            self.assertTrue(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))   # exact wins outright
+            self.assertFalse(server._catalog_has(
+                "loras", r"elsewhere\bypass.safetensors"))
+
+    def test_a_genuinely_absent_file_is_still_missing(self):
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog(r"Krea 2\other.safetensors")):
+            self.assertFalse(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))
+
+    def test_forward_slashes_normalise(self):
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog("Krea 2/bypass.safetensors")):
+            self.assertTrue(server._catalog_has(
+                "loras", r"Krea 2\bypass.safetensors"))
+
+    def test_the_picker_hands_the_loader_the_resolved_name(self):
+        """ComfyUI lists a subfoldered file WITH its folder: the only
+        ae.safetensors on one box lives under Flux\\, so VAELoader offers
+        "Flux\\ae.safetensors" and rejects the bare candidate the basename
+        rule matched by. The graph must carry the resolved rel, not the
+        literal candidate."""
+        with patch.object(server, "model_catalog",
+                          side_effect=self.catalog(r"Flux\ae.safetensors")):
+            self.assertEqual(
+                server._pick_catalog_asset("vae", server.ZIMAGE_VAE_CANDIDATES,
+                                           "the Z-Image VAE"),
+                r"Flux\ae.safetensors")
+
+    def test_an_ambiguous_basename_falls_through_to_the_next_candidate(self):
+        """Two files sharing the candidate's basename resolve to nothing, so
+        the next candidate gets its chance instead of dying at the loader."""
+        with patch.object(server, "model_catalog", side_effect=self.catalog(
+                r"Flux\ae.safetensors", r"copy\ae.safetensors",
+                r"ZImage\ZiB_ae.safetensors")):
+            self.assertEqual(
+                server._pick_catalog_asset("vae", server.ZIMAGE_VAE_CANDIDATES,
+                                           "the Z-Image VAE"),
+                r"ZImage\ZiB_ae.safetensors")
+
+    def test_an_exact_match_is_returned_as_authored(self):
+        with patch.object(server, "model_catalog", side_effect=self.catalog(
+                r"ae.safetensors", r"Flux\ae.safetensors")):
+            self.assertEqual(
+                server._pick_catalog_asset("vae", server.ZIMAGE_VAE_CANDIDATES,
+                                           "the Z-Image VAE"),
+                "ae.safetensors")
+
+
+class BypassLoraName(unittest.TestCase):
+    """The vector-bypass LoRA is named the way CivitAI ships it, because that
+    is the name every machine except this one has it under."""
+
+    def test_the_constant_is_the_civitai_download_name(self):
+        self.assertEqual(server.KREA_BYPASS_LORA,
+                         r"Krea 2\krea2filterbypass.safetensors")
+
+    def test_no_recipe_still_names_the_local_rename(self):
+        for rid, spec in server.RECIPE_SPECS.items():
+            for name in spec.get("required_loras", []):
+                self.assertNotIn("2vector", name, f"{rid} names a local rename")
+
+
+class VectorPatchCount(unittest.TestCase):
+    """The bypass patches are told apart by what they DO, not their filename -
+    two CivitAI versions one character apart, and this box had the 2vector
+    filed under a local rename for weeks."""
+
+    def patch_file(self, values, key="diffusion_model.txtfusion.projector.diff"):
+        import json as _json, struct as _struct, tempfile, os
+        body = _struct.pack("<%df" % len(values), *values)
+        header = _json.dumps({key: {"dtype": "F32", "shape": [1, len(values)],
+                                    "data_offsets": [0, len(body)]}}).encode()
+        blob = _struct.pack("<Q", len(header)) + header + body
+        fd, path = tempfile.mkstemp(suffix=".safetensors")
+        os.write(fd, blob)
+        os.close(fd)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        return path
+
+    def count(self, path):
+        import os as _os
+        st = _os.stat(path)
+        return server._vector_patch_count(path, st.st_mtime_ns, st.st_size)
+
+    def test_two_vector(self):
+        p = self.patch_file([0.0] * 8 + [-0.5117, -0.8906] + [0.0, 0.0])
+        self.assertEqual(self.count(p), 2)
+
+    def test_three_vector(self):
+        p = self.patch_file([0.0] * 8 + [-0.5117, -0.8906, -0.6094] + [0.0])
+        self.assertEqual(self.count(p), 3)
+
+    def test_an_all_zero_patch_is_not_a_version(self):
+        self.assertIsNone(self.count(self.patch_file([0.0] * 12)))
+
+    def test_an_unrelated_tensor_is_ignored(self):
+        p = self.patch_file([1.0, 2.0], key="lora_unet_down.lora_up.weight")
+        self.assertIsNone(self.count(p))
+
+    def test_a_big_file_is_never_opened(self):
+        """The guard that keeps this off every real multi-hundred-MB LoRA."""
+        p = self.patch_file([0.0] * 8 + [-0.5, -0.9, 0.0, 0.0])
+        self.assertIsNone(server._vector_patch_count(
+            p, 0, server._VECTOR_PATCH_MAX_BYTES + 1))
+
+    def test_garbage_is_not_fatal(self):
+        import tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".safetensors")
+        os.write(fd, b"not a safetensors file at all")
+        os.close(fd)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        self.assertIsNone(self.count(path))

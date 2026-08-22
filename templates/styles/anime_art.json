@@ -1,0 +1,15 @@
+{
+ "schema_version": 1,
+ "id": "anime_art",
+ "name": "Anime Art",
+ "base": "anima",
+ "model": "Anima\\anima-base-v1.0.safetensors",
+ "tuning": {},
+ "aspect": "3:4 (Portrait Standard)",
+ "mp": 1.03,
+ "provenance": {
+  "created": 1787374800.0,
+  "updated": 1787374800.0,
+  "author": "pixal"
+ }
+}

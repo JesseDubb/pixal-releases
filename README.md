@@ -1,22 +1,12 @@
 # Pixal
 
-**Every model you own. One chat.** — [getpixal.com](https://getpixal.com)
-
-**[Download the installer →](https://github.com/JesseDubb/pixal-releases/releases/latest)** · **[Read the manual →](HELP.md)** · Source-available, [not open source](LICENSE)
-
-This repository is the Pixal source. The `Source code (zip)` attached to
-every release is generated from it by GitHub, so it is the same tree you
-are reading here.
-
----
-
 Pixal is a local conversational layer for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Describe the image you want in chat; Pixal selects a compatible recipe, turns the request into a model-ready prompt, patches a proven ComfyUI API graph, queues it, and streams the result back into the conversation.
 
 The point is repeatability. Model files remain interchangeable within their supported family, while sampler, scheduler, resolution, VAE, text encoder, LoRA, and finishing choices live in named recipes instead of being rediscovered for every render.
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.0.1b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.0.3b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 

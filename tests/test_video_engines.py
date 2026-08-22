@@ -90,7 +90,9 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("audio", ltx25["tag"])
         h3 = engines[1]
         self.assertEqual([item["s"] for item in h3["lengths"]], [5, 10, 15])
-        self.assertEqual([model["id"] for model in h3["models"]], ["fl2va"])
+        # Brief 9.12: both stock lanes are chips now - the chip IS the lane
+        # switch. Stock first, finetunes after.
+        self.assertEqual([model["id"] for model in h3["models"]], ["fl2va", "ref2va"])
         self.assertTrue(h3["available"])
         # Both engines generate audio, so neither chip may imply it is the only
         # one that does - LTX has its own audio VAE in the graph.
@@ -109,7 +111,10 @@ class MiniMaxH3Tests(unittest.TestCase):
             profile = server.model_profile(server.H3_MODEL)
         self.assertEqual(profile["family"], "video")
         self.assertFalse(profile["supported"])
-        self.assertNotIn("ref2va", json.dumps(h3).lower())
+        # The ref2va chip is real now (9.12), but the LoRA fence holds:
+        # HMNSFW's own description says FL2VA, so the ref2va chip lists none.
+        ref2va = next(m for m in h3["models"] if m["id"] == "ref2va")
+        self.assertEqual(ref2va["loras"], [])
         self.assertTrue(server.video_lora_profile(server.H3_HMNSFW_LORA)["supported"])
         self.assertEqual(
             server.video_lora_profile(server.H3_HMNSFW_LORA)["variants"], ["fl2va"])
@@ -712,9 +717,9 @@ class VideoDefaultModelTests(unittest.TestCase):
         engines = self._options({"default_model": self.FINETUNE_ID})
         h3 = next(e for e in engines if e["id"] == "h3")
         self.assertEqual([m["id"] for m in h3["models"]],
-                         ["fl2va", self.FINETUNE_ID])
+                         ["fl2va", "ref2va", self.FINETUNE_ID])
         self.assertNotIn("default", h3["models"][0])
-        self.assertTrue(h3["models"][1]["default"])
+        self.assertTrue(h3["models"][2]["default"])
 
     def test_an_empty_or_unknown_default_flags_nothing(self):
         for video_cfg in ({}, {"default_model": ""}, {"default_model": "wan2"}):
@@ -774,6 +779,7 @@ class VideoDefaultModelTests(unittest.TestCase):
         h3 = next(e for e in video["engines"] if e["id"] == "h3")
         self.assertEqual(h3["models"],
                          [{"id": "fl2va", "label": "FL2VA", "available": True},
+                          {"id": "ref2va", "label": "REF2VA", "available": True},
                           {"id": self.FINETUNE_ID,
                            "label": "10Eros Max Skip Edges", "available": True}])
 

@@ -28,6 +28,8 @@ def catalog(entry):
         stack.enter_context(patch.object(server, "resolve_model_entry",
                                          return_value=entry))
         stack.enter_context(patch.object(server, "_catalog_has", return_value=True))
+        stack.enter_context(patch.object(server, "_catalog_resolve",
+                                         side_effect=lambda kind, rel: rel))
         stack.enter_context(patch.object(server, "resolve_lora",
                                          side_effect=lambda name: name))
         yield
@@ -70,20 +72,32 @@ class SavedStyleSchemaTests(unittest.TestCase):
                     server.validate_saved_style(raw)
                 self.assertIn(fragment, str(caught.exception))
 
-    def test_source_only_and_identity_recipes_cannot_be_styles(self):
+    def test_source_only_recipes_cannot_be_styles(self):
         """The style picker offers creative direction. A recipe that needs a
-        finished frame, or that is chosen by picking a character, has no
-        meaning there - and identity_edit would be unreachable anyway, since
-        effective_recipe returns it before it ever looks at a saved style."""
+        finished frame has no look of its own to bottle, so it stays out."""
         self.assertNotIn("qwen_edit", server.STYLE_BASE_IDS)
         self.assertNotIn("klein_inpaint", server.STYLE_BASE_IDS)
         self.assertNotIn("face_mint", server.STYLE_BASE_IDS)
-        self.assertNotIn("identity_edit", server.STYLE_BASE_IDS)
         for rid in ("realism", "realism_ii", "fantasy", "anime", "zimage",
-                    "qwen_image", "anima"):
+                    "qwen_image", "anima", "identity_edit"):
             self.assertIn(rid, server.STYLE_BASE_IDS)
         with self.assertRaisesRegex(ValueError, "cannot be a style"):
             server.validate_saved_style(style(base="qwen_edit"))
+
+    def test_an_identity_edit_style_records_its_anchor_requirement(self):
+        """Bottling an Identity Edit look is the point of "save this style"
+        (Jesse, 2026-08-22): the base is allowed, and the saved record carries
+        the anchor requirement so selecting it later asks for a character
+        instead of failing at render time. The flag is derived from the base,
+        never taken from the file."""
+        record = server.validate_saved_style(style(base="identity_edit"))
+        self.assertIs(record["needs_character"], True)
+        # A style on an ordinary base must not acquire the requirement, even
+        # if a hand-edited file claims it.
+        plain = server.validate_saved_style(style(needs_character=True))
+        self.assertNotIn("needs_character", plain)
+        with catalog(KREA):
+            self.assertIs(server.check_style_runnable(record), record)
 
     def test_id_is_slugged_and_cannot_shadow_a_builtin(self):
         """The ID is slugged because it addresses a file. The NAME is the

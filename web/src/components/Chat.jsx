@@ -266,6 +266,10 @@ export const applyThemeCss = (tk) => {
     .px-scroll::-webkit-scrollbar-track { background: transparent; margin: 24px 0; }
     .px-scroll::-webkit-scrollbar-thumb { background: var(--borderHov); border-radius: 999px; }
     .px-scroll::-webkit-scrollbar-thumb:hover { background: var(--borderStr); }
+    /* A dialog body scrolls as a whole; its children never compress. Without
+       this, a flex column capped by maxHeight shrinks its overflow:hidden
+       panels instead of overflowing - the clipped style dialog of 2026-08-22. */
+    .px-dialog-body > * { flex-shrink: 0; }
     @media (prefers-reduced-motion: reduce) { .px-msg { animation: none !important; } }
     .px-prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
     .px-prose strong { font-weight: 600; color: var(--text); }
@@ -939,6 +943,21 @@ export const Chat = () => {
     inputRef.current?.focus();
   };
 
+  // A style bottled from Identity Edit still runs on a character anchor. With
+  // none chosen, say what is missing at selection time - one sentence under
+  // the input - rather than failing the render later.
+  const chooseStyle = (id) => {
+    const ok = store.selectSavedStyle(id);
+    if (!ok) return ok;
+    const picked = ((store.options || {}).saved_styles || []).find((s) => s.id === id);
+    const anchored = !!store.opts.character
+      || (store.opts.refs || []).some((r) => r.kind === "identity" && r.file);
+    setCharacterNotice(picked?.needs_character && !anchored
+      ? `${picked.name} runs Identity Edit — pick a character anchor to use it.`
+      : null);
+    return ok;
+  };
+
   const lb = store.lb;
   useEffect(() => {
     if (!lb) return;
@@ -1158,6 +1177,9 @@ export const Chat = () => {
                          recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
                          setEntries={(entries) => store.setActiveLoraEntries(entries)}
                          setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
+                         setCoreStrength={(slot, value) =>
+                           // 2026-08-21: core rows edit strength through the same store-owned plan.
+                           store.setCoreStageStrength(slot, value)}
                          resetPlan={() => store.resetActiveLoraPlan()} />
             )}
           </div>
@@ -1360,7 +1382,7 @@ export const Chat = () => {
                                if (ok) setCharacterNotice(null);
                                return ok;
                              }}
-                             selectSavedStyle={(id) => store.selectSavedStyle(id)}
+                             selectSavedStyle={chooseStyle}
                              onNewStyle={() => {
                                setStyleDraft(store.styleDraftFromComposer());
                                setStyleEditId("");
@@ -1415,6 +1437,9 @@ export const Chat = () => {
                      recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
                      setEntries={(entries) => store.setActiveLoraEntries(entries)}
                      setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
+                     setCoreStrength={(slot, value) =>
+                       // 2026-08-21: core rows edit strength through the same store-owned plan.
+                       store.setCoreStageStrength(slot, value)}
                      resetPlan={() => store.resetActiveLoraPlan()} />
         </aside>
       )}
@@ -1458,7 +1483,7 @@ export const Chat = () => {
             const r = await store.saveStyle(record);
             // Selecting it on save is the point: you named what you were
             // already looking at, so the composer should now say so.
-            if (r.ok) store.selectSavedStyle(r.id);
+            if (r.ok) chooseStyle(r.id);
             return r;
           }} />
       )}

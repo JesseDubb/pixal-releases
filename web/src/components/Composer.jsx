@@ -106,6 +106,8 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
                rail = false, anchorRef, boundsRef, children }) => {
   const ref = useRef(null);
   const [railGeometry, setRailGeometry] = useState(null);
+  const [shift, setShift] = useState(0);
+  const shiftRef = useRef(0);        // measure() reads this, not the closure
 
   useLayoutEffect(() => {
     if (!rail) return undefined;
@@ -166,6 +168,65 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
     };
   }, [onClose, anchorRef]);
 
+  // A composer popup is position:absolute inside the composer, and the
+  // composer clips. So a pill near the right edge opens a panel whose tail is
+  // simply cut off - on the character anchor at 1400px wide that removed 26 of
+  // the delete button's 28 pixels, leaving a control that looked like it did
+  // not exist (2026-08-22). Nothing in the CSS says so; the panel reports its
+  // full width and the pixels are just not painted.
+  //
+  // So measure against whatever actually clips us and slide back inside. A
+  // transform, not a left/right change, so the anchoring rules above stay the
+  // single source of truth for where the panel wants to be.
+  useLayoutEffect(() => {
+    if (rail) return;                      // rail mode is already measured
+    const panel = ref.current;
+    if (!panel) return;
+    shiftRef.current = 0;                  // a fresh open measures from scratch
+    const clipper = (() => {
+      for (let n = panel.parentElement; n && n !== document.body; n = n.parentElement) {
+        const ox = getComputedStyle(n).overflowX;
+        if (ox && ox !== "visible") return n;
+      }
+      return null;
+    })();
+    const pad = SPACE[8];
+    const measure = () => {
+      const box = ref.current?.getBoundingClientRect();
+      if (!box) return;
+      // The rect already includes whatever shift is on the panel right now, so
+      // subtract it to get where the panel WANTS to be. That value has to come
+      // from a ref: this closure is built once per open, so reading the state
+      // would forever see the shift as 0, "undo" the correction it just made,
+      // and settle back on the clipped position - which is exactly what it did
+      // (measured: 776 -> shift -37 -> 739 -> shift 0 -> 776).
+      const cur = shiftRef.current;
+      const bounds = clipper ? clipper.getBoundingClientRect()
+                             : { left: 0, right: window.innerWidth };
+      const left = box.left - cur, right = box.right - cur;
+      const over = right - (bounds.right - pad);
+      const under = (bounds.left + pad) - left;
+      const next = Math.round(over > 0 ? -over : under > 0 ? under : 0);
+      if (next === cur) return;
+      shiftRef.current = next;
+      setShift(next);
+    };
+    measure();
+    // The panel's width is content-driven, so a list that finishes loading can
+    // move the edge after mount. Watching the box beats depending on children,
+    // which is a fresh object every render and would re-measure on every
+    // keystroke inside the popup.
+    const ro = typeof ResizeObserver === "function"
+      ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(panel);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rail, wide, xl, alignRight, down]);
+
   const panel = (
     <div ref={ref} className={rail ? undefined : "px-scroll"} style={{
       position: rail ? "fixed" : "absolute", zIndex: rail ? 45 : 25,
@@ -173,6 +234,7 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
         ...(down ? { top: "calc(100% + 6px)" } : { bottom: "calc(100% + 6px)" }),
         ...(alignRight ? { right: 0 } : { left: 0 }),
       }),
+      ...(shift ? { transform: `translateX(${shift}px)` } : null),
       minWidth: rail ? 0 : xl ? 384 : wide ? 300 : 230,
       maxWidth: rail ? "none" : xl ? "min(430px, 92vw)" : "min(340px, 86vw)",
       maxHeight: rail ? railGeometry?.maxHeight || 0
@@ -223,9 +285,12 @@ const Row = ({ sel, onClick, children, style, disabled = false, title }) => (
   </button>
 );
 
-const Tag = ({ children }) => (
-  <span style={{ marginLeft: "auto", fontFamily: "ui-monospace, Consolas, monospace",
-                 fontSize: 9, color: "var(--textTer)", flexShrink: 0 }}>{children}</span>
+const Tag = ({ children, title }) => (
+  <span title={title}
+        style={{ marginLeft: "auto", fontFamily: "ui-monospace, Consolas, monospace",
+                 fontSize: 9, color: "var(--textTer)", minWidth: 0,
+                 overflow: "hidden", textOverflow: "ellipsis",
+                 whiteSpace: "nowrap" }}>{children}</span>
 );
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -435,7 +500,9 @@ const LoraTile = ({ lora, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    title={(lora.words || []).join(", ") || lora.name}
+    title={[lora.vectors ? `${lora.vectors} Vector` : null,
+            (lora.words || []).join(", ") || lora.name]
+             .filter(Boolean).join(" — ")}
     style={{
       display: "flex", flexDirection: "column", gap: 4, padding: 4, minWidth: 0,
       border: "1px solid var(--border)", borderRadius: RADIUS.input,
@@ -452,6 +519,13 @@ const LoraTile = ({ lora, onClick }) => (
                    lineHeight: 1.3 }}>
       {lora.title || lora.short || lora.name}
     </span>
+    {lora.vectors ? (
+      <span style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                     color: "var(--textMut)", overflow: "hidden",
+                     textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {lora.vectors} Vector
+      </span>
+    ) : null}
   </button>
 );
 
@@ -706,7 +780,7 @@ const LoraToggle = ({ checked, disabled = false, label, onChange, title: hint })
 const LORA_RAIL_COLLAPSED_KEY = "pixal.loraRail.collapsed.v1";
 
 export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan,
-                            setCoreEnabled, rail = false }) => {
+                            setCoreEnabled, setCoreStrength, rail = false }) => {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("");
   const [strength, setStrength] = useState("1.0");
@@ -1105,6 +1179,11 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
           const on = (plan?.core || {})[stage.slot]?.enabled !== false;
           if (on) sequence += 1;
           const label = recipeStageLabel(stage, meta);
+          // What will actually run when the stage is on: the stored override
+          // when one deviates from the recipe, the authored strength
+          // otherwise. A bypassed stage keeps the control - dimmed with the
+          // rest of the row - so the retune is in place when it comes back.
+          const coreStrength = (plan?.core || {})[stage.slot]?.strength ?? stage.strength;
           return (
             <div key={`core-${stage.slot}`}
                  style={{ ...rowBase, opacity: on ? 0.78 : 0.5,
@@ -1122,11 +1201,20 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                               color: "var(--textMut)", overflow: "hidden",
                               textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {stage.role ? `${stage.role} · ` : ""}{short(stage.name)}
+                  {meta?.vectors ? ` · ${meta.vectors} Vector` : ""}
                   {on ? " · core" : " · bypassed"}
                 </div>
               </div>
-              <span style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 10,
-                             color: "var(--textTer)" }}>{planNumber(stage.strength)}</span>
+              <input type="number" step="0.05" value={coreStrength}
+                aria-label={`${label} strength`}
+                disabled={!setCoreStrength}
+                onChange={(event) => setCoreStrength &&
+                  setCoreStrength(stage.slot, event.target.value)}
+                style={{ width: 56, height: 30, background: "var(--bg1)",
+                         border: "1px solid var(--border)", borderRadius: RADIUS.input,
+                         padding: "0 5px", fontFamily: "ui-monospace, Consolas, monospace",
+                         fontSize: 10, color: "var(--text)", textAlign: "center",
+                         outline: "none" }} />
               <LoraToggle checked={on} disabled={!setCoreEnabled} label={label}
                           title={on
                             ? `Bypass ${label} — it is a core ${recipe?.label || "recipe"} stage, so this is an override`
@@ -1965,16 +2053,19 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                   ? `Identity Edit unavailable${identityMissing ? `:\n${identityMissing}` : ""}`
                   : !c.has_ref ? "Reference image required for Identity Edit" : "";
                 const deleting = deletingCharacter === c.id;
+                const meta = [...[c.age, c.sex, c.race].filter(Boolean), "ref"].join(" · ");
                 return (
-                  <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <div key={c.id} style={{ display: "flex", alignItems: "center",
+                                           gap: SPACE[4] }}>
                     <Row sel={opts.character === c.id} disabled={!!reason || deleting}
-                         style={{ flex: 1, width: "auto", minWidth: 0 }}
+                         style={{ flex: 1, width: "auto", minWidth: 0, overflow: "hidden" }}
                          title={reason || `Use ${c.name} with Identity Edit`}
                          onClick={() => { selectCharacter(c.id); setPop(null); }}>
-                      {c.name}
-                      <Tag>{deleting ? "deleting…" : reason
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis",
+                                     whiteSpace: "nowrap" }}>{c.name}</span>
+                      <Tag title={meta}>{deleting ? "deleting…" : reason
                         ? (!identityAvailable ? "identity edit unavailable" : "reference required")
-                        : [...[c.age, c.sex, c.race].filter(Boolean), "ref"].join(" · ")}</Tag>
+                        : meta}</Tag>
                     </Row>
                     <button type="button" disabled={!!deletingCharacter}
                       aria-label={`Edit ${c.name} character anchor`}
@@ -1983,9 +2074,12 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       style={{ width: 28, height: 28, flexShrink: 0, display: "inline-flex",
                                alignItems: "center", justifyContent: "center",
                                border: "none", borderRadius: RADIUS.control,
-                               background: "transparent", color: "var(--textTer)",
+                               background: "transparent", color: "var(--textSec)",
                                cursor: deletingCharacter ? "default" : "pointer",
-                               opacity: deletingCharacter ? 0.35 : 1 }}>
+                               opacity: deletingCharacter ? 0.35 : 1 }}
+                      onMouseEnter={(e) => { if (!deletingCharacter)
+                        e.currentTarget.style.background = "var(--bg3)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                       <PencilSimple size={13} weight="duotone" />
                     </button>
                     <button type="button" disabled={!!deletingCharacter}
@@ -1995,9 +2089,12 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       style={{ width: 28, height: 28, flexShrink: 0, display: "inline-flex",
                                alignItems: "center", justifyContent: "center",
                                border: "none", borderRadius: RADIUS.control,
-                               background: "transparent", color: "var(--textTer)",
+                               background: "transparent", color: "var(--textSec)",
                                cursor: deletingCharacter ? "default" : "pointer",
-                               opacity: deletingCharacter && !deleting ? 0.35 : 1 }}>
+                               opacity: deletingCharacter && !deleting ? 0.35 : 1 }}
+                      onMouseEnter={(e) => { if (!deletingCharacter)
+                        e.currentTarget.style.background = "var(--bg3)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                       <Trash size={13} weight="duotone" />
                     </button>
                   </div>

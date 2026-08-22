@@ -26,6 +26,7 @@ import re
 import shutil
 import signal
 import socket
+import statistics
 import struct
 import subprocess
 import sys
@@ -370,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.1b"
+PIXAL_VERSION = "1.0.3b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -416,6 +417,9 @@ def load_config():
                    "model": KIMI_MODEL,
                    "local_model": "",         # GGUF path for the managed local brain
                    "local_keep": True,        # keep it in VRAM between replies
+                   # ...but not forever: hand the card back after this many
+                   # idle minutes. 0 disables the reaper entirely.
+                   "local_idle_minutes": 10,
                    # -1 = every layer on the GPU (the hardcoded flag before
                    # 8.7), 0 = CPU, positive = that many layers. The 16 GB
                    # knob: the brain shares the card or the render swaps.
@@ -1304,7 +1308,13 @@ FANTASY_LORA = "ZImage\\Base\\DnDPainterlyCleanZBase.safetensors"
 # graph that samples runs it as the first locked stage, whichever checkpoint is
 # selected. It was named REALISM_II_LORA back when Realism II was the only
 # recipe carrying it.
-KREA_BYPASS_LORA = "Krea 2\\krea2filterbypass2vector.safetensors"
+# The CivitAI download name, verbatim (Krea2FilterBypass, model 2728234,
+# version "2vector" = 3066812, "This modifies 2 vectors of the affected
+# layer"). It was filed on this box as krea2filterbypass2vector.safetensors -
+# a local rename, byte-identical by sha256 - and every OTHER machine has it
+# under the name CivitAI ships. Naming the download is what lets a fresh
+# install find it; see _catalog_has for the folder half of the same problem.
+KREA_BYPASS_LORA = "Krea 2\\krea2filterbypass.safetensors"
 REALISM_LORA = "Krea 2\\RealisticSnapshotKrea2.safetensors"
 # r128 export: half the file, likeness indistinguishable from full-rank in the
 # 2026-08-11 face-off (same seed, same ref, bf16 encoder).
@@ -1455,7 +1465,11 @@ RECIPE_SPECS = {
         "lora_stages": [
             {"slot": "vector_bypass", "name": KREA_BYPASS_LORA, "strength": 1.0,
              "role": "structural", "zone": "core", "order_locked": True,
-             "strength_editable": False, "removable": False,
+             # 2026-08-21: core strength opened to the composer. The plan
+             # contract already carried core strength overrides; only this flag
+             # kept the row read-only. Slots and names are unchanged, so every
+             # stored plan still validates - the revision stays put.
+             "strength_editable": True, "removable": False,
              "active_by_default": True},
             {"slot": "realistic_snapshot", "name": REALISM_LORA, "strength": 1.0,
              "role": "style", "zone": "editable", "order_locked": False,
@@ -1476,7 +1490,10 @@ RECIPE_SPECS = {
         "lora_stages": [
             {"slot": "vector_bypass", "name": KREA_BYPASS_LORA, "strength": 1.0,
              "role": "structural", "zone": "core", "order_locked": True,
-             "strength_editable": False, "removable": False,
+             # 2026-08-21: core strength opened here too, same contract as
+             # realism - the server already honoured core strength overrides,
+             # so the revision stays put.
+             "strength_editable": True, "removable": False,
              "active_by_default": True},
         ],
         "required_text_encoders": [KREA_CLIP_REALISM],
@@ -1524,11 +1541,15 @@ RECIPE_SPECS = {
         "lora_stages": [
             {"slot": "vector_bypass", "name": KREA_BYPASS_LORA, "strength": 1.0,
              "role": "structural", "zone": "core", "order_locked": True,
-             "strength_editable": False, "removable": False,
+             # 2026-08-21: core strength opened to the composer; the plan
+             # contract already carried the override, so no revision bump.
+             "strength_editable": True, "removable": False,
              "active_by_default": True},
             {"slot": "identity_edit", "name": IDENTITY_LORA, "strength": 1.0,
              "role": "structural", "zone": "core", "order_locked": True,
-             "strength_editable": False, "removable": False,
+             # 2026-08-21: same unlock as the bypass above - the identity
+             # LoRA's strength is user-tunable through the core override map.
+             "strength_editable": True, "removable": False,
              "active_by_default": True},
             # RawGirlV3 is a taste call, not structure: the slot stays authored
             # (one tap to bring back, file checked only when used) but the
@@ -1687,6 +1708,50 @@ def model_profile(rel, kind="diffusion_models"):
         profile.update(profile_id="clear_anime", variant="base",
                        execution_profile="zimage_clear_anime")
     return profile
+
+# Krea2FilterBypass ships as sibling CivitAI versions that differ ONLY in how
+# many vectors of the text-fusion projector they move - "2vector" (model
+# 2728234, version 3066812) and "3vector" (3067151). The names are one
+# character apart and people rename them on the way in; this box had the
+# 2vector filed as krea2filterbypass2vector.safetensors for weeks. The FILE is
+# the honest answer: a single [1, N] F32 tensor whose non-zero count IS the
+# version, so the explorer reads the patch instead of trusting a filename.
+# At 160 bytes that is free - and it is only ever attempted on files small
+# enough to BE one of these patches, never on a real multi-hundred-MB LoRA.
+_VECTOR_PATCH_MAX_BYTES = 64 * 1024
+_VECTOR_PATCH_SUFFIX = ".txtfusion.projector.diff"
+
+
+@lru_cache(maxsize=256)
+def _vector_patch_count(path_text, mtime_ns, size):
+    """Vectors a projector-patch LoRA moves, or None if it is not one."""
+    if size > _VECTOR_PATCH_MAX_BYTES:
+        return None
+    try:
+        raw = Path(path_text).read_bytes()
+        span = struct.unpack("<Q", raw[:8])[0]
+        header = json.loads(raw[8:8 + span])
+    except (OSError, ValueError, struct.error):
+        return None
+    if not isinstance(header, dict):
+        return None
+    for key, meta in header.items():
+        # __metadata__ is safetensors' own header slot, not a tensor; and a
+        # patch file may name its tensor for any target layer, so match the
+        # projector suffix rather than the full key.
+        if key == "__metadata__" or not str(key).endswith(_VECTOR_PATCH_SUFFIX):
+            continue
+        if not isinstance(meta, dict) or meta.get("dtype") != "F32":
+            return None
+        try:
+            first, last = meta["data_offsets"]
+            body = raw[8 + span + first:8 + span + last]
+            values = struct.unpack("<%df" % (len(body) // 4), body)
+        except (KeyError, TypeError, ValueError, struct.error):
+            return None
+        return sum(1 for v in values if v != 0.0) or None
+    return None
+
 
 def lora_profile(rel):
     rel = str(rel).replace("/", "\\")
@@ -2018,11 +2083,15 @@ RECIPE_SCHEMA_VERSION = 1
 _STYLE_ID_RE = re.compile(r"[a-z0-9_]{1,64}")
 
 # The graphs a saved style may be built on. Source-only recipes need a finished
-# frame and have no text-to-image path; identity_edit is chosen by picking a
-# character, not by picking a style. Neither belongs in the style picker.
+# frame and have no text-to-image path of their own, so they have no look to
+# bottle and stay out of the style picker. A needs_character recipe (today only
+# identity_edit) IS allowed: bottling the look of an Identity Edit run is the
+# whole point of "save this style" (Jesse, 2026-08-22). Such a style records
+# that it still needs a character anchor, and the composer asks for one instead
+# of failing at render time.
 STYLE_BASE_IDS = tuple(
     rid for rid, spec in RECIPE_SPECS.items()
-    if rid not in SOURCE_ONLY_RECIPE_IDS and not spec.get("needs_character"))
+    if rid not in SOURCE_ONLY_RECIPE_IDS)
 
 # Which node carries the sampler schedule a saved style may tune, and the class
 # that node runs. Only graphs with ONE stable sampler seat are listed: Realism
@@ -2245,8 +2314,7 @@ def validate_saved_style(raw, default_id=""):
         raise ValueError(f"unknown base recipe: {base_id or '(missing)'}")
     if base_id not in STYLE_BASE_IDS:
         raise ValueError(f"{RECIPE_SPECS[base_id]['label']} cannot be a style - it "
-                         "runs from a finished frame or a character anchor, not "
-                         "from the style picker")
+                         "runs from a finished frame, not from the style picker")
     style_id = style_slug(raw.get("id") or default_id or name)
     if not style_id or not _STYLE_ID_RE.fullmatch(style_id):
         raise ValueError("the style id must be lowercase letters, digits or underscores")
@@ -2280,6 +2348,10 @@ def validate_saved_style(raw, default_id=""):
         "tuning": validate_style_tuning(raw.get("tuning")),
         "provenance": provenance or {},
     }
+    if RECIPE_SPECS[base_id].get("needs_character"):
+        # Derived from the base, never taken from the file: the picker reads
+        # this to ask for an anchor instead of failing the render later.
+        record["needs_character"] = True
     if aspect:
         record["aspect"] = aspect
     if mp is not None:
@@ -2375,6 +2447,49 @@ def load_saved_styles():
     return styles, problems
 
 
+# The shipped starter set: product data living in templates/styles/ (a
+# subdirectory, so the TEMPLATES glob above never mistakes a style for a
+# graph). A fresh install's recipes/ holds only .gitkeep, and the first thing
+# the picker asked of a stranger was to invent a base, a model and a LoRA
+# chain - the node soup they installed Pixal to escape. The starter set is
+# built ONLY on checkpoints the installer itself lays down (Z-Image Turbo and
+# Anima; see install/catalog.json), so every one of them runs on a machine
+# that has never seen a Civitai login.
+STARTER_STYLE_DIR = HERE / "templates" / "styles"
+
+
+def seed_starter_styles():
+    """Copy the shipped starter styles into recipes/ on first run, once.
+
+    The copies become ordinary user data from the first boot - visible,
+    editable, deletable like anything else in recipes/. The marker file, not
+    the folder's emptiness, is the memory: it is written whether or not
+    anything was copied, so a user who deletes every starter never sees them
+    resurrected, and an upgrade that already has styles is never merged with
+    the set. Copying can clobber nothing - the no-styles precondition means
+    there is no user file to overwrite, and the marker goes down LAST so a
+    half-failed copy is retried on the next boot rather than sealed in.
+    """
+    try:
+        marker = RECIPE_DIR / ".starter_seeded"
+        if marker.exists():
+            return
+        if STARTER_STYLE_DIR.is_dir():
+            RECIPE_DIR.mkdir(exist_ok=True)
+            if not any(RECIPE_DIR.glob("*.json")):
+                for src in sorted(STARTER_STYLE_DIR.glob("*.json")):
+                    dst = RECIPE_DIR / src.name
+                    if not dst.exists():
+                        shutil.copy2(src, dst)
+        marker.write_text("the starter styles were offered once; this file "
+                          "only stops deleted ones from coming back\n",
+                          encoding="utf-8")
+    except OSError as exc:
+        # Seeding is a courtesy, never a boot blocker.
+        print(f"[pixal] starter styles not seeded: {exc}", flush=True)
+
+
+seed_starter_styles()
 SAVED_STYLES, STYLE_PROBLEMS = load_saved_styles()
 
 
@@ -3200,15 +3315,44 @@ def _zimage_settings(entry):
         raise ValueError(f"unsupported Z-Image execution profile: {profile_id}") from None
 
 
-def _catalog_has(kind, rel):
+def _catalog_resolve(kind, rel):
+    """The installed rel this asset name means, or None.
+
+    Exact path first, then a UNIQUE basename. The returned rel is the name
+    ComfyUI's loaders actually list: a file sitting in a subfolder is offered
+    as `Flux\\ae.safetensors`, and handing a loader the bare candidate it
+    matched by is a queue-time rejection (Z-Image's first VAE candidate died
+    exactly that way on a box whose only ae.safetensors lives under Flux\\).
+    """
     want = str(rel).replace("/", "\\").lower()
-    return any(e["rel"].replace("/", "\\").lower() == want for e in model_catalog(kind))
+    rels = [e["rel"].replace("/", "\\") for e in model_catalog(kind)]
+    low = [r.lower() for r in rels]
+    if want in low:
+        return rels[low.index(want)]
+    stem = want.rsplit("\\", 1)[-1]
+    hits = [r for r in rels if r.rsplit("\\", 1)[-1].lower() == stem]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _catalog_has(kind, rel):
+    """Is this asset installed? Exact path first, then a UNIQUE basename.
+
+    Exact-only was stricter than `resolve_lora`, which has always fallen back
+    to a unique basename - so a recipe could report a recipe LoRA missing
+    on a machine that owns x and merely filed it in another folder, while the
+    graph builder would have resolved it fine. Nobody downloading from CivitAI
+    inherits our folder layout, and this readiness list is the first thing a
+    fresh install reads. Uniqueness is the guard: two files sharing a basename
+    stay ambiguous and stay unmatched, exactly as before.
+    """
+    return _catalog_resolve(kind, rel) is not None
 
 
 def _pick_catalog_asset(kind, candidates, label, recipe="Z-Image"):
     for name in candidates:
-        if _catalog_has(kind, name):
-            return name
+        real = _catalog_resolve(kind, name)
+        if real:
+            return real
     raise ValueError(f"{recipe} requires {label}: " + " or ".join(candidates))
 
 
@@ -3445,6 +3589,18 @@ LTX25_VRAM_GATE_ID = "ltx25:vram"
 # model_profile(), because that flag is the still-image picker contract.
 H3_MODEL_ID = "fl2va"
 H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+# The second architecture the same encoder/VAE stack serves: reference-to-video
+# ("put THIS subject in a new scene"). The model chip IS the lane switch, per
+# render - same family, different conditioning node and a different trained
+# prompt format (brief 9.12).
+H3_REF2V_MODEL_ID = "ref2va"
+H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+# MiniMax's own caps, Pixal-enforced because the node will not: 9 images is the
+# node schema's Autogrow max; 12 files across ALL types is the model card's
+# Ref2VA row (the node alone would permit 15). v1 wires images only; the 12
+# exists from day one so the deferred video/audio lanes inherit one constant.
+H3_REF2V_MAX_IMAGES = 9
+H3_REF2V_MAX_FILES = 12
 H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 H3_VIDEO_VAE = "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
 H3_AUDIO_VAE = "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
@@ -3507,28 +3663,40 @@ _H3_SHOT_LABEL = re.compile(
 # the differences are close to noise. Framing dominates sampler. So these are
 # offered as a SPEED ladder, not a quality ladder - pick by how long you are
 # willing to wait, and frame tight either way.
+# Every mode names the variants it can run. The distillation rungs are
+# ("fl2va",) alone: their LoRAs are all fl2v distills, and the official
+# ref2v 4-step LoRA is not on this machine (models/loras/Minimax H3/ holds
+# four fl2v turbos and no ref2v, checked 2026-08-22). Quality carries both
+# variants because ref2va IS quality at 20 steps - refusing it the quality id
+# would refuse the only mode it has. A distillation asked on a ref2va chip is
+# a 400 at /api/animate, never a silent fallback: the user picked a lane that
+# can never honour it.
 H3_SPEED_MODES = (
     {"id": "quality", "label": "Quality", "gloss": "20 steps, no distillation",
      "steps": H3_STEPS, "sampler": H3_SAMPLER, "scheduler": H3_SCHEDULER,
-     "lora": None, "strength": 0.0, "title": None},
+     "lora": None, "strength": 0.0, "title": None,
+     "variants": (H3_MODEL_ID, H3_REF2V_MODEL_ID)},
     # Jesse's find: v4 at full strength was waxy, 0.8 restored skin texture.
     {"id": "turbo8", "label": "Turbo 8", "gloss": "8 steps, lightx2v v1.0 @0.8",
      "steps": 8, "sampler": "euler", "scheduler": "simple",
      "lora": "Minimax H3\\minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-     "strength": 0.8, "title": "lightx2v Turbo 8-step v1.0"},
+     "strength": 0.8, "title": "lightx2v Turbo 8-step v1.0",
+     "variants": (H3_MODEL_ID,)},
     # Kijai's published recipe for the lightx2v distill (4 steps, 0.75,
     # er_sde or sa_solver). The 4-step file is the 768p-trained one, which
     # matches Pixal's 768 short edge.
     {"id": "turbo4", "label": "Turbo 4", "gloss": "4 steps, Kijai's recipe @0.75",
      "steps": 4, "sampler": "er_sde", "scheduler": "simple",
      "lora": "Minimax H3\\minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
-     "strength": 0.75, "title": "lightx2v Turbo 4-step v1.0 768p"},
+     "strength": 0.75, "title": "lightx2v Turbo 4-step v1.0 768p",
+     "variants": (H3_MODEL_ID,)},
     # Superseded by the two above; kept so old jobs and the legacy turbo
     # toggle keep resolving to something real.
     {"id": "turbo_v4", "label": "Turbo v4 (old)", "gloss": "8 steps, superseded",
      "steps": H3_TURBO["steps"], "sampler": H3_TURBO["sampler"],
      "scheduler": H3_TURBO["scheduler"], "lora": H3_TURBO_LORA,
-     "strength": H3_TURBO["strength"], "title": "MiniMax H3 Turbo v4"},
+     "strength": H3_TURBO["strength"], "title": "MiniMax H3 Turbo v4",
+     "variants": (H3_MODEL_ID,)},
 )
 H3_SPEED_DEFAULT = "quality"
 H3_SPEED_LEGACY_TURBO = "turbo8"     # what a bare turbo=True now means
@@ -3718,10 +3886,18 @@ def _video_asset(kind, rel):
                 None)
 
 
-def _h3_asset_paths():
-    """Resolve every fixed H3 dependency to the spelling emitted by the catalog."""
+def _h3_asset_paths(model_rel=None):
+    """Resolve every fixed H3 dependency to the spelling emitted by the catalog,
+    for THE PICKED BUILD's transformer file (the stock fl2va constant when
+    unspecified). Encoder and both VAEs are shared across variants and stay
+    fixed; the transformer is the lane, so a ref2va-only machine must not fail
+    this check on the fl2va file it never needed."""
+    build = model_rel or H3_MODEL
+    label = ("MiniMax H3 FL2VA model" if build == H3_MODEL else
+             "MiniMax H3 REF2VA model" if build == H3_REF2V_MODEL else
+             f"MiniMax H3 model ({base(build)})")
     required = (
-        ("model", "diffusion_models", H3_MODEL, "MiniMax H3 FL2VA model"),
+        ("model", "diffusion_models", build, label),
         ("clip", "text_encoders", H3_CLIP, "Qwen3-VL 32B MiniMax encoder"),
         ("video_vae", "vae", H3_VIDEO_VAE, "MiniMax H3 video VAE"),
         ("audio_vae", "vae", H3_AUDIO_VAE, "MiniMax H3 audio VAE"),
@@ -3738,56 +3914,64 @@ def _h3_asset_paths():
 
 def _h3_finetune_label(stem):
     """Filename stem -> chip label: drop the packaging words, keep the identity."""
-    drop = {"h3", "fl2va", "pruned", "int8", "convrot", "comfyui", "minimax"}
+    drop = {"h3", "fl2va", "ref2va", "pruned", "int8", "convrot", "comfyui", "minimax"}
     words = [w for w in stem.replace("-", "_").split("_")
              if w and w.lower() not in drop]
     return " ".join(words).title() or stem
 
 
 def h3_model_options():
-    """Every FL2VA build on disk, stock first - each is an Animate model chip.
+    """Every FL2VA and REF2VA build on disk, stock first - each is an Animate
+    model chip, and the chip IS the lane switch (brief 9.12: per render, one
+    lane, chosen by weights).
 
-    Finetunes of the architecture (anything carrying "fl2va" in its filename
-    under diffusion_models) share H3's encoder, VAEs and LoRA catalog, so
-    dropping one beside the stock weights is all it takes to get a chip.
-    The stock file keeps the legacy "fl2va" id so old ledger entries and
-    rerolls keep resolving; finetune ids are their lowercase filename stems
-    for the same reason - stable across restarts and rescans.
+    Finetunes of either architecture (anything carrying "fl2va" or "ref2va"
+    in its filename under diffusion_models) share H3's encoder, VAEs and LoRA
+    catalog, so dropping one beside the stock weights is all it takes to get a
+    chip. The stock files keep the legacy "fl2va"/"ref2va" ids so old ledger
+    entries and rerolls keep resolving; finetune ids are their lowercase
+    filename stems for the same reason - stable across restarts and rescans.
 
-    The stock chip is listed even when the scan finds nothing: selection and
-    validation must be able to NAME the stock build on a bare machine (its id
-    is the ledger's legacy spelling). That never queues a render against
-    absent weights - _h3_asset_paths() stays the disk-driven availability
-    gate, and it runs only after the id resolves.
+    Both stock chips are listed even when the scan finds nothing: selection
+    and validation must be able to NAME the stock builds on a bare machine
+    (the ids are the ledger's legacy spellings). That never queues a render
+    against absent weights - _h3_asset_paths() stays the disk-driven
+    availability gate, and it runs only after the id resolves.
     """
-    stock = str(H3_MODEL).replace("/", "\\").lower()
-    options = []
+    stock = {
+        str(H3_MODEL).replace("/", "\\").lower(): (
+            H3_MODEL_ID, "FL2VA",
+            "First-frame video with native synchronized audio."),
+        str(H3_REF2V_MODEL).replace("/", "\\").lower(): (
+            H3_REF2V_MODEL_ID, "REF2VA",
+            "Reference-to-video: this subject, carried into a new scene, with "
+            "native synchronized audio."),
+    }
+    found = {}
+    finetunes = []
     for entry in model_catalog("diffusion_models"):
         rel = str(entry.get("rel") or "")
         low = rel.replace("/", "\\").lower()
         name = low.rsplit("\\", 1)[-1]
-        if "fl2va" not in name or not name.endswith(".safetensors"):
+        if not name.endswith(".safetensors") or \
+                ("fl2va" not in name and "ref2va" not in name):
             continue
-        if low == stock:
-            options.insert(0, {
-                "id": H3_MODEL_ID, "rel": rel, "label": "FL2VA",
-                "description": "First-frame video with native synchronized audio."})
-        else:
-            stem = rel.replace("/", "\\").rsplit("\\", 1)[-1][:-len(".safetensors")]
-            options.append({
-                "id": name[:-len(".safetensors")], "rel": rel,
-                "label": _h3_finetune_label(stem),
-                "description": "Community FL2VA finetune - same encoder, VAEs "
-                               "and LoRA catalog as stock."})
-    if H3_MODEL_ID not in {opt["id"] for opt in options}:
-        # Bare catalog (fresh install, CI): the stock id must still resolve so
-        # selection and validation can name it. The rel is the expected
-        # spelling; _h3_asset_paths() refuses the render while the file is
-        # truly absent, so availability stays disk-driven.
-        options.insert(0, {
-            "id": H3_MODEL_ID, "rel": H3_MODEL, "label": "FL2VA",
-            "description": "First-frame video with native synchronized audio."})
-    return options
+        if low in stock:
+            found[low] = rel
+            continue
+        stem = rel.replace("/", "\\").rsplit("\\", 1)[-1][:-len(".safetensors")]
+        variant = "ref2va" if "ref2va" in name else "fl2va"
+        finetunes.append({
+            "id": name[:-len(".safetensors")], "rel": rel,
+            "label": _h3_finetune_label(stem),
+            "description": f"Community {variant.upper()} finetune - same encoder, "
+                           "VAEs and LoRA catalog as stock."})
+    options = []
+    for low, (chip_id, label, description) in stock.items():
+        options.append({"id": chip_id, "rel": found.get(low) or
+                        (H3_MODEL if chip_id == H3_MODEL_ID else H3_REF2V_MODEL),
+                        "label": label, "description": description})
+    return options + finetunes
 
 
 def h3_model_rel(model_id):
@@ -3797,9 +3981,26 @@ def h3_model_rel(model_id):
 
 
 def h3_model_variant(model_id):
-    """Chip id -> LoRA-compatibility variant. Every build listed is FL2VA, so
-    compatibility stays architecture-wide rather than per-finetune."""
-    return H3_MODEL_ID if h3_model_rel(model_id) is not None else None
+    """Chip id -> its lane: "fl2va" or "ref2va", None for an unknown id.
+
+    Precedence, matched on the lowercased basename (the scan already
+    lowercases): an exact stock basename first - there are two now, and each
+    maps to its own variant by definition - then "ref2va" in the name, then
+    "fl2va". A future finetune carrying BOTH tokens therefore lands in ref2va,
+    deterministically and on purpose (9.0 trap #6)."""
+    rel = h3_model_rel(model_id)
+    if rel is None:
+        return None
+    name = str(rel).replace("/", "\\").lower().rsplit("\\", 1)[-1]
+    if name == H3_MODEL.replace("/", "\\").lower().rsplit("\\", 1)[-1]:
+        return H3_MODEL_ID
+    if name == H3_REF2V_MODEL.replace("/", "\\").lower().rsplit("\\", 1)[-1]:
+        return H3_REF2V_MODEL_ID
+    if "ref2va" in name:
+        return H3_REF2V_MODEL_ID
+    if "fl2va" in name:
+        return H3_MODEL_ID
+    return None
 
 
 def video_lora_profile(name):
@@ -3856,8 +4057,10 @@ def validate_video_lora_plan(engine_id, model_id, plan):
         name = str(entry.get("name") or "").strip().replace("/", "\\")
         key = name.lower()
         if not name or key not in allowed:
-            raise ValueError(f"video LoRA is not compatible with MiniMax H3 FL2VA: "
-                             f"{name or 'missing name'}")
+            # the variant names the lane, so a ref2va render refusing an
+            # FL2VA-only LoRA says which fence it hit
+            raise ValueError(f"video LoRA is not compatible with MiniMax H3 "
+                             f"{variant.upper()}: {name or 'missing name'}")
         if key in seen:
             raise ValueError(f"duplicate video LoRA in chain: {name}")
         seen.add(key)
@@ -3980,8 +4183,23 @@ def video_engine_options():
         ltx25_missing.append("ComfyUI v0.31+ (LTX 2.5 nodes)")
     ltx25_available = not ltx25_missing
 
+    # Per-chip availability keeps its everyday meaning: whether THAT chip can
+    # render - the shared encoder/VAEs plus its own transformer file (the
+    # transformer is the lane, so a ref2va-only machine must not fail on the
+    # fl2va file). The engine is available when ANY chip is.
+    h3_chips = h3_model_options()
+    h3_chip_available = {}
+    for opt in h3_chips:
+        _, chip_missing = _h3_asset_paths(opt["rel"])
+        h3_chip_available[opt["id"]] = not chip_missing
     _, h3_missing = _h3_asset_paths()
-    h3_available = not h3_missing
+    h3_available = any(h3_chip_available.values())
+    if h3_available:
+        h3_missing = []
+    else:
+        h3_missing = ["a MiniMax H3 model build (FL2VA or REF2VA)"
+                      if label == "MiniMax H3 FL2VA model" else label
+                      for label in h3_missing]
     h3_vram_note = vram_fit_note("h3")
     engines = [
         # Both engines generate sound - LTX through its audio VAE, H3 natively - so
@@ -4008,7 +4226,7 @@ def video_engine_options():
          **({"quant_hint": True} if _quant_family("ltx25") else {}),
          "available": ltx25_available, "missing": ltx25_missing},
         {"id": "h3", "label": "MiniMax H3", "tag": "long takes · audio",
-         "description": "FL2VA image-to-video with synchronized generated sound, "
+         "description": "FL2VA/REF2VA video with synchronized generated sound, "
                         "and the longer takes of the two engines.",
          "lengths": [{"s": 5, "label": "5s", "gloss": "a scene"},
                      {"s": 10, "label": "10s", "gloss": "a full take"},
@@ -4023,16 +4241,13 @@ def video_engine_options():
          "turbo": h3_turbo_available(),
          "speed_modes": h3_speed_mode_options(),
          "speed_default": H3_SPEED_DEFAULT,
-         # One chip per FL2VA build on disk (stock first) - drop a finetune
-         # beside the stock weights and it appears here after a rescan.
+         # One chip per FL2VA or REF2VA build on disk (stock first) - drop a
+         # finetune beside the stock weights and it appears here after a rescan.
          "models": [{"id": opt["id"], "label": opt["label"],
-                     "available": h3_available,
+                     "available": h3_chip_available[opt["id"]],
                      "description": opt["description"],
                      "loras": h3_video_lora_options(opt["id"])}
-                    for opt in h3_model_options()] or
-                   [{"id": H3_MODEL_ID, "label": "FL2VA", "available": False,
-                     "description": "First-frame video with native synchronized audio.",
-                     "loras": []}],
+                    for opt in h3_chips],
          "vram_min_gb": VRAM_MINIMUMS["h3"][0],
          **({"vram_note": h3_vram_note} if h3_vram_note else {}),
          **({"quant_hint": True} if _quant_family("h3") else {}),
@@ -4307,6 +4522,13 @@ H3_I2VA_HEADER = ("For the target video, at 0.00 seconds into the target video, 
                   "<Picture 1> (from [Shot 1]) is fully referenced.")
 
 _H3_DESC_FIELD_RE = re.compile(r"(?im)^\s*integrated_multimodal_description\s*:")
+# The ref2va lane names its body field detailed_description: (ref guide §5.2).
+# The 9.9 repairs key on the FIELD SPAN, so the span matcher widens to both
+# names - a SEPARATE alternation, because _H3_DESC_FIELD_RE is shared with
+# assemble_h3_prompt's wrap gate and widening it in place would change fl2va
+# behaviour on any input containing the ref2va field name (brief 9.12 Task 4).
+_H3_DESC_FIELD_RE_ANY = re.compile(
+    r"(?im)^\s*(?:integrated_multimodal_description|detailed_description)\s*:")
 _H3_SOUND_FIELD_RE = re.compile(r"(?im)^\s*overall_soundscape\s*:")
 _H3_MUSIC_FIELD_RE = re.compile(r"(?im)^\s*non_diegetic_music\s*:")
 _H3_HEADER_RE = re.compile(
@@ -4333,8 +4555,15 @@ def h3_alignment_header(last_frame=False, seconds=None):
 
 def h3_slug_source(brief):
     """Filename label from the description content, never the fixed header
-    (which would name every H3 clip 'for_the_target_video')."""
-    text = str(brief or "").split("integrated_multimodal_description:")[-1]
+    (which would name every H3 clip 'for_the_target_video'). The ref2va lane's
+    field is detailed_description:, and its value leads with the pinned style
+    sentence - skip both, or every ref2va clip would be named after them."""
+    text = str(brief or "")
+    if "detailed_description:" in text:
+        text = text.split("detailed_description:")[-1]
+        text = re.sub(r"(?i)^\s*the target video is in [^.]*\.\s*", "", text)
+    else:
+        text = text.split("integrated_multimodal_description:")[-1]
     return re.sub(r"(?i)^\s*\[\s*shot\s*1\s*\]\s*", "", text.strip())
 
 
@@ -4347,6 +4576,57 @@ _H3_UNLANGUAGED_TAG_RE = re.compile(
     r"<d>\s*(?!\[)[\"“]?(.*?)[\"”]?\s*</d>", re.S)
 _H3_PROPER_TAG_RE = re.compile(r"<d>\[[A-Za-z]+\][^<]*</d>")
 
+# The language-token map is CLOSED, not a guesser: history.jsonl has only ever
+# produced [English] (41 briefs) and [EN] (2), so EN normalizes and every
+# unknown code passes through byte-identical. Inventing an expansion for a
+# code nobody has seen is the same writing-from-memory mistake as a constant
+# slot (brief 9.9).
+_H3_LANG_TOKENS = {"EN": "English"}
+_H3_LANG_TAG_RE = re.compile(r"<d>\[([A-Za-z]+)\]")
+
+# Delivery prose stranded INSIDE the tag (history.jsonl b63b6345 shipped
+# `<d>[English] Do not watch," she mutters, ...</d>` - the mirror of the
+# trailing-prose failure) is direction the director meant to give: relocate it
+# BEFORE the tag, never strip it. The signature is closed and conservative -
+# an orphan closing quote with its attribution comma ADJACENT (English puts
+# the comma inside the quotes, `watch," she`; the brain emits both orders),
+# and an attribution verb from this list within the next few words. Anything
+# else (balanced quotes, no comma, a verb off the list) is left untouched,
+# because legitimate dialogue quoting somebody else must survive.
+_H3_ATTRIBUTION_VERBS = frozenset({
+    "says", "said", "mutters", "muttered", "whispers", "whispered",
+    "shouts", "shouted", "adds", "added", "replies", "replied",
+    "asks", "asked"})
+_H3_TAG_BLOCK_RE = re.compile(r"<d>(\[[A-Za-z]+\].*?)</d>", re.S)
+_H3_ORPHAN_QUOTE_RE = re.compile("[\"\u201d]")
+
+
+def _h3_relocate_intag_prose(m):
+    """Move orphaned delivery prose out of a <d> block; see the table above."""
+    content = m.group(1)
+    for q in _H3_ORPHAN_QUOTE_RE.finditer(content):
+        earlier = content[:q.start()]
+        # A closing quote with an opening partner earlier in the tag is
+        # balanced - somebody quoting somebody - not stranded delivery prose.
+        if (q.group(0) == "\u201d" and "\u201c" in earlier) or \
+           (q.group(0) == '"' and '"' in earlier):
+            continue
+        rest = content[q.end():]
+        # the attribution comma sits either side of the dangling quote
+        if rest.startswith(","):
+            prose = rest[1:].strip()
+        elif earlier.rstrip().endswith(","):
+            prose = rest.strip()
+        else:
+            continue
+        words = [w.strip(".,;:!?").lower() for w in prose.split()[:3]]
+        if not any(w in _H3_ATTRIBUTION_VERBS for w in words):
+            continue
+        # the orphan quote and its comma dissolve; everything from the quote
+        # onward was prose, everything before it was the spoken line
+        return f"{prose} <d>{earlier.rstrip().rstrip(',')}</d>"
+    return m.group(0)
+
 
 def repair_h3_dialogue_tags(body, language="English"):
     """Normalize spoken lines to the trained `(Sn) says: <d>[Lang] words</d>`.
@@ -4357,14 +4637,20 @@ def repair_h3_dialogue_tags(body, language="English"):
     fragments wrapping DELIVERY prose instead of the words - `says: "line," d>
     she glances back...</d>`. The words become properly tagged, and leftover
     fragments dissolve so the prose lands back in the scene text where the
-    encoder reads it as action. Mechanical, so fix rather than re-ask - same
-    policy as every other repair in assemble_h3_prompt."""
+    encoder reads it as action. Brief 9.9 added two more, both closed rules
+    over real history: the [EN] shorthand normalizes through the two-token
+    map, and delivery prose stranded inside a proper tag relocates in front
+    of it. Mechanical, so fix rather than re-ask - same policy as every
+    other repair in assemble_h3_prompt."""
     def _wrap(m):
         return (f"{m.group(1)}<d>[{language}] "
                 f"{m.group(2).strip().rstrip(',')}</d> ")
     out = _H3_UNTAGGED_SAYS_RE.sub(_wrap, body)
     out = _H3_UNLANGUAGED_TAG_RE.sub(
         lambda m: f"<d>[{language}] {m.group(1).strip().rstrip(',')}</d>", out)
+    out = _H3_LANG_TAG_RE.sub(
+        lambda m: f"<d>[{_H3_LANG_TOKENS.get(m.group(1), m.group(1))}]", out)
+    out = _H3_TAG_BLOCK_RE.sub(_h3_relocate_intag_prose, out)
     # Whatever tag text remains outside a proper pair is a fragment around
     # scene prose: dissolve it rather than let the encoder chew on it.
     protected = _H3_PROPER_TAG_RE.findall(out)
@@ -4374,6 +4660,192 @@ def repair_h3_dialogue_tags(body, language="English"):
     for i, block in enumerate(protected):
         out = out.replace(f"\x00{i}\x00", block, 1)
     return out
+
+
+# ---- the line-end beat after </d> (brief 9.9) -------------------------------
+# H3's trained format wants a beat after the closing tag: "the lips close and
+# the speaking motion stops". 24 of 31 measured briefs ended the field on the
+# tag itself, and a mouth with no stated end keeps articulating after the
+# words run out - the tail a public thread blamed on the <d> syntax. The rule
+# already lives in H3_MOTION_SYSTEM and the brain ignores it, which is the
+# brief-harness finding: small models obey end contracts and deterministic
+# repair, never mid-paragraph rules. So detection, validation and the append
+# are pure sync functions over the brief string (no brain, no GPU - testable
+# under the live-machine rule), and exactly one async wrapper spends one brain
+# call on the ~77% that hang.
+
+def _h3_desc_span(text):
+    """(start, end) of the description field's VALUE: to the next field
+    header at line start, or to end of string. None when there is no field.
+    Matches either lane's field name; the END markers are shared."""
+    m = _H3_DESC_FIELD_RE_ANY.search(text)
+    if not m:
+        return None
+    end = len(text)
+    for field_re in (_H3_SOUND_FIELD_RE, _H3_MUSIC_FIELD_RE):
+        nxt = field_re.search(text, m.end())
+        if nxt:
+            end = min(end, nxt.start())
+    return m.end(), end
+
+
+def h3_hanging_dialogue(brief):
+    """True when the description field's last non-space content is `</d>` -
+    the spoken line shipped with no beat ending the speaking motion. A beat
+    already following the tag must NOT detect (appending would double it), and
+    of several dialogue lines only the last can hang."""
+    text = str(brief or "")
+    span = _h3_desc_span(text)
+    return bool(span) and text[span[0]:span[1]].rstrip().endswith("</d>")
+
+
+# The deterministic gate the brain's one clause must pass. Every reject is a
+# way the reply stops being a beat and starts being something else: empty, a
+# paragraph (the word cap), tag syntax or quotes leaking back in, a speaker
+# cue, or more than one sentence (a period anywhere but the end, or ?/!).
+H3_CLOSER_WORD_CAP = 14
+
+
+def h3_closing_beat_ok(beat):
+    """Validate the brain's reply as ONE clause, never the brief echoed back."""
+    if not beat:
+        return False
+    beat = str(beat).strip()
+    if not beat or len(beat.split()) > H3_CLOSER_WORD_CAP:
+        return False
+    if any(t in beat for t in ("<d>", "</d>", "[", "]", '"', "\u201c",
+                               "\u201d", "(S", "?", "!")):
+        return False
+    # a single sentence: at most one period, and only terminal - "Dr. Reyes"
+    # is a second sentence trying to hide
+    return beat.count(".") <= 1 and ("." not in beat or beat.endswith("."))
+
+
+# The fallback closer is deliberately neutral: a fixed gendered or staged beat
+# would be the same disease this repair exists to cure - a constant where the
+# truth belongs - asserting lips closing on an off-screen voiceover or a line
+# meant to carry into the next shot. It fires on ANY failed repair: failed
+# validation, exception, timeout, brain unavailable. One attempt, never a
+# retry: a stalled repair blocking the render path is worse than the artifact
+# it fixes, so the whole call sits under one 20-second budget.
+H3_NEUTRAL_CLOSER = "Their lips close and the speaking motion stops."
+H3_CLOSER_TIMEOUT = 20
+
+
+def _h3_closer_request(text):
+    """The narrow end-contract for one hanging line: ONE beat, one clause.
+
+    Never ask for the brief back - a whole-brief echo asks a small brain to
+    reproduce hundreds of tokens byte-for-byte, it paraphrases nearly every
+    time, validation fails nearly every time, and the 'rare' fallback quietly
+    becomes the constant this repair exists to remove. The brain returns ONLY
+    the beat; Pixal appends it deterministically, so byte-identity of
+    everything else is true by construction rather than by check.
+    """
+    scene = text[slice(*_h3_desc_span(text))].strip()
+    return [
+        {"role": "system", "content": (
+            "You write the beat that ends a speaking motion in a video brief. "
+            "The scene below ends its last spoken line with </d> and says "
+            "nothing after it - a mouth with no stated end keeps articulating "
+            "after the words run out, and that tail is where teeth stop being "
+            "teeth. Reply with ONE beat and nothing else: a single clause of "
+            f"at most {H3_CLOSER_WORD_CAP} words that says the lips close and "
+            "the speaking motion stops, consistent with THIS scene. No tags, "
+            "no quotes, no speaker cues, no explanation.")},
+        {"role": "user", "content": scene},
+    ]
+
+
+def _h3_append_closing_beat(text, beat):
+    """` beat` immediately after the field-ending `</d>` - one clause, in the
+    one slot, with every other byte of the brief untouched by construction."""
+    span = _h3_desc_span(text)
+    if not span:
+        return text
+    at = text[span[0]:span[1]].rfind("</d>")
+    if at < 0:
+        return text
+    pos = span[0] + at + len("</d>")
+    return text[:pos] + " " + beat + text[pos:]
+
+
+async def repair_h3_hanging_dialogue(brief, cid=None):
+    """Close a hanging spoken line: one brain call for one beat, else the
+    neutral closer. Briefs that already end the motion never reach the brain."""
+    text = str(brief or "")
+    if not h3_hanging_dialogue(text):
+        return text
+    beat = None
+    try:
+        reply = await asyncio.wait_for(
+            llm_call(_h3_closer_request(text), timeout=H3_CLOSER_TIMEOUT,
+                     cid=cid),
+            timeout=H3_CLOSER_TIMEOUT)
+        if reply:
+            status, data = reply
+            if status == 200 and isinstance(data, dict):
+                choices = data.get("choices") or []
+                if choices:
+                    beat = (choices[0].get("message") or {}).get("content")
+    except Exception:
+        beat = None     # one attempt, never a retry - see the closer's comment
+    if not h3_closing_beat_ok(beat):
+        beat = H3_NEUTRAL_CLOSER
+    return _h3_append_closing_beat(text, beat)
+
+
+# ---- the style declaration (brief 9.9) --------------------------------------
+# The OUTPUT FORMAT's style example reads "(live-action, natural real-time
+# motion)", so an Anima or clear-anime still animates as live capture - 92% of
+# measured briefs, 0 stylized - with conflicting conditioning in the one
+# position H3 reads as style. The fix is provenance, not a vision heuristic:
+# the ledger entry of the source still already says what rendered it.
+#
+# The map is CLOSED and keyed on (recipe id, family) - never the family alone:
+# `anime` is Z-Image's clear-anime model sitting inside the zimage family
+# beside two photoreal recipes, so the recipe id is the key and the family
+# (falling back to the recipe's own for entries written before model_family
+# was recorded) only corroborates. "2D-animated" is pinned byte-for-byte from
+# MiniMax's own guide (h3pb/web/Video_Prompt_Writing_Guide.pdf §1.4.1). The
+# tempo half is load-bearing against slow motion and stays byte-for-byte;
+# only the style token is ever spliced. Style-direction renders (a photoreal
+# core carrying an anime style) are genuinely ambiguous, so unknown or
+# unmatched provenance leaves live-action alone: a wrong stylized claim is
+# exactly as bad as the wrong constant this removes.
+H3_STYLIZED_SOURCES = {
+    ("anima", "anima"): "2D-animated",
+    ("anime", "zimage"): "2D-animated",
+}
+
+
+def h3_style_for_entry(entry):
+    """The style declaration the source still's provenance dictates, or None
+    to leave the brief's own wording untouched."""
+    if not isinstance(entry, dict):
+        return None
+    template = entry.get("template")
+    family = (entry.get("info") or {}).get("model_family")
+    if not family:
+        family = (RECIPE_SPECS.get(template) or {}).get("family")
+    return H3_STYLIZED_SOURCES.get((template, family))
+
+
+# The style slot is the OPENING token of the description field - 154 of 168
+# shipped briefs open on the identical constant, so the anchor is reliable.
+# A "live-action" mention anywhere else (a caption in the scene, say) is
+# content, not the declaration, and is never spliced.
+_H3_STYLE_SLOT_RE = re.compile(
+    r"(integrated_multimodal_description:\s*(?:\[\s*shot\s*1\s*\]\s*)?)"
+    r"(Live-action|live-action)\b", re.I)
+
+
+def h3_style_splice(prompt, style):
+    """Swap the opening style token for `style`; every other byte stays."""
+    text = str(prompt or "")
+    if not style:
+        return text
+    return _H3_STYLE_SLOT_RE.sub(lambda m: m.group(1) + style, text, count=1)
 
 
 # A DIRECTOR'S NOTE that pins the camera ("the camera never moves") is the
@@ -4469,6 +4941,217 @@ def assemble_h3_prompt(brief, user_script=False, last_frame=False, seconds=None)
     if not _H3_HEADER_RE.match(body):
         body = h3_alignment_header(last_frame, seconds) + "\n\n" + body
     return body
+
+
+# ---- the ref2va six-section format (brief 9.12) ----------------------------
+# ref2va has its OWN trained format (MiniMax's full-reference guide §1): six
+# sections, no alignment header, and the style declaration is the first line
+# of the detailed_description VALUE. The DIRECTOR writes all six sections
+# (H3_REF2V_MOTION_SYSTEM); the assembler below is repair-and-guarantee, never
+# re-ask - it deterministically guarantees every structural property and fills
+# missing sections from the wired ref list with generic binding sentences. It
+# repairs; it does not author the scene. An assembler that MANUFACTURED six
+# sections around the fl2va director's three-field output would pass every
+# literal-string test and ship the wrong product.
+H3_REF2V_FIELDS = ("subject_definitions", "summary", "retention_analysis",
+                   "detailed_description", "overall_soundscape",
+                   "non_diegetic_music")
+_H3_REF2V_FIELD_RE = re.compile(
+    r"(?im)^\s*(subject_definitions|summary|retention_analysis|"
+    r"detailed_description|overall_soundscape|non_diegetic_music)\s*:\s*")
+
+# The style slot is POSITIONAL: everything between the detailed_description
+# header and the first [Shot 1] marker. The guide's own examples use different
+# verbs ("is in a ... style" vs "uses a ... style"), so there is no reliable
+# lexical anchor and no regex over free prose is invented - the assembler owns
+# the slot outright, and the director variant is told not to write one. Both
+# sentences pinned byte-for-byte; h3_style_for_entry stays the provenance map.
+H3_REF2V_STYLE_PHOTOREAL = "The target video is in realistic photographic style."
+H3_REF2V_STYLE_STYLIZED = "The target video is in 2D-animated style."
+
+# Reference tags the prompt may name. v1 wires images only, so any <Video k>
+# or <Audio j> is dangling BY DEFINITION; a <Picture N> beyond the wired count
+# is the mistake the official template itself ships (its stock prompt names
+# <Audio 1> with ref_audios.ref_audio_0 unlinked). The node never complains -
+# a dangling tag is just text - so the policy is Pixal's to enforce, and it is
+# decided, not delegated: with exactly one wired ref there is only one thing
+# the director could have meant, so demote and warn; with two or more, repair
+# cannot be semantics-safe, so refuse with a named error.
+_H3_REF_TAG_RE = re.compile(r"<\s*(picture|video|audio)\s*(\d+)\s*>", re.I)
+
+
+def h3_ref2v_tag_check(brief, ref_count):
+    """The dangling-ordinal policy over an assembled ref2va brief.
+
+    Returns (brief, warnings); raises ValueError where repair cannot be
+    semantics-safe. Pure and sync - the assembler calls it at intake and the
+    builder re-calls it so rerolls (which bypass the assembler) get the same
+    guarantee."""
+    text = str(brief or "")
+    wired = {str(n) for n in range(1, int(ref_count) + 1)}
+    dangling = [m.group(0) for m in _H3_REF_TAG_RE.finditer(text)
+                if m.group(1).lower() != "picture" or m.group(2) not in wired]
+    if not dangling:
+        return text, []
+    if int(ref_count) == 1:
+        warnings = []
+
+        def demote(m):
+            if m.group(1).lower() == "picture" and m.group(2) == "1":
+                return m.group(0)
+            warnings.append(
+                f"{m.group(0)} names a reference that is not wired - only "
+                f"<Picture 1> is, so it was rewritten to <Picture 1>")
+            return "<Picture 1>"
+
+        return _H3_REF_TAG_RE.sub(demote, text), warnings
+    raise ValueError(
+        "the brief names references that are not wired: "
+        + ", ".join(dict.fromkeys(dangling))
+        + f" - {ref_count} image reference(s) are wired; fix the brief or wire "
+          f"the reference")
+
+
+def h3_ref2v_unnamed_lint(brief, ref_count):
+    """A wired ref the prompt never names still costs: its vision block enters
+    the Qwen context and its latent rides every sampling step (9.0 Q3). Warn."""
+    named = {int(m.group(2)) for m in _H3_REF_TAG_RE.finditer(str(brief or ""))
+             if m.group(1).lower() == "picture"}
+    return [f"<Picture {n}> is wired but the brief never names it - its tokens "
+            f"ride every sampling step with no job assigned"
+            for n in range(1, int(ref_count) + 1) if n not in named]
+
+
+# A ref's stored kind becomes the subject sentence (ref guide §2.1: state the
+# features to follow). v1 routes the picked gallery still, which carries no
+# kind, so the neutral default is the one that ships until the 9.13 strip.
+_H3_REF2V_KIND_LINES = {
+    "identity": "<Subject {n}> is the person in <Picture {n}>.",
+    "clothing": "<Subject {n}> is the wardrobe shown in <Picture {n}>.",
+    "style": "<Subject {n}> is the visual style of <Picture {n}>.",
+    "object": "<Subject {n}> is the object shown in <Picture {n}>.",
+}
+
+
+def _h3_ref2v_subject_line(n, kind=None):
+    template = _H3_REF2V_KIND_LINES.get(str(kind or ""),
+                                        "<Subject {n}> is the subject of <Picture {n}>.")
+    return template.format(n=n)
+
+
+def _h3_ref2v_sections(text):
+    """Split a brief into its six sections: {name: content}, plus the prose
+    before the first header. First occurrence of a header wins - a duplicated
+    field (the H3_AUDIO_PROMPT echo ends on a second non_diegetic_music:) is a
+    contradiction, and keeping the first is the deterministic answer. The
+    preamble is returned separately: bare prose becomes the description, but
+    when sections exist it is dropped - nothing precedes the six sections in
+    this lane, least of all the fl2va alignment header."""
+    matches = list(_H3_REF2V_FIELD_RE.finditer(text))
+    fields = {}
+    for i, m in enumerate(matches):
+        name = m.group(1).lower()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        if name not in fields:
+            fields[name] = text[m.end():end].strip()
+    preamble = text[:matches[0].start()].strip() if matches else text.strip()
+    return fields, preamble
+
+
+def assemble_h3_ref2v_prompt(brief, refs, user_script=False, style=None):
+    """Deterministic assembly of MiniMax's six-section full-reference format -
+    a SIBLING of assemble_h3_prompt, not a parameter on it.
+
+    refs is the ordered wired reference list (dicts; a stored `kind` becomes
+    the subject sentence). Returns (prompt, warnings). Guarantees, each
+    checkable against the model card's canonical case-Ref2VA prompt: all six
+    sections in the guide's order; block shape (header at column 0, value on
+    the next line, one blank line between); no alignment header; no
+    H3_AUDIO_PROMPT; exactly one non_diegetic_music field; [reference
+    generation] as the only task prefix (v1 wires images, no source video, no
+    audio - the other prefixes are all things v1 cannot mean); <Subject N>
+    bound 1:1 to its wired <Picture N>; one <Subject N>-keyed retention line
+    per wired ref with the ` - ` separator; and the style sentence as the
+    first line of detailed_description, before [Shot 1].
+    """
+    refs = list(refs or [])
+    count = len(refs)
+    body = str(brief or "").strip()
+    # The fl2va lane's audio instruction ends on its own inline
+    # `non_diegetic_music: none.` - echoed here it would ship instruction prose
+    # plus a second, contradictory music field, in a format that has no
+    # instruction line at all. Its two load-bearing rules live in the ref2va
+    # director's OUTPUT CONTRACT instead; the constant itself is stripped.
+    body = body.replace(H3_AUDIO_PROMPT, "")
+    if not user_script:
+        # The director's recurring slips are lane-independent; the repair is
+        # field-name agnostic and applies here unchanged.
+        body = re.sub(r"\[\s*d\s*\]", "<d>", body, flags=re.I)
+        body = re.sub(r"\[\s*/\s*d\s*\]", "</d>", body, flags=re.I)
+        body = repair_h3_dialogue_tags(body)
+    sections, preamble = _h3_ref2v_sections(body)
+
+    # detailed_description: the style sentence is written or REPLACED from
+    # provenance (the slot is positional - everything before [Shot 1]). Bare
+    # prose with no section headers wraps into the description, the same
+    # repair the fl2va assembler makes for a brain that dropped every label.
+    desc = sections.get("detailed_description") or preamble
+    marker = re.search(r"(?i)\[\s*shot\s*1\s*\]", desc)
+    if marker:
+        desc = desc[marker.start():].strip()
+    else:
+        desc = ("[Shot 1] " + desc.strip()).strip()
+    style_sentence = (H3_REF2V_STYLE_STYLIZED if style == "2D-animated"
+                      else H3_REF2V_STYLE_PHOTOREAL)
+    sections["detailed_description"] = style_sentence + "\n" + desc
+
+    # subject_definitions / retention_analysis: fill what is missing, never
+    # rewrite what the director wrote. One <Subject N> per wired ref, 1:1,
+    # citing its <Picture N> (§2.2: an image used only to define a character
+    # gets no standalone <Picture N> entry). The retention repair omits the
+    # shot-appearance parenthetical rather than inventing one.
+    subj = sections.get("subject_definitions", "")
+    lines = [line for line in subj.splitlines() if line.strip()]
+    for n in range(1, count + 1):
+        if f"<Picture {n}>" in subj or f"<Subject {n}>" in subj:
+            continue
+        lines.append(_h3_ref2v_subject_line(n, refs[n - 1].get("kind")
+                                            if isinstance(refs[n - 1], dict) else None))
+    sections["subject_definitions"] = "\n".join(lines)
+
+    ret = sections.get("retention_analysis", "")
+    lines = [line for line in ret.splitlines() if line.strip()]
+    for n in range(1, count + 1):
+        if f"<Subject {n}>" in ret:
+            continue
+        lines.append(f"<Subject {n}>: fully_preserved - the features named in "
+                     f"subject_definitions are retained.")
+    sections["retention_analysis"] = "\n".join(lines)
+
+    # summary opens with the bracketed task-type prefix from the closed §3
+    # menu. Whatever prefix the director wrote, v1 can only mean [reference
+    # generation]; a missing prefix gains one.
+    summary = sections.get("summary", "").strip()
+    prefix = re.match(r"\[[^\]]*\]", summary)
+    if prefix:
+        summary = "[reference generation]" + summary[prefix.end():]
+    elif summary:
+        summary = "[reference generation] " + summary
+    else:
+        subjects = ", ".join(f"<Subject {n}>" for n in range(1, count + 1))
+        summary = (f"[reference generation] The target video carries "
+                   f"{subjects or '<Subject 1>'} into a new scene.")
+    sections["summary"] = summary
+
+    if not sections.get("overall_soundscape"):
+        sections["overall_soundscape"] = (
+            "The natural ambience of the scene and the sounds of the visible "
+            "actions, synchronized.")
+    if not sections.get("non_diegetic_music"):
+        sections["non_diegetic_music"] = "N/A"
+
+    out = "\n\n".join(f"{name}:\n{sections[name]}" for name in H3_REF2V_FIELDS)
+    return h3_ref2v_tag_check(out, count)
 
 
 # Sourced ceilings, not preferences (researched 2026-08-13 after a trailer came
@@ -4573,7 +5256,7 @@ def _h3_warning_text(warnings):
             + ".")
 
 
-def validate_shot_count(engine=None, shots=None, seconds=None):
+def validate_shot_count(engine=None, shots=None, seconds=None, model=None):
     """Normalize the multishot count. Only MiniMax H3 renders multiple shots.
 
     Kept out of validate_video_selection deliberately: that function's tuple is
@@ -4589,6 +5272,15 @@ def validate_shot_count(engine=None, shots=None, seconds=None):
         return 1
     if str(engine or "").strip().lower() != "h3":
         raise ValueError("only MiniMax H3 renders multiple shots")
+    # v1 ref2va is single-shot, and the refusal must land BEFORE any cut plan
+    # is computed: /api/animate hardcodes template="h3_i2v" for a truthy cut
+    # plan, which would otherwise sail a ref2va chip straight into the fl2va
+    # builder past every multishot fence. The chained pack is no way in either
+    # - it drives keyframe conditioning semantics, and ref2va+keyframes is
+    # untested upstream.
+    if h3_model_variant(model) == H3_REF2V_MODEL_ID:
+        raise ValueError("MiniMax H3 REF2VA is single-shot: it carries its "
+                         "reference subject through one new scene - set shots to 1")
     # A single-pass take cuts inside one core-ComfyUI generation, so it must not
     # be blocked on a node pack it never loads.
     if not h3_cut_plan(count, seconds) and not h3_multishot_available():
@@ -4649,7 +5341,7 @@ def keep_video_output(template, filename):
     and is genuinely exempt, and ltx25_upscale_video is a file built inside
     build_upscale_video, so it arrives here as "upscale_video"."""
     name = str(filename or "").lower()
-    if template in ("h3_i2v", "h3_multishot", "ltx_i2v", "upscale_video") and \
+    if template in ("h3_i2v", "h3_multishot", "h3_ref2v", "ltx_i2v", "upscale_video") and \
             name.endswith((".mp4", ".webm", ".mov")):
         return bool(re.search(r"-audio\.(mp4|webm|mov)$", name))
     return True
@@ -4845,12 +5537,19 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     model_rel = h3_model_rel(model_id)
     if model_rel is None:
         raise ValueError(f"MiniMax H3 does not have model: {model_id}")
-    h3_assets, missing = _h3_asset_paths()
+    # The reciprocal lane guard: this builder accepts any id h3_model_rel
+    # resolves, so without the refusal a ref2va chip would build
+    # MiniMaxH3ImageToVideo on ref2va weights - same architecture, ComfyUI
+    # runs it, and the output is quietly wrong with no error anywhere.
+    if h3_model_variant(model_id) == H3_REF2V_MODEL_ID:
+        raise ValueError(
+            f"MiniMax H3 model {model_id} is a ref2va build - first/last-frame "
+            f"video needs an fl2va chip (the reference lane is template h3_ref2v)")
+    # The asset check requires the PICKED build's file, not the fl2va constant;
+    # encoder, VAEs and LoRAs are architecture-wide and shared.
+    h3_assets, missing = _h3_asset_paths(model_rel)
     if missing:
         raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
-    # The picked build replaces the stock weights; everything else (encoder,
-    # VAEs, LoRAs) is architecture-wide and stays.
-    h3_assets["model"] = model_rel
 
     image, width, height = _h3_prepared_canvas(image, width, height)
 
@@ -4933,7 +5632,8 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
         "model": "MiniMax H3 FL2VA",
         "model_path": h3_assets["model"],
         "model_family": "minimax_h3",
-        "model_variant": "fl2va",
+        # the resolved lane, so a reroll resolves the right builder
+        "model_variant": h3_model_variant(model_id),
         "execution_profile": "minimax_h3_fl2va_i2v",
         "engine": "MiniMax H3",
         "engine_id": "h3",
@@ -4984,10 +5684,15 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
     if not h3_multishot_available():
         raise ValueError("MiniMax H3 multishot needs the ComfyUI-H3-Multishot "
                          "node pack, which is not installed")
-    h3_assets, missing = _h3_asset_paths()
+    # The pack drives keyframe conditioning semantics, and ref2va+keyframes is
+    # untested upstream - chained multishot refuses a ref2va chip outright.
+    if h3_model_variant(model_id) == H3_REF2V_MODEL_ID:
+        raise ValueError(
+            "MiniMax H3 multishot is FL2VA-only: ref2va renders a single "
+            "continuous scene from its references")
+    h3_assets, missing = _h3_asset_paths(model_rel)
     if missing:
         raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
-    h3_assets["model"] = model_rel
     image, width, height = _h3_prepared_canvas(image, width, height)
     frames = h3_frame_count(seconds)
 
@@ -5066,7 +5771,7 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
         "model": "MiniMax H3 FL2VA",
         "model_path": h3_assets["model"],
         "model_family": "minimax_h3",
-        "model_variant": "fl2va",
+        "model_variant": h3_model_variant(model_id),
         "execution_profile": "minimax_h3_fl2va_multishot",
         "engine": "MiniMax H3",
         "engine_id": "h3",
@@ -5093,6 +5798,186 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
         # take on 2891 frames would evict everything for a job that needs 362.
         "peak_frames": frames,
         "duration": f"{total / 24:.2f}s @ 24fps · {count} shots",
+    }
+    return graph, brief, info
+
+
+# Reference LoadImage node ids follow build_h3_i2v's numbering (5, 5b, 5c ...)
+# so the two builders stay legible side by side.
+_H3_REF2V_REF_NODES = ("5", "5b", "5c", "5d", "5e", "5f", "5g", "5h", "5i")
+
+
+def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
+                   overrides=(), model=None, lora_plan=None, turbo=False):
+    """MiniMax H3 REF2VA: put THIS subject in a new scene. Sibling of
+    build_h3_i2v; the model chip is the lane switch, per render.
+
+    The graph is the official R2V template ported into Pixal's API shape: the
+    proven fl2va spine byte-for-byte (encoder, both VAEs, KSamplerSelect
+    res_multistep, BasicScheduler simple/20/1.0, BasicGuider, RandomNoise,
+    SamplerCustomAdvanced, VAEDecode/VAEDecodeAudio, the VHS tail at CRF 14)
+    with exactly three deltas - the UNET points at the ref2va build, node 6 is
+    MiniMaxH3ReferenceToVideo (which takes audio_vae, and whose reference
+    slots are flat dotted keys: ref_images.ref_image_0, ...), and the prompt
+    is the six-section brief assemble_h3_ref2v_prompt emits. The scheduler
+    stays `simple`: the template's own note prefers beta for reference-heavy
+    prompts, but its shipped widget is [simple, 20, 1] and simple is Pixal's
+    proven spine - the tip is logged in 9.12-evidence as unverified.
+
+    ``refs`` are staged in ComfyUI/input as RAW copies, never through
+    prepare_h3_frame: a first frame anchors geometry and is center-cropped to
+    the canvas for it, while a reference carries identity - the node scales
+    refs itself, aspect-preserved (ref_image_size "match"), and cropping to
+    canvas would throw away exactly what the ref exists to carry.
+    """
+    model_id = str(model or H3_REF2V_MODEL_ID).strip().lower()
+    model_rel = h3_model_rel(model_id)
+    if model_rel is None:
+        raise ValueError(f"MiniMax H3 does not have model: {model_id}")
+    # The reciprocal guard, twin of build_h3_i2v's: between them every lane
+    # crossing is closed, including the ones nobody has thought of yet.
+    if h3_model_variant(model_id) != H3_REF2V_MODEL_ID:
+        raise ValueError(
+            f"MiniMax H3 model {model_id} is not a ref2va build - reference "
+            f"video needs a REF2VA chip")
+    h3_assets, missing = _h3_asset_paths(model_rel)
+    if missing:
+        raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
+
+    refs = [input_ref_name(r) for r in (refs or [])]
+    refs = [r for r in refs if r]
+    # Zero refs is silently t2va-on-ref2va-weights (minimax.py's falsy path:
+    # no ref_items, no minimax_refs payload, no error anywhere). Almost never
+    # the user's intent, so it is refused at build time - the one gate every
+    # path (animate, reroll, tool call) must pass.
+    if not refs:
+        raise ValueError(
+            "MiniMax H3 REF2VA needs at least one reference image - with none "
+            "wired it would silently render plain text-to-video on ref2va weights")
+    if len(refs) > H3_REF2V_MAX_IMAGES:
+        raise ValueError(
+            f"MiniMax H3 REF2VA wires at most {H3_REF2V_MAX_IMAGES} reference "
+            f"images (the node schema's max); {len(refs)} were passed")
+    for staged in refs:
+        if not (CDIR / "input" / staged).is_file():
+            raise ValueError(
+                f"MiniMax H3 reference image is missing from ComfyUI/input: {staged}")
+    if width is None or height is None:
+        # No prepared frame defines the canvas in this lane; derive it from
+        # the first reference's aspect through the same adaptive-canvas logic.
+        from PIL import Image
+        with Image.open(CDIR / "input" / refs[0]) as opened:
+            width, height = h3_adapt_canvas(*opened.size)
+    width, height = int(width), int(height)
+    if width <= 0 or height <= 0 or width % H3_CANVAS_MULTIPLE or \
+            height % H3_CANVAS_MULTIPLE:
+        raise ValueError("MiniMax H3 canvas must use positive multiples of 32")
+
+    frames = h3_frame_count(seconds)
+    brief = str(motion or "").strip()
+    if not brief:
+        raise ValueError("MiniMax H3 needs a motion brief")
+    # The dangling-ordinal policy runs here as well as in the assembler:
+    # rerolls submit the stored brief without re-assembling, and the node
+    # itself never complains about a tag nothing is wired to.
+    brief, tag_warnings = h3_ref2v_tag_check(brief, len(refs))
+    video_loras = resolve_h3_video_lora_stack(lora_plan, model_id)
+    brief, lora_triggers = inject_video_lora_triggers(brief, video_loras)
+    # H3_AUDIO_PROMPT is NOT appended in this lane: it would add instruction
+    # prose plus a second, contradictory non_diegetic_music field to a format
+    # that has no instruction line. Its two load-bearing rules (speech begins
+    # and finishes inside the clip; no unasked score) live in the ref2va
+    # director's OUTPUT CONTRACT.
+    mode = h3_speed_mode(turbo)
+    if mode is not None and H3_REF2V_MODEL_ID not in mode["variants"]:
+        raise ValueError(
+            f"{mode['label']} is an FL2VA distillation and no ref2v turbo LoRA "
+            f"is on disk - a REF2VA chip renders at Quality, 20 steps")
+    steps, sampler_name, scheduler, turbo_rows = h3_speed_settings(turbo)
+    video_loras = turbo_rows + video_loras
+
+    graph = {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": h3_assets["model"], "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": h3_assets["clip"], "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {
+            "vae_name": h3_assets["video_vae"]}},
+        "4": {"class_type": "VAELoader", "inputs": {
+            "vae_name": h3_assets["audio_vae"]}},
+        "6": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+            "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
+            "prompt": brief, "width": width, "height": height,
+            "length": frames, "ref_image_size": "match"}},
+        # Only the ref slots actually wired are emitted: an unwired Autogrow
+        # arrives as {} and the node's (ref_images or {}) guard handles it,
+        # so omission is safe - and a present-but-empty slot is not.
+        "7": {"class_type": "KSamplerSelect",
+              "inputs": {"sampler_name": sampler_name}},
+        "8": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["1", 0], "scheduler": scheduler, "steps": steps,
+            "denoise": 1.0}},
+        # H3 is CFG-distilled: the verified graph uses BasicGuider, not CFGGuider.
+        "9": {"class_type": "BasicGuider", "inputs": {
+            "model": ["1", 0], "conditioning": ["6", 0]}},
+        "10": {"class_type": "RandomNoise", "inputs": {"noise_seed": int(seed)}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["10", 0], "guider": ["9", 0], "sampler": ["7", 0],
+            "sigmas": ["8", 0], "latent_image": ["6", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {
+            "samples": ["11", 0], "vae": ["3", 0]}},
+        "13": {"class_type": "VAEDecodeAudio", "inputs": {
+            "samples": ["11", 0], "vae": ["4", 0]}},
+        "14": {"class_type": "VHS_VideoCombine", "inputs": {
+            # Same encode policy as the fl2va graph: CRF 14, never bitrate.
+            "images": ["12", 0], "audio": ["13", 0], "frame_rate": 24,
+            "loop_count": 0,
+            "filename_prefix": f"pixal_dm/h3_ref_{slug(h3_slug_source(brief))[:24]}",
+            "format": "video/h264-mp4", "crf": 14, "pix_fmt": "yuv420p",
+            "pingpong": False, "save_output": True}},
+    }
+    for i, staged in enumerate(refs):
+        graph[_H3_REF2V_REF_NODES[i]] = {
+            "class_type": "LoadImage", "inputs": {"image": staged}}
+        graph["6"]["inputs"][f"ref_images.ref_image_{i}"] = \
+            [_H3_REF2V_REF_NODES[i], 0]
+    for override in overrides:
+        node_id = str(override.get("node"))
+        input_name = override.get("input")
+        if node_id not in graph or input_name not in graph[node_id]["inputs"]:
+            raise ValueError(f"invalid MiniMax H3 override: {node_id}.{input_name}")
+        graph[node_id]["inputs"][input_name] = override.get("value")
+    model_tail = apply_lora_nodes(graph, "1", video_loras, "h3:lora")
+    # Both consumers must see the identical literal chain, as in build_h3_i2v.
+    graph["8"]["inputs"]["model"] = [model_tail, 0]
+    graph["9"]["inputs"]["model"] = [model_tail, 0]
+    lora_info = lora_job_info(video_loras)
+    for row, entry in zip(lora_info["lora_stack"], video_loras):
+        row.update(title=entry["title"], trigger=entry.get("trigger"))
+    info = {
+        "model": "MiniMax H3 REF2VA",
+        "model_path": h3_assets["model"],
+        "model_family": "minimax_h3",
+        "model_variant": H3_REF2V_MODEL_ID,
+        "execution_profile": "minimax_h3_ref2v",
+        "engine": "MiniMax H3",
+        "engine_id": "h3",
+        "text_encoder": "Qwen3-VL 32B · NVFP4 AWQ",
+        # Read back from what was actually resolved, never the constants.
+        "sampler": f"{sampler_name} · {scheduler} · {steps} steps",
+        "audio": "native synchronized audio",
+        "speed_mode": ((h3_speed_mode(turbo) or {}).get("id", H3_SPEED_DEFAULT)
+                       if turbo_rows else H3_SPEED_DEFAULT),
+        "references": len(refs),
+        "h3_warnings": (tag_warnings
+                        + h3_ref2v_unnamed_lint(brief, len(refs))
+                        + h3_brief_lint(brief, frames / 24)),
+        **lora_info,
+        "lora_triggers": lora_triggers,
+        "size": f"{width}x{height}",
+        "canvas_mp": (width * height) / 1e6,
+        "frames": frames,
+        "duration": f"{frames / 24:.2f}s @ 24fps",
     }
     return graph, brief, info
 
@@ -5191,6 +6076,55 @@ def pid_pad_source(src):
     return name, (w, h)
 
 
+# ComfyUI-PiD's 2kto4k profile carries small_edge = 1024, and _planned_pid_calls
+# takes a completely different branch below it: it resizes the source to 1024,
+# spends a WHOLE 4x PiD pass to get a 4096px working image, tiles THAT into 5x5,
+# and finally downsamples the stitched 16k canvas back to source*4. That is
+# 1 + 25 = 26 PiD calls at 4 steps each - the "sampling 24/104" Jesse hit - to
+# produce a SMALLER picture than one pass on a 1024 source would.
+#
+# Measured on this machine 2026-08-22, same frame, same settings:
+#   832 handed straight to PiD   26 passes   223.5s   ->  3328x3328
+#   832 pre-scaled to 1024        4 passes    24.2s   ->  4096x4096
+# 9.2x faster, larger, and no visible difference at 1:1 on either the face or
+# the hair. The cliff is brutal and invisible: 1024 costs 4 steps, 1023 costs
+# 104 - and Pixal's own 1:1 @ 1MP canvas lands on 992, thirty-two pixels under.
+PID_SMALL_EDGE = 1024
+
+
+def pid_lift_small_source(src):
+    """Bring a sub-1024 source up to PiD's own small_edge before handing it over.
+
+    Returns the input name to sample from - unchanged when the source is
+    already 1024 or larger, which is the common case and must cost nothing.
+    PiD would perform this exact resize itself as step one of the slow branch;
+    doing it here just stops it from then re-upscaling its own output 25 more
+    times and throwing the result away.
+    """
+    from PIL import Image
+    path = CDIR / "input" / src
+    try:
+        with Image.open(path) as im:
+            w, h = im.size
+            if max(w, h) >= PID_SMALL_EDGE:
+                return src                       # already on the fast branch
+            scale = PID_SMALL_EDGE / float(max(w, h))
+            # multiples of 16 keep every latent-space consumer happy; the long
+            # edge is pinned to exactly small_edge so we clear the cliff by 0.
+            tw = PID_SMALL_EDGE if w >= h else max(16, round(w * scale / 16) * 16)
+            th = PID_SMALL_EDGE if h > w else max(16, round(h * scale / 16) * 16)
+            name = f"{Path(src).stem}__pidlift{tw}x{th}.png"
+            out = CDIR / "input" / name
+            if not out.is_file():
+                im.convert("RGB").resize((tw, th), Image.LANCZOS).save(out)
+    except Exception as exc:                     # unreadable source, no PIL, disk full
+        print(f"[pixal] PiD lift skipped ({exc}); upscaling as-is", flush=True)
+        return src
+    print(f"[pixal] PiD source lifted {w}x{h} -> {tw}x{th}: "
+          f"26 passes become 4", flush=True)
+    return name
+
+
 def _pid_scale_factor(value):
     """"4x" -> 4. The trim has to match whatever factor the graph ended up with,
     including one an override supplied."""
@@ -5262,8 +6196,23 @@ def build_upscale_image(scene, seed, image=None, model=None, mode=None, override
         # extra tiles is a fresh 4-step hallucination competing for VRAM. Trading
         # a ghosted overlap band for that is not a trade worth making by default.
         # "pid_clean_tiles": true in config.json opts back into the padded path.
-        padded, real = ((chosen_src, None) if not cfg.get("pid_clean_tiles", False)
-                        else pid_pad_source(chosen_src))
+        # Clear PiD's small_edge cliff first: below 1024 the pack spends 26
+        # passes to make a smaller picture than 4 passes would. Orthogonal to
+        # the padding below, and it runs on the DEFAULT path too, which is the
+        # one everybody is actually on.
+        lifted = pid_lift_small_source(chosen_src)
+        if lifted != chosen_src:
+            info["lifted"] = f"source raised to {PID_SMALL_EDGE}px before PiD"
+        padded, real = ((lifted, None) if not cfg.get("pid_clean_tiles", False)
+                        else pid_pad_source(lifted))
+        if lifted != chosen_src and not (real and _pid_node_available("ImageCrop")):
+            # The lifted frame feeds the SAMPLER only, for the same reason the
+            # padded one does: "up:img" stays the real image so
+            # PiDCaptionCreator keeps describing what the user actually made.
+            g["up:liftimg"] = {"class_type": "LoadImage",
+                               "inputs": {"image": lifted},
+                               "_meta": {"title": "Lifted past PiD's small-edge cliff"}}
+            g["up:pid"]["inputs"]["image"] = ["up:liftimg", 0]
         if real and _pid_node_available("ImageCrop"):
             factor = _pid_scale_factor(g["up:pid"]["inputs"].get("upscale_factor"))
             # The padded frame feeds the SAMPLER only. "up:img" stays the real
@@ -5497,6 +6446,7 @@ BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "face_mint": build_face_mint, "klein_inpaint": build_klein_inpaint,
             "ltx_i2v": build_ltx_i2v, "ltx25_i2v": build_ltx25_i2v,
             "h3_i2v": build_h3_i2v,
+            "h3_ref2v": build_h3_ref2v,
             "h3_multishot": build_h3_multishot,
             "upscale_image": build_upscale_image, "upscale_video": build_upscale_video,
             "vl_review": build_review, "vl_look": build_look}
@@ -5527,6 +6477,10 @@ class Hub:
                                      # ComfyUI still holds resident (cleared on flush)
         self.paging_streak = 0       # consecutive gpu_watch reads that look like
                                      # WDDM paging (full card, busy cores, idle bus)
+        self.prev_job_free_min = None  # _vram_free_min of the last finalized job -
+                                     # the near-miss signal the guard-band trim in
+                                     # ensure_vram consumes. None = no signal (the
+                                     # job was never sampled), never zero.
         self.critic_hot = False      # the 8B VL critic is warm in ComfyUI's process
                                      # (keep_model_loaded) - cleared on every flush
         self.scan = None                     # startup catalog scan state (for late joiners)
@@ -5728,6 +6682,13 @@ class Hub:
         were streaming from system memory. One message per job, and only after
         two consecutive slow steps, so a single stall - a preview decode, the
         first step paying for a model load - is not enough to trigger it.
+
+        Two checks ride this one timing path. Below, the absolute one: any
+        step past STEP_SLOW_SECONDS warns the lane. First, the relative one
+        (PAGING_RATE_*): a collapse against the job's OWN opening median,
+        which catches a page-out the absolute threshold is calibrated too
+        high to see, and which only logs and ledger-records - the actuator
+        decision is deliberately deferred (brief 9.10).
         """
         value, mx = data.get("value") or 0, data.get("max") or 0
         if mx <= 1 or value <= 0:
@@ -5738,6 +6699,28 @@ class Hub:
             job["_step_value"] = value
             return
         job["_step_value"] = value
+        # The relative watchdog first: every measured interval goes in,
+        # because the healthy ones ARE the baseline it compares against.
+        durations = job.setdefault("_step_durations", [])
+        durations.append(now - prev)
+        trip = paging_rate_trip(durations)
+        if trip and not job.get("_paging_rate_tripped"):
+            job["_paging_rate_tripped"] = True
+            # The free figure is the gpu_watch sample the PAGING_* detector
+            # already collects, kept per job as _vram_free_min - NEVER a
+            # fresh nvidia-smi/NVML read: a GPU query on the per-step path
+            # is exactly what the live-machine rule exists to prevent. A job
+            # gpu_watch never sampled logs the trip without the figure.
+            free_min = job.get("_vram_free_min")
+            job["_paging_watchdog"] = {"step": trip["step"],
+                                       "baseline_s": round(trip["baseline"], 2),
+                                       "rate_s": round(trip["rate"], 2),
+                                       "free_min": free_min}
+            print(f"[pixal] paging-watchdog: {job.get('template')} step rate "
+                  f"collapsed at step {trip['step']}: "
+                  f"{trip['rate']:.0f}s/step vs {trip['baseline']:.1f}s baseline"
+                  + (f", card free min {free_min / 2**30:.2f}GB"
+                     if free_min is not None else ""), flush=True)
         if now - prev < STEP_SLOW_SECONDS:
             job["_slow_steps"] = 0
             return
@@ -5804,6 +6787,15 @@ class Hub:
                     if st:
                         free_b, used_b, gu, mu = st
                         for j in inflight:
+                            # The job's starting occupancy: set-once, so a
+                            # later, larger read can never move it. gpu_watch
+                            # is a timer, so this first sample can land just
+                            # after weight loading has begun - a near-start,
+                            # not an exact pre-submit read. That stays: an
+                            # inline read at submit time stalled the event
+                            # loop and the SSE stream for the whole poll,
+                            # which is why these live in to_thread at all.
+                            j.setdefault("_vram_start_used", used_b)
                             j["_vram_peak"] = max(j.get("_vram_peak", 0), used_b)
                             j["_vram_free_min"] = min(
                                 j.get("_vram_free_min", free_b), free_b)
@@ -5995,6 +6987,24 @@ class Hub:
                      "src": "reroll" if job.get("parent") else "chat"}
             if job.get("parent"):
                 entry["parent"] = job["parent"]
+            # The butler's numbers ride the DURABLE record, not just the
+            # console. logs/sidecar.log rotates, and fitting ACT_PROFILES means
+            # fitting the DELTA (peak - start) - which only exists if both
+            # numbers outlive the session that measured them. The 126-render
+            # analysis behind this telemetry had to be mined out of a log that
+            # was one rotation away from being gone; the next one should read
+            # the ledger instead.
+            if job.get("_vram_peak"):
+                entry["vram"] = {"priced": (job.get("_priced") or {}).get("est"),
+                                 "start": job.get("_vram_start_used"),
+                                 "peak": job["_vram_peak"],
+                                 "free_min": job.get("_vram_free_min")}
+            # A tripped rate watchdog is the same kind of number as the vram
+            # block: sidecar.log rotates, so the collapse has to ride the
+            # ledger or the future actuator gets designed against the one
+            # 110s/step anecdote again instead of a measured rate.
+            if job.get("_paging_watchdog"):
+                entry["paging_watchdog"] = job["_paging_watchdog"]
             self.ledger_append(entry)
         if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
@@ -6013,12 +7023,21 @@ class Hub:
         if job.get("_vram_peak"):
             # The line that makes ACT_PROFILES tunable by reading instead of
             # archaeology: what the butler priced next to what the card did.
+            # The start figure turns the peak into a delta - how much of the
+            # height was the job and how much was the card it was dealt.
             est = (job.get("_priced") or {}).get("est")
+            start = job.get("_vram_start_used")
             print(f"[pixal] vram: {job['template']}"
                   + (f" priced {est / 2**30:.1f}GB," if est else "")
+                  + (f" started {start / 2**30:.1f}GB used," if start else "")
                   + f" card peaked {job['_vram_peak'] / 2**30:.1f}GB used / "
                   f"{job.get('_vram_free_min', 0) / 2**30:.1f}GB free min",
                   flush=True)
+        # Hand the butler the near-miss signal: how close to the wall the
+        # last job ran. Unconditional - a job that was never sampled must
+        # overwrite a low predecessor with None (no signal), or one bad night
+        # trims every later job forever.
+        self.prev_job_free_min = job.get("_vram_free_min")
         print(f"[pixal] job {job['id']} done: {len(job['images'])} img, "
               f"{job['elapsed']}s, err={job['error']}", flush=True)
         # A PiD stage leaves its trio (decoder + PixelDiT TE + autoencoder,
@@ -6093,7 +7112,7 @@ class Hub:
             return None
         template = job["template"]
         spec = dict(job.get("spec") or {})
-        if template in ("h3_i2v", "h3_multishot"):
+        if template in ("h3_i2v", "h3_multishot", "h3_ref2v"):
             # H3's duration is a fixed menu, so "smaller" means the next rung
             # down, not a percentage.
             rungs = sorted(H3_LENGTHS)
@@ -6391,6 +7410,17 @@ class Hub:
                 # rendered, so a card that can hold one 20GB model was credited
                 # with three and every later job priced its reload as free.
                 self.resident_heavies = dict(heavy)
+                if prev_floor_below_guard(self.prev_job_free_min,
+                                          PREV_JOB_FREE_GUARD):
+                    # The last job ended inside the guard band: the card ran
+                    # closer to the wall than the price alone can see. Bounded
+                    # escalation - the same trim the warm-rerun path uses,
+                    # unload=False, so no resident stack is evicted (the
+                    # reload IS the bill) and the chat brain is never touched.
+                    await self.reclaim_vram(
+                        f"trimming cache for {template} (last job ended at "
+                        f"{self.prev_job_free_min / 2**30:.1f}GB free)",
+                        target=act + VRAM_FLOOR, unload=False)
                 return
             if weights > 0 and hot == weights and not video:
                 # Prompt-only rerun: every heavy this graph names is already
@@ -6468,8 +7498,24 @@ class Hub:
         for e in model_catalog("loras"):
             group = Path(e["rel"]).parts[0] if len(Path(e["rel"]).parts) > 1 else "(root)"
             lp = lora_profile(e["rel"])
+            # The bypass patches are told apart by what they DO, not by what
+            # they are called - two CivitAI versions one character apart, and
+            # a rename is invisible in the list otherwise. None for every
+            # ordinary LoRA, which is never opened.
+            try:
+                patch_file = Path(e["root"]) / e["kind"] / e["rel"]
+                stat = patch_file.stat()
+                vectors = _vector_patch_count(str(patch_file),
+                                              stat.st_mtime_ns, stat.st_size)
+            except (KeyError, TypeError, OSError):
+                # A catalog entry is not guaranteed to carry root/kind, and an
+                # unreadable file is not an error worth failing the whole
+                # options payload over - the badge is an affordance, not data
+                # anything depends on.
+                vectors = None
             loras_by_rel[e["rel"]] = {"name": e["rel"], "short": base(e["rel"]), "group": group,
                                       "krea2": lp["family"] == "krea2", **lp,
+                                      **({"vectors": vectors} if vectors else {}),
                                       "compatible_recipes": compatible_recipes(lp)}
         titles = {}
         try:
@@ -7730,6 +8776,136 @@ H3_MOTION_SYSTEM = (
     "speed, never what fails to happen.\n"
     "Output only those fields.")
 
+
+# The ref2va director variant (brief 9.12, Task 0). Deliberately BUILT, not
+# copied from the fl2va prompt with a new OUTPUT FORMAT: the fl2va premise -
+# "the supplied still is literal frame zero, preserve its composition and
+# lighting" - fights the entire point of this lane. Here the still is an
+# IDENTITY reference named <Picture 1>, and the scene is NEW. Per the
+# brief-harness finding, the six-section structure lives at the END as the
+# output contract (small models obey end contracts, capped at about three
+# points, and ignore mid-paragraph rules); assemble_h3_ref2v_prompt's
+# deterministic repair stands behind everything else.
+H3_REF2V_MOTION_SYSTEM = (
+    "You are a motion-and-sound director for MiniMax H3 REF2VA, the "
+    "reference-to-video lane. You receive one REFERENCE still and usually a "
+    "DIRECTOR'S NOTE. Write one concise, production-ready video brief for the "
+    "requested clip length. The still is NOT a frame of this video: it is an "
+    "identity reference, named <Picture 1>. Its subject - face, hair, "
+    "wardrobe, defining props - is carried into a NEW scene that you invent. "
+    "Never describe the reference's own background, composition or lighting "
+    "as the video's: that is the old scene, and the video happens somewhere "
+    "new. What the subject KEEPS is identity; where they ARE and what "
+    "HAPPENS is yours to stage, from the note or from what suits them. "
+    "Translate every part of the note into concrete action, camera behavior, "
+    "pacing, and synchronized sound. Camera movement needs a physical cause; "
+    "never add a zoom or push-in unless requested. The subject handles what "
+    "the reference shows them carrying and what the new scene plainly holds; "
+    "objects that appear from nowhere render as nowhere. "
+    + BRIEF_ECONOMY_RULE
+    + SPOKEN_LINE_RULE +
+    # The restraint suite carries over, re-premised: the pitch is the
+    # reference, not the frame.
+    "FAVOUR RESTRAINT. This should look like real footage of one thing "
+    "happening, not a commercial. One clear action is enough; let the camera "
+    "mostly hold; ordinary, unperformed behaviour beats choreography. "
+    "Restraint is about the CAMERA, never about the event - there must still "
+    "be one thing that is visibly true at the end and was not true at the "
+    "start, and every word must be something a camera can see. It does NOT "
+    "govern the premise: the new scene can be as bold as the subject will "
+    "carry; what stays unshowy is how it is shot and how they play it. "
+    "THE REFERENCE IS THE PITCH: read THIS subject - who they are, what they "
+    "wear, what they are holding - and stage the scene that suits them. An "
+    "idea that could sit under any other reference is the wrong idea. "
+    "AND MAKE IT POST-WORTHY: an unprompted clip is something someone shares, "
+    "not minutes of a reference. Give it one payoff a viewer would replay, "
+    "built from who the subject is, never from conjured props.\n"
+    # The tempo clause, identical wording to the fl2va lane - stated positively
+    # on purpose; "no slow motion" is the pink elephant and produces it.
+    "STATE THE TEMPO, once and positively: all motion plays at natural, "
+    "real-time speed - a gesture completes at the pace a person actually "
+    "moves, and something in the frame is visibly in transit for the whole "
+    "take. A beat where nothing moves renders as syrup, not stillness. Never "
+    "write the words 'slow motion', not even to forbid them.\n"
+    "DIALOGUE COSTS SCREEN TIME: people speak at two to three words a "
+    "second and the mouth is busy for the line's whole duration, so budget "
+    "every quoted line against the clip like the event it is. A 5-second "
+    "take holds ONE short line - about eight words - alongside its action; "
+    "when the note asks for more words than the clip can say, keep the "
+    "line's core and cut the rest. Never solve it by speeding the delivery "
+    "or the delivery renders rushed and the rest renders stretched.\n"
+    # H3 interpolates appearance rather than simulating contact, so feet
+    # slide. Measured on fl2va (9.0 Q7); the cause is architectural, kept for
+    # this lane with that provenance.
+    "Stage action from a planted position: walking, running and stairs come "
+    "back as a glide, so prefer a body that turns, reaches, flinches, sits or "
+    "leans while the CAMERA does the travelling. If someone must cross the "
+    "frame, let the move start or finish off screen instead of showing the "
+    "whole walk. "
+    # The six-section structure is MiniMax's trained full-reference format
+    # (VIDEO_PROMPT_WRITING_GUIDE_ref_en.md §1); the model card's case-Ref2VA
+    # prompt is the canonical example. Six sections, in this order, block
+    # shape: header at the start of its own line, content on the NEXT line.
+    "OUTPUT FORMAT - H3 REF2VA was trained on exactly this six-section "
+    "structure; write these six labeled sections in this order and nothing "
+    "else, each header lowercase at the start of its own line with its "
+    "content on the NEXT line:\n"
+    "subject_definitions: one line binding the subject to its reference - "
+    "<Subject 1> is the person in <Picture 1>. - naming the features the "
+    "video must keep: face, hair, wardrobe, defining props.\n"
+    "summary: one short paragraph that OPENS with the task prefix [reference "
+    "generation], then names the subject and the new scene.\n"
+    "retention_analysis: one line per subject - <Subject 1> (appears in "
+    "[Shot 1]): fully_preserved - what is kept.\n"
+    "detailed_description: 350-500 English words covering the full clip, "
+    "opening DIRECTLY with [Shot 1] - write NO style line, one is added for "
+    "you. One continuous take: no cuts, no later [Shot N] markers. Dialogue "
+    "lives inside the shot at the exact moment it is spoken: (S1) says: "
+    "<d>[Language] the exact words spoken</d>, with an honest language tag. "
+    "NOTHING follows the closing </d> tag except the next action beat. "
+    "overall_soundscape: ambience and synchronized action sounds - no "
+    "dialogue; music belongs here only when the scene itself plays it.\n"
+    "non_diegetic_music: a score ONLY if the note asks for one; otherwise "
+    "exactly N/A.\n"
+    "OUTPUT CONTRACT - verify each point before answering, and rewrite until "
+    "every one holds:\n"
+    "1. All six sections are present, in the order above, block-shaped. The "
+    "ONLY reference tag anywhere is <Picture 1> and the ONLY subject is "
+    "<Subject 1>, bound to it in subject_definitions - never name <Picture "
+    "2>, <Video> or <Audio>: none are wired.\n"
+    # H3_AUDIO_PROMPT's two load-bearing rules live here in this lane (speech
+    # inside the window; no unasked score), plus the 9.9 closing beat.
+    "2. Spoken words appear exactly once, ONLY as (S1) says: <d>[English] "
+    "the exact words</d>, and every spoken line ends explicitly - the next "
+    "beat says the lips close and the speaking motion stops. All speech "
+    "BEGINS and FINISHES inside the clip, its final word complete before the "
+    "last second: speech still running when the clip ends is cut off there, "
+    "and the piece that did not fit reappears as a stray syllable over the "
+    "opening frames. At most TWO speakers, and no more than two and a half "
+    "spoken words per second of clip across both.\n"
+    "3. The tempo is stated in positives only - what moves and at what real "
+    "speed, never what fails to happen - and non_diegetic_music carries a "
+    "score only when the note asked for one.\n"
+    "Output only the six sections.")
+
+# The frame-attach and inventory notes name the premise for the VISION path;
+# the fl2va ones ("the exact frame this video starts from") would re-import
+# the frame-zero premise, so the ref2va lane gets its own pair.
+H3_REF2V_LOOK_NOTE = (
+    "\nThe attached image is <Picture 1>, the IDENTITY reference for this "
+    "render - NOT its first frame. Read from it who the subject is: face, "
+    "hair, wardrobe, defining props. The video's scene is new and yours to "
+    "stage; never carry the reference's background, composition or lighting "
+    "into the brief, and never invent a second reference.")
+
+H3_REF2V_INVENTORY_NOTE = (
+    "\nThe FRAME INVENTORY describes <Picture 1>, the identity reference, read "
+    "by a vision model that examined it. It is ground truth for WHO the "
+    "subject is: face, hair, wardrobe, props. It says nothing about the "
+    "video's scene, which is new and yours to stage. Where it disagrees with "
+    "the scene caption about the subject, the inventory wins.")
+
+
 # ------------------------------------------------------------- managed local brain
 # The "Local (uncensored)" preset points at :8191. When the chat brain lives there,
 # the sidecar owns the llama.cpp server: spawn on first use, respawn on model change.
@@ -7739,6 +8915,21 @@ LOCAL_LLM_PORT = 8191
 LOCAL_LLM_URL = f"http://127.0.0.1:{LOCAL_LLM_PORT}/v1"
 LLM_STATE = HERE / ".local_llm.json"     # {pid, model} of the server WE spawned -
 LLM_LOG = HERE / "llama_server.log"      # survives sidecar restarts (adopt, don't strand)
+
+# When the brain was last actually wanted. local_keep used to mean "resident
+# forever": the only alternative was local_keep off, which hands the VRAM back
+# after EVERY turn and pays a multi-GB reload on the next one. Neither is what
+# a person wants - warm while you are talking to it, gone while you are not.
+#
+# Found the hard way (2026-08-22): a brain spawned at 02:10 was still holding
+# 8.4 GB at 04:50 with nothing having asked it anything for hours, because the
+# process that spawned it had exited and nothing owned it any more. The VRAM
+# butler already evicts before a render (free_brain_vram), so this is purely
+# the idle case - and idle is most of the time.
+LLM_LAST_USED = 0.0
+LLM_IDLE_EVICT_S = 600          # 10 min; cfg llm.local_idle_minutes overrides
+LLM_REAP_TICK_S = 60
+_PROCESS_START = time.time()    # so an adopted orphan counts as idle from boot
 
 def _llm_state():
     try:
@@ -8023,6 +9214,8 @@ async def _vision_smoke_test():
 
 
 async def _ensure_local_llm(cid=None):
+    global LLM_LAST_USED
+    LLM_LAST_USED = time.time()      # every local-brain use passes through here
     full_cfg = load_config()
     cfg = full_cfg["llm"]
     if f"127.0.0.1:{LOCAL_LLM_PORT}" not in cfg["base_url"]:
@@ -8122,6 +9315,43 @@ async def _ensure_local_llm(cid=None):
             return None
         await asyncio.sleep(2)
     return f"the local brain didn't come up with {name} (2 min timeout)"
+
+async def brain_idle_reaper():
+    """Hand the card back when nobody is talking to the brain.
+
+    Only ever touches a process our own pidfile claims, so an externally
+    started llama server (run_llm.bat) is never disturbed. Eviction is free to
+    be wrong in the cheap direction: the next chat turn starts a fresh one.
+    """
+    while True:
+        await asyncio.sleep(LLM_REAP_TICK_S)
+        try:
+            cfg = load_config()["llm"]
+            if not cfg.get("local_keep", True):
+                continue            # release_local_llm already drops it per turn
+            mins = cfg.get("local_idle_minutes")
+            if isinstance(mins, bool) or not isinstance(mins, (int, float)):
+                idle_after = LLM_IDLE_EVICT_S      # unset or junk - use the default
+            elif mins <= 0:
+                continue                           # 0 is a real choice: never reap
+            else:
+                idle_after = float(mins) * 60
+            if not _llm_state().get("pid"):
+                continue            # nothing of ours is up
+            # LLM_LAST_USED is 0 for a brain this process never used - an
+            # orphan adopted across a sidecar restart. Those are exactly the
+            # ones worth reaping, so treat unknown as "idle since boot".
+            since = time.time() - (LLM_LAST_USED or _PROCESS_START)
+            if since < idle_after:
+                continue
+            if await free_brain_vram():
+                print(f"[pixal] brain idle {int(since)}s - VRAM handed back",
+                      flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[pixal] brain reaper: {exc}", flush=True)
+
 
 def release_local_llm():
     """local_keep off = hand the VRAM back at the end of every turn. Only ever
@@ -8783,6 +10013,24 @@ def motion_length_note(seconds, beats=None):
             f"never be performed as cute. She is not doing it for the camera.")
 
 
+def h3_ref2v_length_note(seconds):
+    """The ref2va lane's length guidance. motion_length_note's sentence counts
+    are the fl2va budget; this lane's trained budget is 350-500 words of
+    detailed_description (ref guide §5.2), so it gets its own note with the
+    same event physics and no competing number."""
+    seconds = int(seconds or 5)
+    events = max(1, round(seconds / 5))
+    return (f"\nTHIS CLIP IS {seconds} SECONDS - one continuous take with room "
+            f"for about {events} real event{'s' if events != 1 else ''}, in "
+            f"order, each given time to land, with the texture of real "
+            f"behaviour between them so no second waits or stretches. "
+            f"detailed_description runs 350-500 English words: that is the "
+            f"length this much screen time needs, covering the clip from its "
+            f"first second to its last - one action carried through to its "
+            f"end, described in stages, not a list of things happening at "
+            f"once.\n")
+
+
 def h3_cut_system(shots, cut_times):
     """The H3 motion brief as ONE take with real internal cuts.
 
@@ -9195,12 +10443,15 @@ async def repair_spoken_line(brief, scene, look, hint, seconds=None):
 
 async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=None,
                         seconds=None, frame=None, look=None,
-                        last_frame=None, look_end=None):
+                        last_frame=None, look_end=None, model=None):
     """Returns (brief, directed) - directed=False means the LLM was unreachable and
     the caller should say so instead of quietly shipping the default.
 
     ``cut_times`` selects the single-pass timeline (real cuts inside ONE
     generation); without it, several shots mean the chained script format.
+    ``model`` selects the H3 lane: a ref2va chip gets the six-section director
+    variant (H3_REF2V_MOTION_SYSTEM) - the DIRECTOR writes all six sections,
+    and the fl2va frame-zero premise never enters this lane.
 
     The single-shot fallback is safe for both: the chain's builder passes the
     requested shot_count and the node continues the last prompt for any shot the
@@ -9219,6 +10470,15 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
                  f"converge on exactly this): {look_end}")
     if hint:
         user += f"\nDIRECTOR'S NOTE (the vision - obey it): {hint}"
+    h3_variant = h3_model_variant(model) if engine == "h3" else None
+    if h3_variant == H3_REF2V_MODEL_ID:
+        # The director must know exactly what is wired: one reference image,
+        # and nothing else. Tag discipline is the failure the official
+        # template itself ships (a dangling <Audio 1>).
+        user += ("\nTHE WIRED REFERENCE: exactly one reference image is wired, "
+                 "<Picture 1> - the still above. Its subject is who your brief "
+                 "carries into the new scene. Bind it to <Subject 1>; never "
+                 "name <Picture 2>, <Video> or <Audio> - none are wired.")
     _turn_start()
     try:
         if engine == "h3":
@@ -9226,6 +10486,8 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
                 system = h3_cut_system(shots, cut_times)
             elif shots > 1:
                 system = h3_multishot_system(shots)
+            elif h3_variant == H3_REF2V_MODEL_ID:
+                system = H3_REF2V_MOTION_SYSTEM
             else:
                 system = H3_MOTION_SYSTEM
             # `seconds` here is the PER-SHOT length and the note divides by
@@ -9234,7 +10496,9 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
             # starved dialogue to a third). Pass the total; shots=1 is a no-op,
             # so single-shot output is unchanged.
             system += h3_speech_budget_note(int(seconds or 5) * shots, shots)
-            if last_frame or look_end:
+            # No bridge in the reference lane - animate refuses last_id on a
+            # ref2va chip, and the node has no end-frame input at all.
+            if h3_variant != H3_REF2V_MODEL_ID and (last_frame or look_end):
                 system += H3_BRIDGE_NOTE
         elif engine == "ltx25":
             # 2.5 speaks a different dialect from 2.3: flowing paragraph,
@@ -9250,8 +10514,14 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
         #
         # A cut timeline spends its whole length across the shots, so the
         # budget is one event per shot; every other mode gets one per ~5s.
-        total = int(seconds or 5) * shots if cut_times else int(seconds or 5)
-        system += motion_length_note(total, shots if cut_times else None)
+        # ref2va gets its own note: its trained budget is 350-500 words of
+        # detailed_description, and the fl2va note's sentence counts would
+        # fight it.
+        if h3_variant == H3_REF2V_MODEL_ID:
+            system += h3_ref2v_length_note(int(seconds or 5))
+        else:
+            total = int(seconds or 5) * shots if cut_times else int(seconds or 5)
+            system += motion_length_note(total, shots if cut_times else None)
         # Only claim the model can see when we actually managed to attach the
         # frame - promising an image that is not there is worse than not sending
         # one, because the brief then describes a picture nobody supplied. With
@@ -9260,10 +10530,12 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
         # the text-shaped truth it can actually use.
         url = None if look else (data_url_for(frame) if frame else None)
         if look:
-            system += MOTION_INVENTORY_NOTE
+            system += (H3_REF2V_INVENTORY_NOTE
+                       if h3_variant == H3_REF2V_MODEL_ID else MOTION_INVENTORY_NOTE)
             content = user
         elif url:
-            system += MOTION_LOOK_NOTE
+            system += (H3_REF2V_LOOK_NOTE
+                       if h3_variant == H3_REF2V_MODEL_ID else MOTION_LOOK_NOTE)
             content = [{"type": "image_url", "image_url": {"url": url}}]
             url_end = data_url_for(last_frame) if last_frame else None
             if url_end:
@@ -9287,7 +10559,15 @@ async def direct_motion(scene, hint=None, engine="ltx25", shots=1, cut_times=Non
     fallback = ("A still handheld camera with natural micro-shake; the subject continues "
                 "the action of the frame - breathing, blinking, hair and fabric moving "
                 "naturally; lighting unchanged. No zoom, no push-in.")
-    if engine == "h3":
+    if engine == "h3" and h3_variant == H3_REF2V_MODEL_ID:
+        # No frame to continue in this lane: the reference is identity, and the
+        # scene is new. The assembler wraps this into the six sections.
+        fallback = ("The subject of <Picture 1> in a new, quiet scene - breathing, "
+                    "blinking, hair and fabric moving naturally; a still handheld "
+                    "camera with natural micro-shake. No zoom, no push-in. Generate "
+                    "synchronized room tone, fabric movement, and other action "
+                    "sounds visible in the scene; do not invent dialogue.")
+    elif engine == "h3":
         fallback += (" Generate synchronized room tone, fabric movement, footsteps, and "
                      "other action sounds visible in the scene; do not invent dialogue.")
     if hint:
@@ -10943,6 +12223,8 @@ async def settings_get(_req):
                 "local_model": cfg["llm"].get("local_model", ""),
                 "local_keep": cfg["llm"].get("local_keep", True),
                 "local_gpu_layers": cfg["llm"].get("local_gpu_layers", -1),
+                "local_idle_minutes": cfg["llm"].get(
+                    "local_idle_minutes", LLM_IDLE_EVICT_S // 60),
                 "local_llms": local_llm_models()},
         "critic": {"model": cfg["critic"]["model"],
                    "installed": [{"name": n, "nsfw": _pretty_name(n)["nsfw"]}
@@ -10983,6 +12265,14 @@ async def settings_get(_req):
 async def settings_post(req):
     body = await req.json()
     cfg = load_config()
+    # The brain that is ALREADY running was spawned with the old placement
+    # baked into its argv. Saving "chat brain on CPU" rewrote config and
+    # nothing else, so a GPU-resident brain kept its layers until some later
+    # chat turn happened to notice the mismatch - and with local_keep on, that
+    # turn may never come. Jesse's 4B Q8 + f16 projector + 16k ctx sat on the
+    # card for hours after he moved it to CPU (2026-08-22: 8.4 GB, measured).
+    was_brain = (str(cfg["llm"].get("local_model") or ""),
+                 cfg["llm"].get("local_gpu_layers", -1))
     llm = body.get("llm") or {}
     for k in ("base_url", "model"):
         if llm.get(k):
@@ -11001,6 +12291,13 @@ async def settings_post(req):
                 {"ok": False, "error": f"not a gpu layer count: {want}"},
                 status=400)
         cfg["llm"]["local_gpu_layers"] = want
+    if "local_idle_minutes" in llm:
+        want = llm["local_idle_minutes"]
+        # bool IS an int in Python - True/False are not minute counts.
+        if isinstance(want, bool) or not isinstance(want, (int, float)) or want < 0:
+            return web.json_response(
+                {"ok": False, "error": f"not a minute count: {want}"}, status=400)
+        cfg["llm"]["local_idle_minutes"] = want   # 0 = keep it resident forever
     critic = body.get("critic") or {}
     if critic.get("model"):
         cfg["critic"]["model"] = critic["model"].strip()
@@ -11105,6 +12402,12 @@ async def settings_post(req):
     save_config(cfg)
     _CATALOG["at"] = 0                         # rescan on next options call
     _SIDECAR_META.clear()
+    # Moving the brain between card and CPU - or to a different model - only
+    # takes effect on a fresh process. Evict ours now rather than leaving the
+    # old placement holding VRAM until something else notices.
+    if was_brain != (str(cfg["llm"].get("local_model") or ""),
+                     cfg["llm"].get("local_gpu_layers", -1)):
+        await free_brain_vram()
     return web.json_response({"ok": True})
 
 async def setup_get(_req):
@@ -11426,9 +12729,12 @@ async def animate(req):
         requested_shots = body.get("shots")
         if script and requested_shots is None and engine == "h3":
             requested_shots = min(len(split_shot_script(script)) or 1, H3_SHOTS_MAX)
-        shots = validate_shot_count(engine, requested_shots, seconds)
+        shots = validate_shot_count(engine, requested_shots, seconds, model_id)
     except ValueError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    # The chip is the lane switch, per render: fl2va builds the first-frame
+    # graph, ref2va the reference graph. Every fence below keys off this.
+    variant = h3_model_variant(model_id) if engine == "h3" else None
     entry = next((e for e in HUB.ledger_read() if e["id"] == body.get("id")), None)
     if not entry:
         return web.json_response({"ok": False, "error": "no such generation"}, status=404)
@@ -11454,6 +12760,15 @@ async def animate(req):
             return web.json_response(
                 {"ok": False, "error": "a bridge is one continuous take - set shots to 1"},
                 status=400)
+        # MiniMaxH3ReferenceToVideo has no end-frame input at all - a bridge
+        # would hand the builder a last_image with nowhere to go. Refuse
+        # explicitly rather than drop it.
+        if variant == H3_REF2V_MODEL_ID:
+            return web.json_response(
+                {"ok": False, "error": "a REF2VA render has no end frame - the "
+                                       "reference is an identity, not a frame "
+                                       "anchor; bridging is FL2VA-only"},
+                status=400)
         last_entry = next((e for e in HUB.ledger_read() if e["id"] == last_id), None)
         if not last_entry:
             return web.json_response(
@@ -11463,8 +12778,27 @@ async def animate(req):
         args["fps"] = fps
     try:
         if engine == "h3":
-            dst, width, height = prepare_h3_frame(src)
-            args.update(image=dst, width=width, height=height)
+            if variant == H3_REF2V_MODEL_ID:
+                # The picked still becomes ref_images.ref_image_0, staged as a
+                # RAW copy - never through prepare_h3_frame, which center-crops
+                # to the canvas because a first frame anchors geometry. A
+                # reference does not; the node scales refs itself,
+                # aspect-preserved, and cropping the subject to canvas throws
+                # away exactly the identity information the ref exists to
+                # carry. (The bridge path's raw copy is the precedent.)
+                dst = f"pixal_ref_{entry['id']}.png"
+                (CDIR / "input").mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, CDIR / "input" / dst)
+                # No prepared frame defines the canvas in this lane, so it
+                # derives from the source still's aspect via the same
+                # adaptive-canvas logic.
+                from PIL import Image
+                with Image.open(src) as still:
+                    width, height = h3_adapt_canvas(*still.size)
+                args.update(refs=[dst], width=width, height=height)
+            else:
+                dst, width, height = prepare_h3_frame(src)
+                args.update(image=dst, width=width, height=height)
             if last_entry:
                 limg = next((i for i in last_entry["images"]
                              if i.get("media", "image") == "image"),
@@ -11495,6 +12829,20 @@ async def animate(req):
             if speed and h3_speed_mode(speed) is None:
                 return web.json_response(
                     {"ok": False, "error": f"unknown H3 speed mode: {speed}"},
+                    status=400)
+            # The distillation ladder is FL2VA-only: its LoRAs are all fl2v
+            # distills and no ref2v turbo is on disk. ref2va IS quality at 20
+            # steps, so a distillation ask on a ref2va chip is refused here -
+            # h3_speed_settings' silent-fallback-on-missing-LoRA precedent is
+            # wrong for a lane that can never honour the pick.
+            mode = h3_speed_mode(speed or (H3_SPEED_LEGACY_TURBO
+                                           if body.get("turbo") else H3_SPEED_DEFAULT))
+            if variant and variant not in (mode or {}).get("variants", ()):
+                return web.json_response(
+                    {"ok": False, "error": f"{mode['label']} is an FL2VA "
+                                           f"distillation and no ref2v turbo LoRA is "
+                                           f"on disk - a REF2VA chip renders at "
+                                           f"Quality, 20 steps"},
                     status=400)
             if speed:
                 args["turbo"] = str(speed)
@@ -11531,8 +12879,11 @@ async def animate(req):
         # real vision keep the direct image attach below.
         look = look_end = ""
         if f"127.0.0.1:{LOCAL_LLM_PORT}" in load_config()["llm"]["base_url"]:
+            # the staged frame: the prepared first frame on fl2va, the raw
+            # reference copy on ref2va - either way it is in ComfyUI's input
+            staged = args.get("image") or (args.get("refs") or [None])[0]
             HUB.broadcast(type="thinking", cid=cid, note="looking at the frame")
-            look = await frame_inventory(args.get("image"), entry["id"], cid)
+            look = await frame_inventory(staged, entry["id"], cid)
             if args.get("last_image"):
                 HUB.broadcast(type="thinking", cid=cid, note="looking at the end frame")
                 look_end = await frame_inventory(args["last_image"],
@@ -11542,13 +12893,16 @@ async def animate(req):
                                                engine=engine, shots=shots,
                                                cut_times=cut_plan[1] if cut_plan else None,
                                                seconds=seconds,
-                                               # the prepared start frame, which
-                                               # both engines have just written
-                                               # into ComfyUI's input folder
-                                               frame=args.get("image"),
+                                               # the staged still, which both
+                                               # engines have just written into
+                                               # ComfyUI's input folder (raw
+                                               # reference copy on ref2va)
+                                               frame=args.get("image") or
+                                                     (args.get("refs") or [None])[0],
                                                look=look,
                                                last_frame=args.get("last_image"),
-                                               look_end=look_end)
+                                               look_end=look_end,
+                                               model=model_id)
         if cut_plan:
             motion = normalise_cut_timeline(motion, cut_plan[1])
         HUB.broadcast(type="thinkingdone", cid=cid)
@@ -11566,6 +12920,11 @@ async def animate(req):
         # 2.3 ("ltx" -> ltx_i2v) is reachable only through old-history rerolls
         # now, and those carry their template directly - the default is 2.5.
         template = {"h3": "h3_i2v", "ltx": "ltx_i2v"}.get(engine, "ltx25_i2v")
+        # The chip IS the lane switch: a ref2va build takes the reference
+        # graph. shots>1 and cut plans on a ref2va chip never reach here -
+        # validate_shot_count refused them before the cut plan was computed.
+        if engine == "h3" and variant == H3_REF2V_MODEL_ID:
+            template = "h3_ref2v"
     if template == "h3_i2v":
         # Official trained structure (three fields + alignment header). The
         # chained multishot keeps the pack's own --- format; LTX has no such
@@ -11573,6 +12932,27 @@ async def animate(req):
         motion = assemble_h3_prompt(motion, user_script=bool(script),
                                     last_frame=bool(args.get("last_image")),
                                     seconds=args.get("seconds"))
+        # Brief 9.9: fill the two trained slots with the truth instead of
+        # constants - the style from the source still's provenance (entry is
+        # the ledger record of the still being animated), and the beat after a
+        # hanging </d> from one brain call, falling back to the neutral
+        # closer. assemble_h3_prompt stays sync, so both run here.
+        motion = h3_style_splice(motion, h3_style_for_entry(entry))
+        motion = await repair_h3_hanging_dialogue(motion, cid)
+    elif template == "h3_ref2v":
+        # The six-section trained format, sibling of the fl2va assembly: the
+        # DIRECTOR authored the sections (H3_REF2V_MOTION_SYSTEM); the
+        # assembler repairs and guarantees structure, writes the style slot
+        # from provenance, and applies the dangling-ordinal policy. No
+        # alignment header, no H3_AUDIO_PROMPT, no style splice - those are
+        # all fl2va-lane machinery.
+        motion, ref_warnings = assemble_h3_ref2v_prompt(
+            motion, [{} for _ in args.get("refs") or []],
+            user_script=bool(script), style=h3_style_for_entry(entry))
+        motion = await repair_h3_hanging_dialogue(motion, cid)
+        if ref_warnings:
+            HUB.broadcast(type="text", cid=cid,
+                          text="*ref2va: " + "; ".join(ref_warnings) + "*")
     asyncio.create_task(HUB.submit(cid, "chat", template, motion,
                                    args, 1, parent=entry["id"]))
     return web.json_response({"ok": True, "cid": cid, "motion": motion,
@@ -11911,6 +13291,16 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                                             frame=frame, look="")
             motion = assemble_h3_prompt(motion, user_script=False,
                                         last_frame=False, seconds=per)
+        # Brief 9.9, same two slots as animate: the style follows the still's
+        # ledger provenance (parent is the still job's entry id), and a
+        # hanging </d> gets its closing beat from one brain call with the
+        # neutral closer as the only fallback. A still whose entry is not in
+        # the ledger yet simply keeps live-action - unknown provenance is
+        # never a reason to claim stylized.
+        still_entry = next((e for e in HUB.ledger_read() if e["id"] == parent),
+                           None)
+        motion = h3_style_splice(motion, h3_style_for_entry(still_entry))
+        motion = await repair_h3_hanging_dialogue(motion, cid)
         briefs.append((i, shot, motion, frame, w, h, parent))
     # phase 3: every clip on one H3 residency
     rendered = {}
@@ -12930,7 +14320,7 @@ VRAM_RECLAIM_NOISE = int(0.05 * 2**30)   # under this, the pool has stopped movi
 # and starting from a dirty one is how all three ltx25 OOMs happened. Jesse's
 # call, 2026-08-16: anything video flushes first, unconditionally.
 VIDEO_TEMPLATES = frozenset((
-    "ltx_i2v", "ltx25_i2v", "h3_i2v", "h3_multishot",
+    "ltx_i2v", "ltx25_i2v", "h3_i2v", "h3_multishot", "h3_ref2v",
     "upscale_video", "ltx25_upscale_video",
 ))
 # How long a video submission will wait for the queue to drain so the
@@ -12949,6 +14339,89 @@ PAGING_FREE_FLOOR = int(0.6 * 2**30)
 PAGING_GPU_MIN = 85        # % cores busy
 PAGING_MEMBUS_MAX = 10     # % memory-bus util below this = starved, not working
 PAGING_STREAK = 4
+
+# The rate watchdog (brief 9.10): watches the RENDER, where PAGING_* above
+# watches the CARD - and fires in cases the card-level test misses, like a
+# render paging against ANOTHER tenant's allocation on a not-quite-full card.
+# A job's own opening steps are the baseline: a render that starts healthy
+# and collapses is the paging signature; a render uniformly slow from step
+# one is merely a big render, and a per-template expected s/it table would
+# need the calibration data 9.8 only just started collecting. Sensor only:
+# it logs and ledger-records once per job and deliberately does NOT act -
+# what a tripped watchdog should DO (interrupt, flush-and-retry, narrate) is
+# deferred until these logs show the real collapse rate instead of the one
+# anecdote below.
+# Coverage, said out loud: SKIP + BASELINE + STREAK means a job needs 10
+# steps before it CAN trip. Covered: the 20-40 step lanes (qwen edit full,
+# qwen image, H3 full, zimage base, anima base), the 12-16 step lanes
+# (zimage anime, face mint, klein inpaint). Excluded by construction: the
+# 4-step Lightning edit lane and every 8-step turbo lane - including the
+# identity edit that motivated this brief, which may itself have been too
+# short to detect. A 10-step lane (anima turbo) can trip only on its final
+# step. A quiet ledger from short jobs means "unmeasured", not "no paging".
+PAGING_RATE_SKIP = 1       # the first measured interval still carries one-off
+                           # costs - allocator growth, autotune, the first
+                           # preview decode - not the steady rate
+PAGING_RATE_BASELINE = 5   # median of five early steps; one blip inside the
+                           # window cannot move a median of five
+PAGING_RATE_MULTIPLE = 4.0 # trip at 4x the job's own baseline. The observed
+                           # signature was ~10x (110s/step, 2026-08-11) but that
+                           # is ONE anecdote; for a log-only sensor a false
+                           # positive costs a log line, a false negative costs
+                           # the point of the brief. Ordinary step variance is
+                           # within tens of percent - nowhere near 4x.
+PAGING_RATE_STREAK = 4     # consecutive slow steps before a trip; one stall
+                           # (a preview decode) must never fire it - the same
+                           # reasoning PAGING_STREAK uses four reads for
+
+def paging_rate_trip(durations, skip=PAGING_RATE_SKIP,
+                     baseline=PAGING_RATE_BASELINE,
+                     multiple=PAGING_RATE_MULTIPLE,
+                     streak=PAGING_RATE_STREAK):
+    """Pure detector over a job's measured per-step seconds, in order.
+
+    Returns {"step", "baseline", "rate"} at the step where the collapse
+    proves itself, else None. No clock, no GPU, no I/O - the sanctioned
+    simulation for the live-machine rule: every test feeds injected numbers.
+    Append-only input means the first trip is stable: once a streak of
+    `streak` steps each >= multiple x the early median exists, every later
+    call on the grown list reports the same trip, and the caller's per-job
+    flag is what makes the logging once-only.
+    """
+    if len(durations) < skip + baseline + streak:
+        return None                    # too few steps to even judge - no crash
+    base = statistics.median(durations[skip:skip + baseline])
+    if base <= 0:
+        return None                    # a zero baseline trips on everything
+    run = 0
+    for i in range(skip + baseline, len(durations)):
+        if durations[i] >= multiple * base:
+            run += 1
+            if run >= streak:
+                return {"step": i + 1, "baseline": base, "rate": durations[i]}
+        else:
+            run = 0
+    return None
+
+# The last job's free_min below this makes the next job trim torch's
+# reclaimable pool before it queues, however well it was priced. Between
+# PAGING_FREE_FLOOR (0.6GB - where the paging detector fires, already the
+# livelock) and VRAM_FLOOR (2.0GB - the slack the pricer reserves), so the
+# near-miss is caught before it becomes either: 27 of the last 126 priced
+# renders ended under 1.0GB. The trim is unload=False, always - it reclaims
+# the allocator pool, never evicts a resident stack, because the reload IS
+# the bill (warm identity_edit 27-28s, the same render flushed 41-54s).
+PREV_JOB_FREE_GUARD = int(1.5 * 2**30)
+
+
+def prev_floor_below_guard(prev_free_min, guard):
+    """Did the last finalized job end closer to the wall than we tolerate?
+
+    None means it was never sampled - no signal - and no signal must never
+    read as zero, or one unsampled job switches the trim on forever (the
+    stale-value bug class busy_elsewhere/forget_residency were written for).
+    """
+    return prev_free_min is not None and prev_free_min < guard
 
 # ComfyUI surfaces the allocator failure as prose, and the exact wording varies
 # by allocator backend - this box runs cudaMallocAsync, which says "Allocation
@@ -13021,6 +14494,11 @@ ACT_PROFILES = {
     # succeeded (169s, job 606e2e9d) on top of a 24.9GB weight peak, so its
     # activations cannot exceed ~7GB.
     "h3_i2v": (5.0, 0.0, 0.005), "h3_multishot": (5.0, 0.0, 0.005),
+    # h3_i2v's exact coefficients: same spine, same canvas math. The
+    # per-REFERENCE surcharge is real (ref latents ride every sampling step)
+    # but unmeasured here - pricing it would need a sanctioned render, and an
+    # invented coefficient is worse than the OOM retry covering the tail.
+    "h3_ref2v": (5.0, 0.0, 0.005),
 }
 ACT_DEFAULT = (1.0, 1.2, 0.0)
 # Ceiling on a canvas the pricer had to GUESS at from the graph. Nothing Pixal
@@ -14003,6 +15481,7 @@ async def on_start(app):
     app["bridge"] = asyncio.create_task(HUB.bridge())
     app["gpu"] = asyncio.create_task(HUB.gpu_watch())
     app["exit"] = asyncio.create_task(exit_when_unwatched())
+    app["brain_reaper"] = asyncio.create_task(brain_idle_reaper())
     # no disk scan before the user has consented to one (first-run setup)
     if load_config()["setup_done"]:
         app["warmup"] = asyncio.create_task(warmup_catalog())
@@ -14018,6 +15497,8 @@ async def on_cleanup(app):
     app["bridge"].cancel()
     app["gpu"].cancel()
     app["exit"].cancel()
+    if app.get("brain_reaper"):
+        app["brain_reaper"].cancel()
     if COMFY_BOOT.get("task"):
         COMFY_BOOT["task"].cancel()
     if "warmup" in app:

@@ -107,10 +107,26 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
     () => Object.keys(seed.tuning || {}).length > 0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [baseMoved, setBaseMoved] = useState(null);
 
   const bases = options?.style_bases || [];
   const recipeById = (id) => (options?.recipes || []).find((r) => r.id === id);
   const baseRecipe = recipeById(base);
+
+  // The draft's base is whatever recipe is actually running - that is the
+  // point, and the bases[0] fallback that used to hide it is gone. But a
+  // recipe that works FROM a finished frame (qwen_edit, klein_inpaint, the
+  // upscalers) has no look of its own to bottle, and the <Select> below is
+  // built from style_bases, so such a base would match no option: the field
+  // would render blank, setBase would never fire, and saving would fail on a
+  // server error. Move, but never quietly - name what was dropped and why.
+  useEffect(() => {
+    if (!bases.length || bases.includes(base)) return;
+    const label = recipeById(base)?.label || base;
+    setBaseMoved({ from: label, to: recipeById(bases[0])?.label || bases[0] });
+    setBase(bases[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, bases.join("|")]);
 
   // Only models that can actually drive this graph. Offering the rest and
   // failing on save would be a worse version of the same information.
@@ -165,6 +181,16 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
   const tunes = (key) => (sampler?.keys || ["steps", "cfg", "sampler_name", "scheduler"])
     .includes(key);
   const changed = Object.keys(tuning).length;
+  // "Just name it" only works if the values are VISIBLE. An untouched tuning
+  // block inherits the recipe's schedule, so say so with the recipe's own
+  // resolved numbers - not with placeholders hidden inside a closed panel.
+  const inheritLine = (() => {
+    const parts = ["steps", "cfg", "sampler_name", "scheduler", "eta"]
+      .filter((k) => tunes(k) && defaults[k] !== undefined)
+      .map((k) => `${k === "sampler_name" ? "sampler" : k} ${defaults[k]}`);
+    return parts.length ? `follows the recipe · ${parts.join(" · ")}`
+                        : "follows the recipe";
+  })();
 
   const numberField = (key, label) => (
     <Field label={label}>
@@ -225,14 +251,23 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
     <>
       <div style={{ position: "fixed", inset: 0, zIndex: 36, background: "rgba(0,0,0,0.5)" }}
            onClick={onClose} />
-      <div className="px-scroll" style={{
+      {/* Pinned header and save bar around ONE scrolling body: the dialog's
+          whole story is "name it, save it", so both stay on screen no matter
+          how long the chain gets. The shell itself never scrolls - a flex
+          column under maxHeight would compress its overflow:hidden panels
+          (tuning, LoRA chain) instead of overflowing, the clipped-modal bug of
+          2026-08-22. The body's children are made non-shrinking by the
+          .px-dialog-body rule in the theme stylesheet (Chat.jsx). */}
+      <div style={{
         position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 37, width: 460, maxWidth: "94vw", maxHeight: "86vh", overflowY: "auto",
+        zIndex: 37, width: 460, maxWidth: "94vw", maxHeight: "86vh", overflow: "hidden",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: RADIUS.dialog, boxShadow: "0 18px 44px rgba(0,0,0,0.6)",
-        padding: SPACE[16], display: "flex", flexDirection: "column", gap: SPACE[16],
+        display: "flex", flexDirection: "column",
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                      flex: "0 0 auto", padding: `${SPACE[12]}px ${SPACE[16]}px`,
+                      borderBottom: "1px solid var(--border)" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE[6],
                          fontSize: TYPE.h3, fontWeight: W.heading }}>
             <Palette size={15} weight="duotone" style={{ color: "var(--accent)" }} />
@@ -245,6 +280,10 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
           </button>
         </div>
 
+        <div className="px-scroll px-dialog-body" style={{
+          flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: SPACE[16],
+          display: "flex", flexDirection: "column", gap: SPACE[16],
+        }}>
         {/* The name is the star — you just tuned the render, now you bottle it.
             No essay label; the dialog title already says what this is. */}
         <input {...hoverable} value={name} onChange={(e) => setName(e.target.value)}
@@ -273,6 +312,18 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
             ))}
           </Select>
         </Field>
+        {baseMoved && (
+          <span style={{ fontSize: TYPE.label, color: "#E3B98C", lineHeight: 1.5 }}>
+            {baseMoved.from} works from a finished frame, so it has no look to
+            save — this style is set to {baseMoved.to} instead
+          </span>
+        )}
+        {baseRecipe?.needs_character && (
+          <span style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
+            runs on a character anchor — the anchor is chosen when the style is
+            used, not saved inside it
+          </span>
+        )}
 
         <GroupLabel aside={sampler?.node_class}>tuning</GroupLabel>
         {tunable ? (
@@ -280,14 +331,14 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
                         background: "var(--bg2)", overflow: "hidden" }}>
             <button type="button" onClick={() => setTuneOpen(!tuneOpen)}
               style={{
-                width: "100%", height: 38, display: "flex", alignItems: "center",
-                gap: SPACE[8], padding: `0 ${SPACE[12]}px`, cursor: "pointer",
+                width: "100%", minHeight: 38, display: "flex", alignItems: "center",
+                gap: SPACE[8], padding: `${SPACE[6]}px ${SPACE[12]}px`, cursor: "pointer",
                 background: "none", border: "none", color: "var(--textSec)",
                 fontFamily: FONT, fontSize: TYPE.ui, textAlign: "left",
               }}>
-              <span style={{ flex: 1 }}>
+              <span style={{ flex: 1, lineHeight: 1.5 }}>
                 {changed ? `${changed} setting${changed > 1 ? "s" : ""} changed`
-                         : "follows the recipe"}
+                         : inheritLine}
               </span>
               <CaretDown size={11} weight="bold" style={{
                 color: "var(--textTer)", flexShrink: 0,
@@ -320,6 +371,17 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
           </span>
         )}
 
+        {/* loraPlanFor refused the live stack (its revision predates the
+            recipe's current one). Say so - the default chain the effect
+            rebuilds below must never pass as the user's own. */}
+        {seed.lora_stack_dropped && (
+          <span style={{ fontSize: TYPE.label, color: "#E3B98C", lineHeight: 1.5 }}>
+            your live LoRA stack could not be carried over — the recipe's stack
+            changed since you set it, so what you see is the recipe's default
+            chain; re-add your picks before saving
+          </span>
+        )}
+
         {/* The LoRA chain is the composer's own component, driven by a plan held
             here. Reusing it means a style's stack is edited with exactly the
             controls, ordering rules and locked core stages as everywhere else.
@@ -337,7 +399,13 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
                 baseRecipe, defaultLoraEntries(baseRecipe), options, planOpts))}
               setCoreEnabled={(slot, on) => setPlan(buildLoraPlan(
                 baseRecipe, plan.entries, options, planOpts,
-                { ...(plan.core || {}), [slot]: { ...(plan.core || {})[slot], enabled: !!on } }))} />
+                { ...(plan.core || {}), [slot]: { ...(plan.core || {})[slot], enabled: !!on } }))}
+              setCoreStrength={(slot, value) => setPlan(buildLoraPlan(
+                // 2026-08-21: core strength edits rebuild the local plan,
+                // mirroring the toggle above - a style's stack obeys the same
+                // override map as the composer's.
+                baseRecipe, plan.entries, options, planOpts,
+                { ...(plan.core || {}), [slot]: { ...(plan.core || {})[slot], strength: value } }))} />
           </div>
         )}
 
@@ -351,19 +419,27 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
             : "no canvas pinned — the recipe's default is used"}
         </div>
 
-        {(err || clash) && (
-          <span style={{ fontSize: TYPE.label, lineHeight: 1.4,
-                         color: err ? "#E3A7B0" : "#E3B98C" }}>
-            {err || `saving replaces the existing “${clash.name}” style`}
-          </span>
-        )}
-        <button type="button" onClick={save} disabled={busy}
-          style={{
-            height: 36, width: "100%", fontSize: TYPE.ui,
-            fontWeight: W.heading, color: "#050507", background: "var(--accent)",
-            border: "none", borderRadius: RADIUS.input, fontFamily: FONT,
-            cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
-          }}>{busy ? "saving…" : editId ? "save changes" : "save style"}</button>
+        </div>
+
+        {/* Pinned save bar: the one thing this dialog asks for is always on
+            screen, with its error/replace note beside it. */}
+        <div style={{ flex: "0 0 auto", padding: `${SPACE[12]}px ${SPACE[16]}px`,
+                      borderTop: "1px solid var(--border)", display: "flex",
+                      flexDirection: "column", gap: SPACE[8] }}>
+          {(err || clash) && (
+            <span style={{ fontSize: TYPE.label, lineHeight: 1.4,
+                           color: err ? "#E3A7B0" : "#E3B98C" }}>
+              {err || `saving replaces the existing “${clash.name}” style`}
+            </span>
+          )}
+          <button type="button" onClick={save} disabled={busy}
+            style={{
+              height: 36, width: "100%", fontSize: TYPE.ui,
+              fontWeight: W.heading, color: "#050507", background: "var(--accent)",
+              border: "none", borderRadius: RADIUS.input, fontFamily: FONT,
+              cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+            }}>{busy ? "saving…" : editId ? "save changes" : "save style"}</button>
+        </div>
       </div>
     </>
   );

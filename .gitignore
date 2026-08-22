@@ -118,3 +118,9 @@ scratch_prompt.txt
 # The source zip published alongside each release (built by git archive,
 # same tree the installer lays down). Regenerated per release, not tracked.
 pixal-*-source.zip
+
+# Installers are build artifacts (~21MB each); release.py stages them.
+site/dl/*.exe
+
+# release.py step 11 scratch - a leftover must never reach git archive
+_release_notes_*.md

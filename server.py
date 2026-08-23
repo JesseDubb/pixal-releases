@@ -371,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.4b"
+PIXAL_VERSION = "1.0.5b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -968,6 +968,57 @@ def lora_title(path):
         pass
     return None
 
+@lru_cache(maxsize=512)
+def _lora_title_cached(path_text, mtime_ns, size):
+    """lora_title memoized by (path, mtime, size): a titleless file is retried
+    the moment it changes, and costs one header read per process until then."""
+    return lora_title(path_text)
+
+def _lora_title_map(rels):
+    """rel -> embedded safetensors title for each rel, disk-cached.
+
+    The cache persists HITS ONLY. An earlier build stored a null title as a
+    PRESENT key, which pinned every titleless LoRA forever - never re-read
+    until somebody deleted the cache by hand (162 sit sticky on the real box).
+    A miss is now retried on every pass - memoized per process by mtime, so
+    the retry is free until the file actually changes - and never written back.
+    """
+    try:
+        titles = json.loads(_LORA_TITLE_CACHE.read_text(encoding="utf-8")) \
+            if _LORA_TITLE_CACHE.exists() else {}
+    except Exception:
+        titles = {}
+    dirty = False
+    out = {}
+    for rel in rels:
+        title = titles.get(rel)
+        if title is None:                        # absent, or a legacy null
+            for root in model_roots():
+                p = root / "loras" / rel
+                if p.is_file():
+                    try:
+                        st = p.stat()
+                        title = _lora_title_cached(str(p), st.st_mtime_ns,
+                                                   st.st_size)
+                    except OSError:
+                        title = None
+                    break
+            if title:
+                titles[rel] = title
+                dirty = True
+            elif rel in titles:
+                del titles[rel]                  # drop the sticky null
+                dirty = True
+        out[rel] = title
+    if dirty:
+        try:
+            _LORA_TITLE_CACHE.write_text(
+                json.dumps({r: t for r, t in titles.items() if t},
+                           ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+    return out
+
 _MODEL_TITLE_CACHE = {}
 
 def model_embedded_title(rel, kind):
@@ -1101,8 +1152,23 @@ def _civ_data():
                 rec.pop("hit", None)
     return _CIV["data"]
 
-def _civ_hit(rel):
-    return (_civ_data().get(rel) or {}).get("hit") or {}
+def _civ_key(kind, rel):
+    """Cache key for one catalog file. Diffusion models keep the bare-rel keys
+    the cache shipped with; every other kind namespaces, so a LoRA and a
+    checkpoint that share a filename never share a record."""
+    return rel if kind == "diffusion_models" else kind + "\\" + rel
+
+def _civ_hit(rel, kind="diffusion_models"):
+    return (_civ_data().get(_civ_key(kind, rel)) or {}).get("hit") or {}
+
+def _civ_persist(data):
+    """Per record: a 20GB hash is too expensive to lose to a mid-sweep
+    restart, and the file is a few KB."""
+    try:
+        _CIVITAI_CACHE.write_text(json.dumps(data, ensure_ascii=False),
+                                  encoding="utf-8")
+    except Exception:
+        pass
 
 def _sha256_of(path):
     h = hashlib.sha256()
@@ -1160,17 +1226,97 @@ async def _civarchive_by_hash(s, sha):
     return "hit", {"name": html_mod.unescape(name), "version": "",
                    "thumb": thumb, "base": "", "source": "civarchive"}
 
+# A local sidecar always wins (brief 9.19b): a LoRA with <stem>.jpeg/.png or
+# <stem>.metadata.json beside it already has its cover and its declared base,
+# so the by-hash pass leaves it entirely alone - no hash, no network call.
+_LORA_SIDECAR_IMAGE_SUFFIXES = (".jpeg", ".png")
+
+def _lora_sidecar_cover(p):
+    """The cover image sitting beside a LoRA file, or None."""
+    for suffix in _LORA_SIDECAR_IMAGE_SUFFIXES:
+        cover = p.with_suffix(suffix)
+        if cover.is_file():
+            return cover
+    return None
+
+def _lora_has_sidecar(p):
+    return _lora_sidecar_cover(p) is not None or \
+        p.with_suffix(".metadata.json").is_file()
+
+def _active_base_families():
+    """Families of installed models a render can actually run. The picker only
+    ever asks about these, so they bound what the LoRA by-hash pass scans:
+    415 LoRAs are not hashed eagerly - a LoRA whose family nothing installed
+    can use is a family the picker never shows, and costs nothing."""
+    fams = set()
+    for kind in ("diffusion_models", "unet"):
+        for e in model_catalog(kind):
+            if not e["rel"].lower().endswith((".safetensors", ".gguf")):
+                continue
+            profile = model_profile(e["rel"], e["kind"])
+            if profile["supported"]:
+                fams.add(profile["family"])
+    return fams
+
+async def _civ_lookup_one(s, data, kind, rel, p):
+    """One file through the by-hash pass; True when the cache changed.
+
+    Freshness keys on size+mtime, the record carries the sha256, and a miss is
+    remembered for _CIV_MISS_RETRY so the obscure ones are not re-queried
+    every scan. The content-addressed escape hatch: these exact bytes may
+    already be known under another name - a rename, or a twin downloaded twice
+    (krea2filterbypass.safetensors and its '2vector' twin are the same file).
+    The new name's first pass rehashes (cheap for a LoRA), finds the twin's
+    record by sha, and adopts it, hit or miss, with no network call."""
+    try:
+        st = p.stat()
+    except OSError:
+        return False
+    key = _civ_key(kind, rel)
+    rec = data.get(key)
+    fresh = bool(rec) and rec.get("size") == st.st_size and \
+        abs(rec.get("mtime", 0) - st.st_mtime) < 2
+    if fresh and (rec.get("hit") or
+                  time.time() - rec.get("checked", 0) < _CIV_MISS_RETRY):
+        return False
+    sha = rec.get("sha256") if fresh else None
+    if not sha:
+        sha = await asyncio.get_running_loop().run_in_executor(None, _sha256_of, p)
+    donor = next((r for k, r in data.items()
+                  if k != key and r.get("sha256") == sha), None)
+    if donor:
+        hit = donor.get("hit")
+        if hit or time.time() - donor.get("checked", 0) < _CIV_MISS_RETRY:
+            data[key] = {"size": st.st_size, "mtime": st.st_mtime,
+                         "sha256": sha, "checked": donor.get("checked", 0),
+                         **({"hit": dict(hit)} if hit else {})}
+            _civ_persist(data)
+            return True
+    status, hit = await _civitai_by_hash(s, sha)
+    if status == "miss":
+        status, hit = await _civarchive_by_hash(s, sha)
+    if status == "error":
+        return False                      # network trouble - retry next scan
+    data[key] = {"size": st.st_size, "mtime": st.st_mtime,
+                 "sha256": sha, "checked": time.time(),
+                 **({"hit": hit} if hit else {})}
+    _civ_persist(data)
+    return True
+
 async def refresh_civitai_meta():
-    """Name and thumbnail every diffusion model lora-manager left unmatched.
-    Runs after a catalog scan; hashes off the event loop; tells the UI to
-    refetch options once at the end only if anything actually changed."""
+    """Name and thumbnail whatever lora-manager left unmatched - diffusion
+    models, and (brief 9.19b) the LoRAs in play. Runs after a catalog scan;
+    hashes off the event loop; tells the UI to refetch options once at the
+    end only if anything actually changed. The LoRA pass is lazy: a sidecar
+    wins outright, a family no installed model can run is never hashed, and
+    what remains - the active families and the unknowns the pass exists to
+    classify - is hashed once ever and cached by content."""
     if _CIV["busy"]:
         return
     _CIV["busy"] = True
     changed = False
     try:
         data = _civ_data()
-        loop = asyncio.get_running_loop()
         async with aiohttp.ClientSession(
                 headers={"User-Agent": "Pixal (github.com/pixal)"}) as s:
             for e in model_catalog("diffusion_models"):
@@ -1179,67 +1325,77 @@ async def refresh_civitai_meta():
                 if lm.get("model_name") and lm.get("preview_url"):
                     continue                      # lora-manager already owns it
                 p = Path(e["root"]) / "diffusion_models" / rel
-                try:
-                    st = p.stat()
-                except OSError:
-                    continue
-                rec = data.get(rel)
-                fresh = bool(rec) and rec.get("size") == st.st_size and \
-                    abs(rec.get("mtime", 0) - st.st_mtime) < 2
-                if fresh and (rec.get("hit") or
-                              time.time() - rec.get("checked", 0) < _CIV_MISS_RETRY):
-                    continue
-                sha = rec.get("sha256") if fresh else None
-                if not sha:
-                    sha = await loop.run_in_executor(None, _sha256_of, p)
-                status, hit = await _civitai_by_hash(s, sha)
-                if status == "miss":
-                    status, hit = await _civarchive_by_hash(s, sha)
-                if status == "error":
-                    continue                      # network trouble - retry next scan
-                data[rel] = {"size": st.st_size, "mtime": st.st_mtime,
-                             "sha256": sha, "checked": time.time(),
-                             **({"hit": hit} if hit else {})}
-                changed = True
-                # Persist per record: a 20GB hash is too expensive to lose to
-                # a mid-sweep restart, and the file is a few KB.
-                try:
-                    _CIVITAI_CACHE.write_text(
-                        json.dumps(data, ensure_ascii=False), encoding="utf-8")
-                except Exception:
-                    pass
+                if await _civ_lookup_one(s, data, "diffusion_models", rel, p):
+                    changed = True
+            active = _active_base_families()
+            for e in model_catalog("loras"):
+                rel = e["rel"]
+                p = Path(e["root"]) / "loras" / rel
+                if _lora_has_sidecar(p):
+                    continue                      # local cover + metadata win
+                family = lora_profile(rel)["family"]
+                if family != "unknown":
+                    if family not in active:
+                        continue                  # not a family in play
+                    lm = _LM["by_rel"].get(rel) or {}
+                    if lm.get("model_name") and lm.get("preview_url"):
+                        continue                  # lora-manager already covers it
+                # Unknowns are scanned even when lora-manager owns the cover:
+                # its base_model never reaches lora_profile, and the by-hash
+                # record is the only rank-2 wire into the family table.
+                if await _civ_lookup_one(s, data, "loras", rel, p):
+                    changed = True
     finally:
         _CIV["busy"] = False
+    _sync_by_hash_base_models()
     if changed:
         # done+no-totals refetches options client-side without a banner
         HUB.broadcast(type="scan", text=None, done=True, totals=None)
+
+def _lora_entry_extras(entry, rel):
+    """Pixal's own by-hash record and any local sidecar cover for one picker
+    LoRA, applied after lora-manager's record. Local always wins over the
+    network: a sidecar jpeg/png is the cover (and suppressed the by-hash
+    lookup entirely); the CivitAI/CivArchive hit is the floor for name, cover
+    and declared base. Nothing here fetches or hashes - it reads what
+    refresh_civitai_meta already landed."""
+    own_civ = _civ_hit(rel, "loras")
+    if not entry.get("title"):
+        md = adjacent_metadata("loras", rel)
+        name = (md.get("model_name") or own_civ.get("name") or "").strip()
+        if name:
+            entry["title"] = name
+    if "thumb" not in entry:
+        for root in model_roots():
+            p = root / "loras" / rel
+            if p.is_file():
+                cover = _lora_sidecar_cover(p)
+                if cover:
+                    # Rides the existing lora-manager preview proxy - an
+                    # absolute path under a model root is exactly what
+                    # _preview_path_ok allowlists.
+                    entry["thumb"] = ("/api/comfy/api/lm/previews?path=" +
+                                      urllib.parse.quote(str(cover)))
+                break
+    if "thumb" not in entry and own_civ.get("thumb"):
+        entry["thumb"] = own_civ["thumb"]
+    if "base" not in entry and own_civ.get("base"):
+        entry["base"] = own_civ["base"]
 
 def lora_catalog():
     """Every LoRA on disk: relpath + real title + model family, cached to disk."""
     root = CDIR / "models" / "loras"
     if not root.is_dir():
         return []
-    try:
-        cache = json.loads(_LORA_TITLE_CACHE.read_text(encoding="utf-8")) \
-            if _LORA_TITLE_CACHE.exists() else {}
-    except Exception:
-        cache = {}
-    out, dirty = [], False
-    for p in sorted(root.rglob("*.safetensors")):
+    files = sorted(root.rglob("*.safetensors"))
+    titles = _lora_title_map([str(p.relative_to(root)) for p in files])
+    out = []
+    for p in files:
         rel = str(p.relative_to(root))
         group = p.relative_to(root).parts[0] if len(p.relative_to(root).parts) > 1 else "(root)"
-        if rel not in cache:
-            cache[rel] = lora_title(p)
-            dirty = True
-        out.append({"name": rel, "title": cache[rel],
+        out.append({"name": rel, "title": titles.get(rel),
                     "short": base(rel), "group": group,
                     "krea2": group in ("Krea 2", "(root)")})
-    if dirty:
-        try:
-            _LORA_TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=0),
-                                         encoding="utf-8")
-        except Exception:
-            pass
     out.sort(key=lambda l: (not l["krea2"], l["group"].lower(),
                             (l["title"] or l["short"]).lower()))
     return out
@@ -1766,6 +1922,121 @@ def adjacent_metadata(kind, rel):
     _SIDECAR_META[key] = out
     return out
 
+# One family table, read by both classifiers (brief 9.19a). It lives beside
+# install/catalog.json so it stays next to the installer's own notion of what
+# a family is. A family is data - an id, the baseModel strings that map to it,
+# its folder-name hints, its variant rule - and adding one is adding a row,
+# never a new elif. model_profile and lora_profile both resolve through these
+# rows, so the two can no longer drift (the model ladder once knew six
+# families, the LoRA ladder two, and 172 of 415 LoRAs classified unknown by
+# construction).
+FAMILY_TABLE = json.loads((HERE / "install" / "families.json")
+                          .read_text(encoding="utf-8"))["families"]
+
+# 9.19b hook: CivitAI baseModel strings keyed by lowercased lora rel, filled
+# by the by-hash fetch. Resolution rank 2 of 4 - after the sidecar, before
+# the safetensors header. A mapping only; nothing here fetches or hashes.
+BY_HASH_BASE_MODEL = {}
+
+def _sync_by_hash_base_models():
+    """Rebuild the 9.19b hook from the by-hash cache: lowercased lora rel ->
+    the baseModel its sha256 resolved to. Reads the cache only - the fetching
+    and hashing already happened (or didn't) in refresh_civitai_meta."""
+    BY_HASH_BASE_MODEL.clear()
+    for key, rec in _civ_data().items():
+        if not key.startswith("loras\\"):
+            continue
+        base = str((rec.get("hit") or {}).get("base") or "").strip()
+        if base:
+            BY_HASH_BASE_MODEL[key[6:].replace("/", "\\").lower()] = base
+
+def _family_row_by_base_model(bml):
+    """First table row claiming a lowered declared-base string, or None."""
+    if bml:
+        for row in FAMILY_TABLE:
+            if any(token in bml for token in row.get("base_model", ())):
+                return row
+    return None
+
+def _family_row_by_path(low):
+    """First table row claiming a lowered rel path, or None."""
+    for row in FAMILY_TABLE:
+        if any(low.startswith(p) for p in row.get("path_prefix", ())):
+            return row
+        if any(token in low for token in row.get("path_contains", ())):
+            return row
+        if any(all(token in low for token in group)
+               for group in row.get("path_contains_all", ())):
+            return row
+    return None
+
+def _family_variant(row, low, bml, consumer):
+    """A row's variant for one consumer ("model"/"lora")."""
+    fixed = row.get("variant")
+    if isinstance(fixed, dict):
+        return fixed.get(consumer, "any")
+    if fixed:
+        return fixed
+    for rule in row.get("variants", ()):
+        if any(token in bml for token in rule.get("base_model", ())):
+            return rule["id"]
+        if any(low.startswith(p) for p in rule.get(f"{consumer}_path_prefix", ())):
+            return rule["id"]
+        if any(token in low for token in rule.get(f"{consumer}_path_contains", ())):
+            return rule["id"]
+    return (row.get("variant_default") or {}).get(consumer, "any")
+
+def family_row(family):
+    """The table row for a family id, or None. lora_stack's variant gate reads
+    the variants a family gates on from here instead of naming the family."""
+    for row in FAMILY_TABLE:
+        if row["id"] == family:
+            return row
+    return None
+
+# Training metadata a safetensors header carries about its own base, most
+# specific first - measured against the real library: modelspec.architecture
+# ("krea2/lora", "flux-2/lora"), ss_base_model_version ("krea2",
+# "flux2_klein_9b"), base_model ("krea-community/Krea-2-Turbo"),
+# lora_base_model (usually just "dit" - harmless, it matches no row).
+_LORA_HEADER_BASE_KEYS = ("modelspec.architecture", "ss_base_model_version",
+                          "base_model", "lora_base_model")
+_LORA_HEADER_MAX_BYTES = 4 * 1024 * 1024
+
+@lru_cache(maxsize=256)
+def _lora_header_base_model(path_text, mtime_ns, size):
+    """Base-model hints from a LoRA's own safetensors header, or "".
+
+    Resolution rank 3 of 4: more trustworthy than the folder the file sits
+    in, less than its sidecar or by-hash record. Only the header span is
+    read - a few KB off the front of the file, cached by (path, mtime, size).
+    """
+    try:
+        with Path(path_text).open("rb") as f:
+            span = struct.unpack("<Q", f.read(8))[0]
+            if span > _LORA_HEADER_MAX_BYTES:
+                return ""
+            header = json.loads(f.read(span))
+    except (OSError, ValueError, struct.error):
+        return ""
+    meta = header.get("__metadata__") if isinstance(header, dict) else None
+    if not isinstance(meta, dict):
+        return ""
+    return " ".join(str(meta[k]) for k in _LORA_HEADER_BASE_KEYS if k in meta).lower()
+
+def _lora_header_declared_base(rel):
+    """The header hint of the FIRST installed copy of a lora rel, or ""."""
+    for root in model_roots():
+        p = root / "loras" / rel
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        if p.suffix.lower() == ".safetensors":
+            return _lora_header_base_model(str(p), st.st_mtime_ns, st.st_size)
+        return ""
+    return ""
+
 def model_profile(rel, kind="diffusion_models"):
     """Classify an installed diffusion file without loading its multi-GB weights."""
     rel = str(rel).replace("/", "\\")
@@ -1773,30 +2044,14 @@ def model_profile(rel, kind="diffusion_models"):
     md = adjacent_metadata(kind, rel)
     base_model = str(md.get("base_model") or (md.get("civitai") or {}).get("baseModel") or "")
     bml = base_model.lower()
-    if "zimage" in bml or low.startswith(("zib\\", "zit\\")) or "z_image" in low or "zimage" in low:
-        family = "zimage"
-        variant = "turbo" if "turbo" in bml or low.startswith("zit\\") or "turbo" in low else "base"
+    # Family is the table's business now (brief 9.19a): the declared base
+    # first, then the path - the branches below the table are only the
+    # markers no recipe accepts (flux/video/audio/auxiliary) and unknown.
+    row = _family_row_by_base_model(bml) or _family_row_by_path(low)
+    if row:
+        family = row["id"]
+        variant = _family_variant(row, low, bml, "model")
         media, supported, reason = "image", True, ""
-    elif low.startswith("anima\\") or "anima-" in low or "cosmos" in bml:
-        # Anima: a 2B Cosmos-Predict2 anime model. Ordered before the qwen
-        # branches because it ships beside a Qwen text encoder and VAE, and a
-        # name-based fall-through would file it as qwen_image.
-        family, media, supported, reason = "anima", "image", True, ""
-        variant = "turbo" if "turbo" in low else "base"
-    elif "qwen" in low and "edit" in low:
-        # Qwen-Image-Edit only ever runs as the image editor; it is deliberately
-        # NOT offered as a text-to-image model in the composer's model picker.
-        family, variant, media, supported, reason = "qwen_edit", "edit", "image", True, ""
-    elif "qwen" in low and "image" in low:
-        # The other Qwen line: text-to-image (Qwen-Image, Qwen-Image-2512). Ordered
-        # after the edit branch so an edit build never falls through to here.
-        family, variant, media, supported, reason = "qwen_image", "any", "image", True, ""
-    elif "krea" in bml or low.startswith("krea 2\\") or "krea2" in low or "krea-2" in low:
-        family, variant, media, supported, reason = "krea2", "any", "image", True, ""
-    elif "klein" in low:
-        # FLUX.2 Klein 9B: masked inpainting only - like qwen_edit it is
-        # reachable from a finished frame, never from the composer.
-        family, variant, media, supported, reason = "klein", "edit", "image", True, ""
     elif low.startswith("flux\\") or "flux" in bml:
         family, variant, media, supported = "flux", "image", "image", False
         reason = "Flux needs its own Pixal pipeline"
@@ -1818,7 +2073,7 @@ def model_profile(rel, kind="diffusion_models"):
                "format": Path(rel).suffix.lower().lstrip(".")}
     # Supported, but only reachable from a finished frame - the composer's
     # creative model picker must not offer it as a text-to-image choice.
-    if family in ("qwen_edit", "klein"):
+    if row and row.get("source_only"):
         profile["source_only"] = True
     if family == "zimage":
         profile["execution_profile"] = \
@@ -1928,21 +2183,45 @@ def vector_bypass_variants():
 
 
 def lora_profile(rel):
+    # Two different jobs, two different forms, and conflating them cost a
+    # silent Linux defect. The backslash form is Pixal's INTERNAL identity for
+    # a LoRA - it is what `low` matches folder hints against and what
+    # BY_HASH_BASE_MODEL is keyed by, deliberately stable across platforms.
+    # It is NOT a path: on Linux "Krea 2\probe.safetensors" is one filename
+    # with a backslash in it, so reading the header with it found nothing,
+    # fell through to the folder hint, and classified a Klein LoRA as krea2 -
+    # looking for all the world like a classifier bug. Touch the disk with
+    # the native form.
     rel = str(rel).replace("/", "\\")
     low = rel.lower()
-    md = adjacent_metadata("loras", rel)
-    base_model = str(md.get("base_model") or (md.get("civitai") or {}).get("baseModel") or "")
-    bml = base_model.lower()
-    if "zimage" in bml or low.startswith("zimage\\"):
-        family = "zimage"
-        variant = "turbo" if "turbo" in bml or "\\turbo\\" in low else \
-                  "base" if "base" in bml or "\\base\\" in low else "any"
-    elif "krea" in bml or low.startswith("krea 2\\"):
-        family, variant = "krea2", "any"
-    else:
-        family, variant = "unknown", "any"
-    return {"family": family, "variant": variant, "base_model": base_model or None,
-            "supported": family in ("krea2", "zimage")}
+    native = rel.replace("\\", os.sep)
+    md = adjacent_metadata("loras", native)
+    sidecar = str(md.get("base_model") or (md.get("civitai") or {}).get("baseModel") or "")
+    by_hash = str(BY_HASH_BASE_MODEL.get(low) or "")
+    # Resolution order, most trustworthy first (brief 9.19a): the sidecar's
+    # declared base, then the by-hash record (9.19b), then the file's own
+    # safetensors header, and only then the folder it happens to sit in -
+    # nobody downloading from CivitAI inherits our folder layout.
+    row, declared = None, ""
+    for candidate in (sidecar, by_hash):
+        row = _family_row_by_base_model(candidate.lower())
+        if row:
+            declared = candidate
+            break
+    if not row:
+        header = _lora_header_declared_base(native)
+        row = _family_row_by_base_model(header)
+        if row:
+            declared = header
+    if not row:
+        row = _family_row_by_path(low)
+    if not row:
+        return {"family": "unknown", "variant": "any",
+                "base_model": (sidecar or by_hash) or None, "supported": False}
+    return {"family": row["id"],
+            "variant": _family_variant(row, low, declared.lower(), "lora"),
+            "base_model": (sidecar or by_hash or declared) or None,
+            "supported": True}
 
 def compatible_recipes(profile):
     out = []
@@ -2119,8 +2398,11 @@ def lora_stack(loras, baked=(), family=None, variant=None):
         # Unknown architecture is not neutral. A stale localStorage choice or
         # hallucinated cloud tool argument must never reach an arbitrary graph.
         incompatible = bool(family and lp["family"] != family)
-        if family == "zimage" and variant in ("base", "turbo") and \
-                lp["variant"] not in ("any", variant):
+        # The variant gate is the family row's own data now: Z-Image's row
+        # declares base/turbo, and a turbo LoRA never reaches a base graph.
+        row = family_row(family)
+        gated = {rule["id"] for rule in (row or {}).get("variants", ())}
+        if variant in gated and lp["variant"] not in ("any", variant):
             incompatible = True
         if incompatible:
             dropped.append(f"incompatible {base(real)}")
@@ -7101,6 +7383,14 @@ class Hub:
                                                         .get("queue_remaining", 0))
                             elif t == "execution_error" and job:
                                 job["error"] = data.get("exception_message", "execution error")
+                                # ComfyUI names the node that threw. We were
+                                # dropping it, so an OOM in the VAE decode was
+                                # indistinguishable from one in the sampler -
+                                # and the retry shortened the clip, which is
+                                # the wrong lever when the sampling finished.
+                                job["_oom_node"] = {
+                                    "id": str(data.get("node_id") or ""),
+                                    "type": str(data.get("node_type") or "")}
                                 self.finalize(job)
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                 pass                      # comfy down/restarting - retry quietly
@@ -7305,6 +7595,24 @@ class Hub:
             rate = float((job.get("spec") or {}).get("fps") or LTX_FPS_DEFAULT)
         return max(1, int((frames - 1) / rate))
 
+    @staticmethod
+    def _decode_temporal_size(template, job):
+        """The temporal_size this job actually ran with: an override if the
+        builder set one, else whatever the template ships."""
+        node = DECODE_TEMPORAL_NODES.get(template)
+        if not node:
+            return 0
+        for o in reversed(list((job.get("spec") or {}).get("overrides") or ())):
+            if str(o.get("node")) == node and o.get("input") == "temporal_size":
+                try:
+                    return int(o.get("value") or 0)
+                except (TypeError, ValueError):
+                    pass
+        try:
+            return int(TEMPLATES[template][node]["inputs"]["temporal_size"])
+        except (KeyError, TypeError, ValueError):
+            return 0
+
     def oom_retry_plan(self, job):
         """(spec, human note) to re-run this failed job smaller, or None.
 
@@ -7316,6 +7624,20 @@ class Hub:
             return None
         template = job["template"]
         spec = dict(job.get("spec") or {})
+        # The decode is its own failure. Answer it on its own terms first.
+        node = job.get("_oom_node") or {}
+        decode_node = DECODE_TEMPORAL_NODES.get(template)
+        if decode_node and node.get("type") in DECODE_NODE_TYPES:
+            now = self._decode_temporal_size(template, job)
+            smaller = max(DECODE_TEMPORAL_MIN, int(now) // 2)
+            if smaller < now:
+                spec["overrides"] = list(spec.get("overrides") or ()) + [
+                    {"node": decode_node, "input": "temporal_size",
+                     "value": smaller}]
+                return spec, (f"decoding {smaller} frames at a time instead of "
+                              f"{now} - the clip itself was fine")
+            # Already at the floor: the clip length is all that is left.
+
         if template in ("h3_i2v", "h3_multishot", "h3_ref2v"):
             # H3's duration is a fixed menu, so "smaller" means the next rung
             # down, not a percentage.
@@ -7698,6 +8020,14 @@ class Hub:
                     # filename namespace. Prefer diffusion_models on collision.
                     model_entries.setdefault(e["rel"].lower(), e)
         models = sorted(e["rel"] for e in model_entries.values())
+        # The 9.19b hook warms from the cache before any lora_profile below
+        # reads it - a by-hash baseModel is rank 2 of 4 in classification.
+        _sync_by_hash_base_models()
+        # Hoisted above the lora loop so both pickers badge against ONE clock.
+        # Read from the catalog entry's mtime, never from the assembled picker
+        # dict below - that one carries no mtime, so is_new_model would answer
+        # False for every LoRA forever without raising anything.
+        now = time.time()
         loras_by_rel = {}
         for e in model_catalog("loras"):
             group = Path(e["rel"]).parts[0] if len(Path(e["rel"]).parts) > 1 else "(root)"
@@ -7720,34 +8050,20 @@ class Hub:
             loras_by_rel[e["rel"]] = {"name": e["rel"], "short": base(e["rel"]), "group": group,
                                       "krea2": lp["family"] == "krea2", **lp,
                                       **({"vectors": vectors} if vectors else {}),
+                                      **({"is_new": True} if is_new_model(e, now) else {}),
                                       "compatible_recipes": compatible_recipes(lp)}
-        titles = {}
-        try:
-            titles = json.loads(_LORA_TITLE_CACHE.read_text(encoding="utf-8")) \
-                if _LORA_TITLE_CACHE.exists() else {}
-        except Exception:
-            pass
+        titles = _lora_title_map(loras_by_rel)
         loras = []
         for rel, entry in loras_by_rel.items():
-            if rel not in titles:
-                for root in model_roots():
-                    p = root / "loras" / rel
-                    if p.is_file():
-                        titles[rel] = lora_title(p)
-                        break
             entry["title"] = titles.get(rel)
             lm_enrich(rel, entry)
+            _lora_entry_extras(entry, rel)
             loras.append(entry)
-        try:
-            _LORA_TITLE_CACHE.write_text(json.dumps(titles, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
         loras.sort(key=lambda l: (not l["supported"], l["family"], l["group"].lower(),
                                   (l["title"] or l["short"]).lower()))
         # model picker metadata from lora-manager's checkpoints index (which
         # scans diffusion_models): pretty name / preview / base where matched
         model_meta = {}
-        now = time.time()
         # A model the user has actually rendered with can show its own latest
         # frame as the thumbnail - truer than any Civitai preview, and the
         # only thumb an unmatched local file (quant conversions, renamed
@@ -9206,6 +9522,35 @@ def _pretty_llm(p):
     if d["title"] == p.stem:
         d["title"] = p.stem
     return {**d, "quant": qm.group(1).upper() if qm else "", "size_gb": size}
+
+def brain_badge():
+    """What is answering, on what, and the two things people ask about a local
+    model: can it see, and is it filtered.
+
+    Jesse: "its just so people know what is being used. There could be tags
+    for Vision and Uncensored as well." The brain was the one part of the rig
+    with no presence in the chat window - the card and its VRAM are on that
+    strip, the model doing the talking was not.
+
+    Read straight from config on demand: one file read and one regex, and
+    nothing to keep in sync. The vision/nsfw flags come from _pretty_name, the
+    same source Settings' brain list badges from, so the chip and that list can
+    never disagree.
+    """
+    cfg = load_config()["llm"]
+    # cfg["model"] == "local" is the mode flag; the gguf path lives in
+    # local_model (see llm_call).
+    if (cfg.get("model") or "") != "local":
+        return {"mode": "api", "model": (cfg.get("model") or "").strip() or "not set",
+                "device": "", "vision": False, "nsfw": False}
+    path = (cfg.get("local_model") or "").strip()
+    d = _pretty_name(Path(path).stem) if path else {}
+    return {"mode": "local", "model": d.get("title") or "not set",
+            # 0 = CPU, -1 = every layer on the card, positive = that many.
+            # Anything that is not an explicit 0 is running on the GPU.
+            "device": "CPU" if cfg.get("local_gpu_layers") == 0 else "GPU",
+            "vision": bool(d.get("vision")), "nsfw": bool(d.get("nsfw"))}
+
 
 def local_llm_models():
     """Chat-capable GGUFs under every model root (LLM + text_encoders trees).
@@ -12210,6 +12555,7 @@ async def events(req):
     q = asyncio.Queue(maxsize=500)
     HUB.subs.add(q)
     q.put_nowait({"type": "status", "comfy": HUB.comfy_up})   # snapshots for late joiners
+    q.put_nowait({"type": "brain", **brain_badge()})
     if HUB.gpu:
         q.put_nowait({"type": "gpu", **HUB.gpu})
     if HUB.scan:
@@ -12234,7 +12580,8 @@ async def events(req):
 def _hub_snapshot():
     """The events a fresh client needs to draw the chrome, same three the SSE
     handler seeds a new subscriber with."""
-    snap = [{"type": "status", "comfy": HUB.comfy_up}]
+    snap = [{"type": "status", "comfy": HUB.comfy_up},
+            {"type": "brain", **brain_badge()}]
     if HUB.gpu:
         snap.append({"type": "gpu", **HUB.gpu})
     if HUB.scan:
@@ -12714,6 +13061,10 @@ async def settings_post(req):
     critic = body.get("critic") or {}
     if critic.get("model"):
         cfg["critic"]["model"] = critic["model"].strip()
+    # The chat strip's brain chip is push-only, so a brain changed in Settings
+    # has to say so or the chip keeps naming the old one until a reload.
+    if llm:
+        HUB.broadcast(type="brain", **brain_badge())
     upscale = body.get("upscale") or {}
     if "image_model" in upscale and isinstance(upscale["image_model"], str):
         # "" is a real choice: it means "ask me / none selected yet". Anything else
@@ -14912,6 +15263,23 @@ OOM_SHRINK_NODES = {
     "face_mint": ("fm:scale",),
 }
 
+# A decode OOM is a different failure from a sampling OOM and wants a different
+# answer. The clip sampled fine - 40 minutes of it, in the case that prompted
+# this - and only the VAE ran out of room turning latents into frames. Cutting
+# the clip's length there throws away work that succeeded and fixes nothing
+# about the step that failed.
+DECODE_NODE_TYPES = ("VAEDecode", "VAEDecodeTiled", "VAEDecodeAudio",
+                     "LTXVAudioVAEDecode", "LTXVLatentUpsampler")
+
+# template -> the tiled decode whose temporal chunk we can turn down. Only
+# templates that HAVE a temporal_size are listed; the rest fall through to the
+# ordinary shrink path.
+DECODE_TEMPORAL_NODES = {
+    "ltx25_i2v": "32",
+    "ltx25_upscale_video": "lu:decode",
+}
+DECODE_TEMPORAL_MIN = 8       # ComfyUI's own floor for temporal_size
+
 
 def looks_like_oom(text):
     """Is this failure the card running out of room, rather than a bad graph?"""
@@ -16077,6 +16445,102 @@ def clear_stale_sidecar():
     return sidecar_port_state() is None
 
 
+# ---------------------------------------------------------------- update check
+#
+# Brief 9.24a: Pixal may KNOW a newer build exists and say so in About; the
+# download itself is 9.24b. The whole feature is advisory, so every failure
+# shape - offline, GitHub down, rate-limited, garbage JSON - collapses to the
+# same quiet "unknown": the running version shows and nothing else. No toast,
+# no red state, no retry storm. The answer is cached for hours, so opening
+# settings never hammers the API.
+RELEASES_API = "https://api.github.com/repos/JesseDubb/pixal-releases/releases/latest"
+RELEASE_PAGE = "https://github.com/JesseDubb/pixal-releases/releases"
+UPDATE_CHECK_TTL = 6 * 60 * 60          # hours between network calls
+_update_check_cache = {"at": 0.0, "result": None}
+
+
+def parse_version(text):
+    """"1.0.4b" / "v1.0.4b" -> ((1, 0, 4), "b"); None on anything else."""
+    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)([a-zA-Z]*)", str(text).strip())
+    if not m:
+        return None
+    return tuple(int(p) for p in m.group(1).split(".")), m.group(2).lower()
+
+
+def compare_versions(a, b):
+    """-1/0/1 for a older/equal/newer than b. Numeric parts compare as numbers
+    (1.0.10b > 1.0.9b, never string order), then the pre-release letter
+    (1.0.4b > 1.0.4a), and the bare release outranks every letter
+    (1.0.4 > 1.0.4b)."""
+    pa, pb = parse_version(a), parse_version(b)
+    if pa is None or pb is None:
+        raise ValueError(f"unparseable version: {a!r} vs {b!r}")
+    (na, sa), (nb, sb) = pa, pb
+    width = max(len(na), len(nb))
+    na += (0,) * (width - len(na))
+    nb += (0,) * (width - len(nb))
+    if na != nb:
+        return -1 if na < nb else 1
+    if sa == sb:
+        return 0
+    if not sa:
+        return 1
+    if not sb:
+        return -1
+    return -1 if sa < sb else 1
+
+
+def _fetch_latest_release():
+    """One network round-trip to GitHub. Raises on ANY failure shape - the
+    caller decides what silence looks like."""
+    req = urllib.request.Request(
+        RELEASES_API,
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": f"pixal/{PIXAL_VERSION} update-check"})
+    with urllib.request.urlopen(req, timeout=4) as resp:
+        if resp.status != 200:
+            raise OSError(f"releases api answered {resp.status}")
+        data = json.loads(resp.read().decode("utf-8"))
+    tag = str(data.get("tag_name") or "")
+    if parse_version(tag) is None:
+        raise ValueError(f"unparseable release tag {tag!r}")
+    # The notes carry the installer hash (release.py step 13 writes "sha256
+    # `<64 hex>`"); 9.24b verifies the download against it, so it rides the
+    # wire from day one.
+    body = str(data.get("body") or "")
+    sha = re.search(r"\b([0-9a-fA-F]{64})\b", body)
+    url = str(data.get("html_url") or "") or f"{RELEASE_PAGE}/tag/{tag}"
+    return {"latest": tag[1:] if tag.startswith("v") else tag,
+            "url": url, "sha256": sha.group(1).lower() if sha else None}
+
+
+def update_check(now=None):
+    """{"ok", "running", "latest", "update", "url", "sha256"}. ok False is the
+    quiet unknown. Never raises, and never calls an equal or older release an
+    update."""
+    now = time.time() if now is None else now
+    cached = _update_check_cache["result"]
+    if cached is not None and now - _update_check_cache["at"] < UPDATE_CHECK_TTL:
+        return dict(cached)
+    result = {"ok": False, "running": PIXAL_VERSION, "latest": None,
+              "update": False, "url": None, "sha256": None}
+    try:
+        rel = _fetch_latest_release()
+        result.update(ok=True, latest=rel["latest"], url=rel["url"],
+                      sha256=rel["sha256"],
+                      update=compare_versions(rel["latest"], PIXAL_VERSION) > 0)
+    except Exception:
+        pass                                    # silent and complete, by design
+    _update_check_cache.update(at=now, result=result)
+    return dict(result)
+
+
+async def update_check_get(_req):
+    # urllib blocks, so the check rides a thread: a cold lookup must not stall
+    # chat and SSE behind a 4s GitHub timeout.
+    return web.json_response(await asyncio.to_thread(update_check))
+
+
 def main():
     global ACCESS_KEY
     state = sidecar_port_state()
@@ -16132,6 +16596,7 @@ def main():
     app.router.add_post("/api/settings", settings_post)
     app.router.add_post("/api/settings/test", settings_test)
     app.router.add_post("/api/settings/rescan", settings_rescan)
+    app.router.add_get("/api/update-check", update_check_get)
     app.router.add_post("/api/animate", animate)
     app.router.add_post("/api/edit", edit)
     app.router.add_post("/api/input/stage", input_stage)

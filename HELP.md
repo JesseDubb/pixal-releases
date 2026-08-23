@@ -474,16 +474,19 @@ Inside, in order:
 
 - **model** — when the engine has more than one build installed. LTX 2.5
   ships "Distilled" ("LTX 2.5 22B distilled INT8; the official two-pass graph
-  with the x2 latent upscaler."). H3's stock model is "FL2VA" ("First-frame
-  video with native synchronized audio."); community finetunes appear beside
-  it ("Community FL2VA finetune - same encoder, VAEs and LoRA catalog as
-  stock."), and an NSFW finetune is flagged "NSFW finetune — distill LoRA
+  with the x2 latent upscaler."). H3 splits its builds base-first: a
+  segmented track picks the family ("FL2VA", "REF2VA"), and a picker under
+  it lists that family's builds at full name — the stock build first
+  ("First-frame video with native synchronized audio."), then its community
+  finetunes ("Community FL2VA finetune - same encoder, VAEs and LoRA catalog
+  as stock."). An NSFW finetune is flagged "NSFW finetune — distill LoRA
   chained automatically".
-- **shots** — H3 only. One clip is one continuous take ("one continuous take
-  — or separate shots with --- in the note to send a script verbatim"); step
-  it up and each shot continues from the last frame of the one before, with
-  the caption doing the math ("~10s total — each shot continues from the
-  last frame of the one before").
+- **shots** — H3 only. One clip is one continuous take ("one continuous
+  take"); the row's ⓘ tip explains the chaining and that shots separated by
+  --- on its own line in the note ship verbatim as a script. Step it up and
+  each shot continues from the last frame of the one before, with the
+  caption doing the math ("~10s total — each shot continues from the last
+  frame of the one before").
 - **end frame** — H3, single takes only. Pick another still from your
   history and the clip converges on it: "the clip converges on the selected
   frame". "none" clears it ("no end frame - the clip ends wherever the
@@ -564,17 +567,18 @@ The "video clips" control lists the clip upscalers:
   audio kept." (The scale figure follows your setting.) Without the Deno RTX
   VFX node pack the row is greyed: "Install the Deno RTX VFX node pack to
   upscale clips."
-- **LTX 2.5 2x** — a generative re-render: "Re-rendered at 2× through the
-  LTX 2.5 latent upsampler — real new detail, audio untouched." Slower than
+- **LTX 2.5 2x** — a generative re-render: "Re-rendered at 2× — real new
+  detail, audio untouched." Slower than
   VSR, and it invents detail rather than interpolating it.
 
 ### PiD finish
 
 A separate switch, "PiD finish", changes how Identity Edit renders decode at
-all: "Identity Edit renders decode through NVIDIA PiD instead of the Wan VAE:
-the finished latent is repainted at 4× in a 4-step diffusion pass." The
-trade-off is stated where you flip it: "Experimental: the canvas snaps to
-PiD's 1024-class presets and comes back 4× (2:3 → 2688×4032)."
+all; the tip beside it explains: "Identity Edit renders decode through NVIDIA
+PiD instead of the Wan VAE — the finished latent is repainted at 4× in a
+4-step diffusion pass. A 2:3 canvas comes back 2688×4032." The trade-off is
+stated where you flip it: "Experimental: canvas snaps to 1024-class presets
+and returns 4×."
 
 ---
 
@@ -587,10 +591,15 @@ The tab you used last is remembered.
 
 ### General
 
-**Appearance** — "How the app looks. System follows Windows." Light, Dark, or
-System.
+**Appearance** — Light, Dark, or System. "System follows Windows."
 
-**Compute** — "The ComfyUI box that renders. Another rig's address borrows
+**Explicit content** — three positions: "auto", "allow", "never". The
+footnote reads "auto reads your words; never keeps subjects dressed." The
+tip adds that allow leaves your prompt exactly as written, and that the
+switch only bites with Prompt enhance off — with it on, the chat brain
+still decides.
+
+**Compute** — the ComfyUI box that renders: "Another rig's address borrows
 its GPU." The address field's placeholder shows the default,
 `http://127.0.0.1:8188 (this PC)`; point it at another machine's ComfyUI to
 render there. Three buttons beside it:
@@ -603,33 +612,29 @@ render there. Three buttons beside it:
 - **free brain** — unloads the chat model. "chat model unloaded - the next
   message brings it back".
 
-The note under them explains the deliberate laziness: "The next render
-reloads what freeing dropped. The brain rides its own process — free it only
-when a video clip needs the room." (The 21 GB video stack staying resident
-is exactly why a second render is fast; freeing is for when you need the
-room.)
+The tip holds the deliberate laziness: freeing is safe — the next render
+reloads what was dropped, and the chat brain rides its own process, so free
+it only when a video clip needs the room. (The 21 GB video stack staying
+resident is exactly why a second render is fast.)
 
-**when ComfyUI boots** — "quiet" or "open the graph editor". "ComfyUI likes
-to pop its node editor in a browser tab when it starts. Quiet keeps that
-from interrupting; the editor is always at the compute address above."
+**when ComfyUI boots** — "quiet" or "open the graph editor". The tip:
+ComfyUI likes to pop its node editor in a browser tab when it starts; quiet
+keeps that from interrupting, and the editor is always at the compute
+address above.
 
-**ComfyUI's console window** — "meters" or "plain console". "Meters wrap the
-same launcher in a boot dashboard and keep an errors-only log at
-logs\comfy-errors.log. Plain console is the raw ComfyUI output. Either way,
-closing that window stops ComfyUI." The meters console has keys: `E` opens
+**ComfyUI's console window** — "meters" or "plain console". The tip: meters
+wrap the launcher in a boot dashboard and keep an errors-only log at
+logs\comfy-errors.log; plain console is the raw ComfyUI output. Either way,
+closing that window stops ComfyUI. The meters console has keys: `E` opens
 the errors log, `L` the full transcript, `V` toggles the raw output, `Q`
 stops ComfyUI.
 
-**VRAM profile** — "What this machine can hold resident." Once ComfyUI has
-booted it tells you what it found ("The card reads as 16 GB."). "auto"
-follows the detected card; pin 32, 24 or 16 GB to preview what that tier
-honestly gets. This is advisory — pickers flag what a tier holds poorly;
-the card itself is still managed at render time.
-
-**Explicit content** — "Whether a render may be explicit. Only bites with
-Prompt enhance off - with it on, the chat brain still decides." Three
-positions: "auto", "allow", "never". The footnote: "Auto reads your words;
-never keeps subjects dressed; allow leaves your prompt alone."
+**VRAM profile** — once ComfyUI has booted, the line under the title tells
+you what it found ("The card reads as 16 GB."); before that, "Card not read
+yet — auto follows it." "auto" follows the detected card; pin 32, 24 or 16
+GB to preview what that tier honestly gets. The tip: what the machine can
+hold resident is advisory — pickers flag what a tier holds poorly; the card
+itself is still managed at render time.
 
 **Model folders** — "Where your checkpoints and LoRAs live." plus the count
 it indexed ("Found 412 files."). The list is every folder Pixal scans: your
@@ -641,16 +646,16 @@ joins Pixal without moving a file.
 
 ### Image
 
-**Z-Image decoder** — "Z-Image and Flux share a VAE, so sharper drop-in
-decoders exist. Optional: they can over-sharpen on a single pass." Default
-is "stock Z-Image VAE (recommended)". "Applies to Z-Image renders only. The
-clear-anime profile keeps its own matched VAE either way."
+**Z-Image decoder** — "Sharper drop-in; can over-sharpen on one pass."
+Default is "stock Z-Image VAE (recommended)". The tip: Z-Image and Flux
+share a VAE, so sharper drop-ins exist; it applies to Z-Image renders only,
+and the clear-anime profile keeps its own matched VAE either way.
 
-**Edit model** — "Runs instruction edits. Qwen-Image-Edit releases differ in
-encoder node, not just weights - the graph switches on the filename, so any
-compatible generation works." Default is the recipe's own. The footnote tells
-you how many compatible builds you have and where it is used: "Used by the
-edit button on a finished render and by an attached photo."
+**Edit model** — "Runs instruction edits." plus the count of compatible
+builds installed ("3 compatible installed."). Default is the recipe's own.
+The tip: Qwen-Image-Edit releases differ in encoder node, not just weights —
+the graph switches on the filename, so any compatible generation works; it
+is used by the edit button on a finished render and by an attached photo.
 
 **Edit speed** — there is no Settings control for this one; it lives only
 in `config.json` in the Pixal folder. `"edit": {"speed": "turbo"}` is the
@@ -663,41 +668,50 @@ is trained against one set of weights, so the wrong accelerator does not
 error — it quietly ruins the edit. `config.json` is re-read on every edit,
 so the next one picks the change up; no restart.
 
-**Upscaler** — the still-frame mode (Model / PiD 4×) and the upscale model
-picker; both walked in Section 5. The clip side sits on the Video tab.
+**Upscaler** — "Model enlarges; PiD repaints." plus the installed count. The
+still-frame mode (Model / PiD 4×) and the upscale model picker are walked in
+Section 5; the tip holds the size math (the model's own factor decides — a
+4× model on a 1024-wide frame gives 4096). The clip side sits on the Video
+tab.
 
 **PiD finish** — the Identity Edit decode switch; walked in Section 5.
 
 ### Video
 
-**Video engine** / **Video model** — the Animate dialog's defaults; see
-Section 4.
+**Video engine** — "Which engine the Animate popup opens on." **Video
+model** — "Which model the popup opens on." The Animate dialog's defaults
+(see Section 4); each tip notes the popup still switches freely per clip.
 
-**Upscaler** — the "video clips" engine (VSR, or LTX 2.5 2x); walked in
-Section 5.
+**Upscaler** — "Used by the upscale button on a finished clip." The "video
+clips" engine (VSR, or LTX 2.5 2x); walked in Section 5.
 
 ### Brain
 
-**Chat brain** — "The AI you talk to. It writes the prompts and drives
-ComfyUI." Two tabs: **API** and **Local**. Section 7 covers both in depth.
+**Chat brain** — two tabs: **API** and **Local**. The tip: the AI you talk
+to — it writes the prompts and drives ComfyUI; local runs entirely on this
+PC, and Pixal starts and stops it for you. Section 7 covers both in depth.
 In short:
 
 - API: the Kimi, DeepSeek and OpenRouter buttons prefill the two fields
   ("server address (e.g. https://api.deepseek.com/v1)", "model name (e.g.
   deepseek-chat)"); the key field shows "API key (sk-…)" until one is saved,
-  then "API key saved (ends …XXXX) - blank keeps it". The lock note: "what
-  happens local stays local - the key only goes to the provider you picked,
-  never into your renders' PNG metadata." **Test connection** answers
-  "connected - <model>" or the provider's error.
+  then "API key saved (ends …XXXX) - blank keeps it". The lock note: "Only
+  your provider sees the key — never the PNG metadata." **Test connection**
+  answers "connected - <model>" or the provider's error.
 - Local: a list of the .gguf chat models found in your model folders, each
-  with its quant, size, and VISION / NSFW chips; "keep in memory" vs "unload
-  after reply"; and **brain runs on** — GPU or CPU.
+  with its quant, size, and VISION / NSFW chips. The lock note: "Runs
+  entirely on this PC — nothing leaves the machine." "keep in memory" vs
+  "unload after reply" — the tip holds the trade-off (loaded: instant
+  replies, but a few GB of VRAM held next to your renders; unloaded: the
+  card is free, but the next reply waits for a reload). **brain runs on** —
+  GPU or CPU; the tip: GPU replies fast but holds VRAM next to the render,
+  CPU chat is slow but frees the card.
 
-**Image reviewer** — "Looks at what you made and suggests fixes. When the
-chat brain has vision, it reviews directly - this ComfyUI model is the
-fallback for brains without eyes." Pick from the reviewer models you have
-installed (NSFW-capable ones are badged). Footnote: "Bigger models read
-hands and text better. First use takes ~30s to warm up."
+**Image reviewer** — "Suggests fixes for what you made." Pick from the
+reviewer models you have installed (NSFW-capable ones are badged). The tip:
+when the chat brain has vision it reviews directly — this ComfyUI model is
+the fallback for brains without eyes; bigger models read hands and text
+better, and first use takes ~30s to warm up.
 
 ### About
 
@@ -1045,7 +1059,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.4b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.5b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

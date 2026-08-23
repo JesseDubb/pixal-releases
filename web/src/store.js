@@ -16,6 +16,7 @@ const state = {
   progressMsg: {},               // convId -> string | null
   comfy: null,
   gpu: null,                     // { name, used, total, ram_used, ram_total }
+  brain: null,                   // { mode, model, device, vision, nsfw }
   scan: null,                    // startup/rescan readout text while scanning
   history: [],
   options: null,
@@ -517,6 +518,10 @@ function onEvent(d) {
       state.comfy = d.comfy;
       emit();
       break;
+    case "brain":
+      state.brain = { mode: d.mode, model: d.model, device: d.device,
+                      vision: !!d.vision, nsfw: !!d.nsfw };
+      break;
     case "gpu":
       state.gpu = { name: d.name, used: d.used, total: d.total,
                     ram_used: d.ram_used, ram_total: d.ram_total };
@@ -652,6 +657,7 @@ export const api = {
   get thinkingMode() { return state.thinkingMode; },
   get comfy() { return state.comfy; },
   get gpu() { return state.gpu; },
+  get brain() { return state.brain; },
   get liveJobs() { return state.liveJobs; },
   get scan() { return state.scan; },
   get history() { return state.history; },

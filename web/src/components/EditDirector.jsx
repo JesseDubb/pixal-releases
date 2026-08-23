@@ -10,6 +10,7 @@ import { ArrowCounterClockwise, Crop, Eraser, ImageSquare, PaintBrush,
          PencilSimple, X } from "@phosphor-icons/react";
 import { upload } from "../transport.js";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W } from "../lib/design-tokens.js";
+import { ModalShell } from "../lib/ModalShell.jsx";
 
 // Concrete verbs the model responds to, phrased as the user would type them.
 const EXAMPLES = [
@@ -247,12 +248,10 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   }, [masked, crop, refImg]);
 
   return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 36, background: "rgba(0,0,0,0.5)" }}
-           onClick={onClose} />
-      <div role="dialog" aria-label="Edit this image" style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 37, width: imageUrl ? 640 : 480, maxWidth: "94vw", maxHeight: "92vh",
+    <ModalShell onClose={onClose}
+      boxProps={{ role: "dialog", "aria-label": "Edit this image" }}
+      boxStyle={{
+        width: imageUrl ? 640 : 480, maxWidth: "94vw", maxHeight: "92vh",
         overflowY: "auto",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: 20, boxShadow: SHADOW.xl, padding: SPACE[20],
@@ -417,7 +416,6 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
               cursor: text && laneOk && !busy ? "pointer" : "default",
             }}>{busy ? "…" : "edit"}</button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 };

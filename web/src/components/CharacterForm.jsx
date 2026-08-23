@@ -13,9 +13,11 @@
 // lock; header and save bar stay put while the panes scroll.
 import { useEffect, useMemo, useRef, useState } from "react";
 // Dashed user-circle = a DRAFT anchor (the character icon family's empty state).
-import { CaretRight, Crop, ImageSquare, PencilSimple, UserCircleDashed, X }
+import { Crop, ImageSquare, PencilSimple, UserCircleDashed, X }
   from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "../lib/design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS } from "../lib/design-tokens.js";
+import { Disclosure } from "../lib/Disclosure.jsx";
+import { ModalShell } from "../lib/ModalShell.jsx";
 import { characterPreview, characterRecord, inputFullUrl, inputImages,
          inputImgUrl, stageInput, upload } from "../transport.js";
 import { EditDirector } from "./EditDirector.jsx";
@@ -178,12 +180,10 @@ const CropDialog = ({ imageUrl, busy, onClose, onUse }) => {
   };
 
   return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 38, background: "rgba(0,0,0,0.5)" }}
-           onClick={onClose} />
-      <div role="dialog" aria-label="Crop the reference" style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 39, width: 560, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto",
+    <ModalShell onClose={onClose} z={38}
+      boxProps={{ role: "dialog", "aria-label": "Crop the reference" }}
+      boxStyle={{
+        width: 560, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: RADIUS.dialog, boxShadow: "0 18px 44px rgba(0,0,0,0.6)",
         padding: SPACE[16], display: "flex", flexDirection: "column", gap: SPACE[12],
@@ -229,8 +229,7 @@ const CropDialog = ({ imageUrl, busy, onClose, onUse }) => {
               opacity: crop && !busy ? 1 : 0.5,
             }}>{busy ? "uploading…" : "use this region"}</button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 };
 
@@ -413,11 +412,8 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
 
   return (
     <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 36, background: "rgba(0,0,0,0.5)" }}
-           onClick={onClose} />
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 37, width: "min(880px, 94vw)",
+      <ModalShell onClose={onClose} boxStyle={{
+        width: "min(880px, 94vw)",
         height: narrow ? "auto" : "min(660px, 88vh)", maxHeight: "88vh",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: RADIUS.dialog, boxShadow: "0 18px 44px rgba(0,0,0,0.6)",
@@ -509,20 +505,16 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                     title={preview?.wardrobe || ""}>
                 …scene… <span style={{ color: "var(--textSec)" }}>{preview?.wardrobe || ""}</span>
               </span>
-              <button type="button" onClick={() => setWardOpen((o) => !o)}
-                aria-expanded={wardOpen}
-                style={{ display: "inline-flex", alignItems: "center", gap: SPACE[4],
-                         alignSelf: "flex-start", padding: 0, marginTop: 2,
-                         background: "none", border: "none", cursor: "pointer",
-                         fontSize: TYPE.label, fontFamily: FONT,
-                         color: wardrobe.trim() ? "var(--accent)" : "var(--textTer)" }}>
-                <CaretRight size={9} weight="bold"
-                  style={{ transform: wardOpen ? "rotate(90deg)" : "none",
-                           transition: `transform ${MOTION.state}` }} />
-                {wardrobe.trim() ? "custom wardrobe lock" : "customize the wardrobe lock"}
-              </button>
-              {wardOpen && (
-                <>
+              <Disclosure open={wardOpen} onToggle={() => setWardOpen((o) => !o)}
+                caretSize={9}
+                triggerStyle={{ display: "inline-flex", alignSelf: "flex-start",
+                                width: "auto", gap: SPACE[4], marginTop: 2,
+                                fontSize: TYPE.label,
+                                color: wardrobe.trim() ? "var(--accent)" : "var(--textTer)" }}
+                trigger={wardrobe.trim() ? "custom wardrobe lock"
+                                         : "customize the wardrobe lock"}
+                contentStyle={{ display: "flex", flexDirection: "column",
+                               gap: SPACE[6], paddingTop: SPACE[6] }}>
                   <input style={inputStyle} value={wardrobe}
                          onChange={(e) => setWardrobe(e.target.value)}
                          placeholder="She is fully dressed in the clothing described above." />
@@ -532,8 +524,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                     is the strongest one — leave it blank for the generic lock. An
                     explicit NSFW ask lifts it.
                   </span>
-                </>
-              )}
+              </Disclosure>
             </div>
           </div>
 
@@ -681,7 +672,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
               opacity: busy || loading ? 0.5 : 1,
             }}>{loading ? "loading…" : editId ? "save changes" : "save anchor"}</button>
         </div>
-      </div>
+      </ModalShell>
 
       {/* Rendered after the form so both stack above it. The editor is the
           same dialog every Edit click opens — no mask runs Qwen whole-frame,

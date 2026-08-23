@@ -2,10 +2,11 @@
 // the image(s) as they land, and the recipe line (model · canvas · LoRA stack)
 // with re-roll / iterate / open actions.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowClockwise, ArrowBendUpLeft, ArrowsOutSimple, CaretDown, CaretUp,
+import { ArrowClockwise, ArrowBendUpLeft, ArrowsOutSimple,
          Check, Copy, FilmStrip, LockSimple, LockSimpleOpen, MagnifyingGlass,
          PencilSimple, Play } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "../lib/design-tokens.js";
+import { Disclosure, DisclosureTrigger } from "../lib/Disclosure.jsx";
 import { DotMatrix } from "../lib/DotMatrix.jsx";
 import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
 import { imgUrl, thumbUrl } from "../transport.js";
@@ -48,12 +49,14 @@ const SceneText = ({ scene }) => {
   const [clipped, setClipped] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Measure only while collapsed: expanded makes scrollHeight === clientHeight,
-  // which would clear the flag and hide the control that collapses it again.
+  // ref is Disclosure's unclipped content box, so scrollHeight is the full
+  // prompt height in EITHER state — the clip test no longer depends on being
+  // collapsed (expanded used to make scrollHeight === clientHeight, which
+  // would have cleared the flag and hidden the control that collapses it).
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el && !expanded) setClipped(el.scrollHeight > el.clientHeight + 2);
-  }, [scene, expanded]);
+    if (el) setClipped(el.scrollHeight > SCENE_COLLAPSED + 2);
+  }, [scene]);
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -78,10 +81,10 @@ const SceneText = ({ scene }) => {
   return (
     <div style={{ padding: `${SPACE[8]}px ${SPACE[12]}px ${SPACE[4]}px` }}>
       <div style={{ position: "relative" }}>
-        <div ref={ref} style={{
-          fontSize: TYPE.ui, color: "var(--textSec)", whiteSpace: "pre-wrap",
-          maxHeight: expanded ? "none" : SCENE_COLLAPSED, overflow: "hidden",
-        }}>{scene}</div>
+        <Disclosure open={expanded} peek={SCENE_COLLAPSED} contentRef={ref}
+          style={{ fontSize: TYPE.ui, color: "var(--textSec)", whiteSpace: "pre-wrap" }}>
+          {scene}
+        </Disclosure>
         {clipped && !expanded && (
           <div aria-hidden="true" style={{
             position: "absolute", left: 0, right: 0, bottom: 0, height: 26,
@@ -93,18 +96,17 @@ const SceneText = ({ scene }) => {
       <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
                     marginTop: clipped || expanded ? SPACE[4] : 2 }}>
         {(clipped || expanded) && (
-          <button type="button" onClick={() => setExpanded((v) => !v)}
+          <DisclosureTrigger open={expanded} onToggle={() => setExpanded((v) => !v)}
+            caretSize={9}
             title={expanded ? "collapse the prompt" : "show the whole prompt"}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 3, height: 20,
-              padding: `0 ${SPACE[6]}px`, cursor: "pointer", fontFamily: FONT,
-              fontSize: 10, color: "var(--textTer)", background: "transparent",
+              width: "auto", gap: 3, height: 20,
+              padding: `0 ${SPACE[6]}px`,
+              fontSize: 10, color: "var(--textTer)",
               border: "1px solid var(--border)", borderRadius: RADIUS.pill,
             }}>
-            {expanded ? <CaretUp size={9} weight="bold" />
-                      : <CaretDown size={9} weight="bold" />}
             {expanded ? "less" : "more"}
-          </button>
+          </DisclosureTrigger>
         )}
         <div style={{ flex: 1 }} />
         <button type="button" onClick={copy}

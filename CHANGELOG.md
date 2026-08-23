@@ -1,5 +1,98 @@
 # Changelog
 
+## 1.0.5b — 2026-08-23
+
+LTX 2.5 stops running out of memory, 28 LoRAs that were being silently thrown
+away come back, and the interface stops snapping open.
+
+**LTX 2.5 renders finish.** A clip could sample for forty minutes and then die
+in the last step, decoding the frames — the part that happens after all the real
+work is done. The decode was being asked for the entire clip in one piece:
+Pixal shipped the maximum chunk size on both LTX templates, which handed the
+decoder 512 frames at once where 8 was the intended amount. It now decodes in
+chunks. And if a decode does run out of room, Pixal turns *the decode* down and
+retries, instead of shortening your clip — which threw away sampling that had
+already succeeded and changed nothing about the step that actually failed.
+
+**28 LoRAs come back.** Pixal had two separate lists of model families written
+by hand, and they disagreed: one knew six families, the other knew two. A LoRA
+belonging to a family only the first list knew about was marked "unknown", and
+anything unknown gets dropped before the sampler — so it was pickable, it looked
+fine, and it did nothing. Families are one table now, and both lists read it.
+Klein LoRAs work. Qwen ones work. Adding support for a new family is adding a
+row rather than editing code in two places and hoping.
+
+One file changed family, and it is the whole argument: a LoRA sitting in your
+Krea 2 folder turns out to declare Flux 2 Klein in its own header. It had been
+going into Krea 2 identity chains on the strength of the folder it happened to
+sit in. Pixal now believes the file over the folder.
+
+**Your LoRAs wear their own covers.** Pixal could already identify a model by
+its contents and fetch its name and artwork — but only for checkpoints. LoRAs
+got nothing. On a 415-file library that is 254 covers where there were 220, and
+414 real names where there were 397. Because it identifies files by their
+contents, renaming one costs nothing: a LoRA you renamed matches exactly as well
+as one you left alone. A cover or metadata file sitting next to a LoRA always
+wins and skips the lookup entirely.
+
+Also fixed: a LoRA whose file carried no title was remembered as *having* no
+title, permanently, and never looked at again. 162 of them were stuck that way.
+
+**The add-LoRA panel is a panel, not an essay.** It opened with a two-line
+paragraph explaining itself, then a line restating the same thing in different
+words. Both are gone, replaced by `Krea 2 · 107`. The search field has a search
+icon and the word `Search`, instead of a sentence too long to fit. Names get two
+lines and keep their ends, which is where community LoRAs put the part that
+tells them apart. There is a **list view** for when you know what you are
+looking for, and anything added in the last week wears a **NEW** badge.
+
+**Controls live on the thing they change.** The dials for Identity Edit sat in
+their own "Advanced" fold, floating above the chain they act on. The fold is
+gone: the filter-bypass switch is on the bypass card, and the recipe is now the
+first card in the chain carrying Likeness and Grounding. Everything in the rail
+is a card, every card opens to its own controls, and an override can never hide
+inside a closed one.
+
+**The ratios show their shape.** Eight numbers in a grid is arithmetic. Each
+aspect now draws itself, so tall and wide are something you see rather than
+something you work out — and `3:2` versus `2:3` stops being a transposition you
+have to read.
+
+**Nothing snaps open any more.** Roughly twenty things in Pixal appeared and
+disappeared instantly — every fold, every dropdown, every dialog, and the
+caption and buttons that appear when you hover a tile in your history. They all
+move now, on the same three timings, and all of it respects your system's
+reduce-motion setting.
+
+**Settings stops rearranging itself while it loads.** It reads eleven things
+from your machine at once, and every control used to render collapsed and then
+grow as its answer arrived, shoving everything below it down the page. Worse,
+some of them *lied* on the way: Explicit content would show "auto" when your
+setting was "on". A control that does not know its value yet now holds its final
+size and says nothing, rather than guessing.
+
+**Pixal tells you when there's a newer Pixal.** Settings → About shows the
+version you are running and the latest released one, with a link when they
+differ. It checks quietly, remembers the answer for hours, and if there is no
+internet it simply says nothing — no error, no nagging. Updating replaces only
+Pixal's own files; your recipes, characters, styles, settings and history are
+untouched.
+
+**Fixes**
+
+- Picking a **finetune** of FL2VA made the whole video LoRA chain disappear,
+  with no error. Pixal was checking whether the model *was* FL2VA rather than
+  whether it was *built on* it.
+- A REF2VA render let you choose an end frame and then refused it on send.
+  Reference models anchor identity, not frames; the option is no longer offered.
+- The Animate model row was one flat list of every build. It splits into the
+  base models and the finetunes of each.
+- Thirteen help tooltips drew as near-black text on a transparent box —
+  invisible. They render properly.
+- The Identity Edit dials drew in two places at once when the chat panel was
+  open.
+- Models kept in subfolders classify correctly on Linux.
+
 ## 1.0.4b — 2026-08-22
 
 New controls for likeness and for the filter bypass, a Settings you can actually

@@ -10,10 +10,14 @@
 // "fine-tune" fold. The fold's collapsed row narrates any non-default it is
 // hiding, so collapsing never lies about what will render.
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, CaretRight, FilmStrip,
+import { ArrowDown, ArrowUp, CaretDown, FilmStrip,
          Minus, Plus, Trash, X } from "@phosphor-icons/react";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W, LH } from "../lib/design-tokens.js";
 import { LightricksMark, MiniMaxMark } from "../lib/BrandMarks.jsx";
+import { Disclosure } from "../lib/Disclosure.jsx";
+import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { ModalShell } from "../lib/ModalShell.jsx";
+import { InfoTip } from "./InfoTip.jsx";
 import { imgUrl, thumbUrl, subscribe } from "../transport.js";
 
 const LENGTHS = [
@@ -86,40 +90,6 @@ const normalizeVideoPlan = (plan, engine, model, catalog) => {
 const MICRO = { fontSize: TYPE.micro, color: "var(--textTer)", fontWeight: W.label,
                 textTransform: "uppercase", letterSpacing: "0.08em" };
 const CAPTION = { fontSize: TYPE.label, color: "var(--textTer)", lineHeight: LH.ui };
-
-// The Appearance-style segmented track (SettingsMenu recipe): a quiet bg2 rail,
-// the active segment filled bg4. Deliberately neutral — the one chartreuse in
-// this dialog is the action button, so the eye lands where the commitment is.
-const Seg = ({ label, options, value, onChange, size = "md" }) => (
-  <div role="radiogroup" aria-label={label} style={{
-    display: "flex", background: "var(--bg2)", border: "1px solid var(--border)",
-    borderRadius: RADIUS.pill, padding: 3,
-  }}>
-    {options.map((opt) => {
-      const active = value === opt.v;
-      return (
-        <button key={String(opt.v)} type="button" role="radio" aria-checked={active}
-          disabled={opt.disabled} title={opt.title}
-          onClick={() => !opt.disabled && onChange(opt.v)}
-          style={{
-            flex: 1, minWidth: 0, padding: size === "sm" ? "4px 8px" : "7px 8px",
-            fontSize: TYPE.ui, fontWeight: W.nav, fontFamily: FONT,
-            background: active ? "var(--bg4)" : "transparent",
-            color: active ? "var(--text)" : "var(--textMut)",
-            opacity: opt.disabled && !active ? 0.45 : 1,
-            border: "none", borderRadius: RADIUS.pill,
-            cursor: opt.disabled ? "default" : "pointer",
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            gap: SPACE[6], whiteSpace: "nowrap",
-            transition: `background ${MOTION.hover}, color ${MOTION.hover}`,
-          }}>
-          {opt.Icon && <opt.Icon size={13} active={active} />}
-          {opt.label}
-        </button>
-      );
-    })}
-  </div>
-);
 
 // One switch recipe for every on/off in the dialog (was hand-rolled per row).
 const Switch = ({ on, onChange, disabled, label, title }) => (
@@ -221,7 +191,8 @@ const AddLora = ({ options, onAdd }) => {
         <span style={{ color: "var(--textTer)" }}>{options.length}</span>
       </button>
       {open && (
-        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)",
+        <div className="px-ov-pop" style={{ position: "absolute", right: 0, top: "calc(100% + 6px)",
+                      transformOrigin: "top right",
                       width: 264, zIndex: 5, padding: SPACE[4],
                       background: "var(--bg1)", border: "1px solid var(--borderHov)",
                       borderRadius: RADIUS.card, boxShadow: SHADOW.lg,
@@ -253,6 +224,149 @@ const AddLora = ({ options, onAdd }) => {
                 </span>
               </button>
             ))}
+            {!hits.length && (
+              <span style={{ padding: SPACE[8], fontSize: 11, color: "var(--textTer)" }}>
+                nothing matches “{q.trim()}”
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ------------------------------------------------------------ model grouping
+// Where a finetune's base comes from (9.21, verified against server.py):
+// h3_model_options only ever chips a diffusion file whose basename carries
+// "fl2va" or "ref2va", and the chip id IS that lowercase filename stem - so
+// the id itself proves the base. Nothing richer exists: model_profile() only
+// files the whole "Minimax H3\" folder as family "video", and the scraped
+// _civitai_models.json says base "MiniMax H3" for the one community build it
+// has a hit for at all - neither can tell FL2VA from REF2VA. The filename
+// token is the only honest source, and the server's own precedence is kept
+// (h3_model_variant): ref2va before fl2va, so a stem naming both lands in
+// ref2va, deterministically.
+const modelBaseId = (id) => {
+  const low = String(id || "").toLowerCase();
+  if (low.includes("ref2va")) return "ref2va";
+  if (low.includes("fl2va")) return "fl2va";
+  return null;
+};
+
+// One group per base token, stock build first (it is the base the finetunes
+// are OF), finetunes behind it in server order. A model whose id carries no
+// token has no provable base - it comes back in `loose`, so the caller shows
+// one flat list rather than inventing a family for it.
+const groupModels = (models) => {
+  const groups = [];
+  const byBase = {};
+  const loose = [];
+  (models || []).forEach((m) => {
+    const baseId = modelBaseId(m.id);
+    if (!baseId) { loose.push(m); return; }
+    if (!byBase[baseId]) {
+      byBase[baseId] = { baseId, label: baseId.toUpperCase(), models: [] };
+      groups.push(byBase[baseId]);
+    }
+    if (m.id === baseId) byBase[baseId].label = m.label;
+    byBase[baseId].models.push(m);
+  });
+  groups.forEach((g) => g.models.sort(
+    (a, b) => (a.id === g.baseId ? -1 : b.id === g.baseId ? 1 : 0)));
+  return { groups, loose };
+};
+
+// The build picker: one base's stock build plus its finetunes, at full name.
+// AddLora's popover mechanics (Esc closes the list, never the dialog; a
+// pointer elsewhere closes it) wearing the ScrollPicker trigger shape - the
+// selected build readable at rest, the whole name in the title when it has
+// to clip. A segmented track cannot hold a community finetune name; this
+// holds twenty.
+const ModelPicker = ({ label, options, value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const boxRef = useRef(null);
+  const inputRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
+  const current = options.find((opt) => opt.id === value);
+  const needle = q.trim().toLowerCase();
+  const hits = options.filter((opt) => !needle ||
+    `${opt.label} ${opt.description || ""}`.toLowerCase().includes(needle));
+  const choose = (opt) => { onChange(opt.id); setOpen(false); setQ(""); };
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) { e.stopPropagation(); setOpen(false); setQ(""); }
+      }}>
+      <button type="button" aria-haspopup="listbox" aria-expanded={open}
+        aria-label={label} title={current ? current.label : label}
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: "100%", height: 28, display: "flex", alignItems: "center",
+                 gap: SPACE[8], padding: `0 ${SPACE[10]}px`, cursor: "pointer",
+                 background: "var(--bg2)",
+                 border: `1px solid ${open ? "var(--borderStr)" : "var(--border)"}`,
+                 borderRadius: RADIUS.input, fontFamily: FONT, fontSize: TYPE.ui,
+                 color: "var(--text)", textAlign: "left",
+                 transition: `border-color ${MOTION.hover}` }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
+                       textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {current ? current.label : "choose a build…"}
+        </span>
+        <CaretDown size={11} weight="bold" style={{ color: "var(--textTer)",
+          flex: "none", transform: open ? "rotate(180deg)" : "none",
+          transition: `transform ${MOTION.hover}` }} />
+      </button>
+      {open && (
+        <div role="listbox" aria-label={label} className="px-ov-pop"
+          style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)",
+                   transformOrigin: "top center",
+                   zIndex: 5, padding: SPACE[4], background: "var(--bg1)",
+                   border: "1px solid var(--borderHov)", borderRadius: RADIUS.card,
+                   boxShadow: SHADOW.lg, display: "flex", flexDirection: "column",
+                   gap: SPACE[4] }}>
+          {options.length > 6 && (
+            <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="find a build…" className="px-input" spellCheck={false}
+              style={{ width: "100%", height: 28, padding: `0 ${SPACE[8]}px`,
+                       background: "var(--bg2)", border: "1px solid var(--border)",
+                       borderRadius: RADIUS.input, outline: "none",
+                       color: "var(--text)", fontFamily: FONT, fontSize: 12 }} />
+          )}
+          <div className="px-scroll" style={{ maxHeight: 236, overflowY: "auto",
+                        display: "flex", flexDirection: "column" }}>
+            {hits.map((opt) => {
+              const on = opt.id === value;
+              return (
+                <button key={opt.id} type="button" role="option" aria-selected={on}
+                  onClick={() => choose(opt)} title={opt.label}
+                  style={{ display: "flex", flexDirection: "column",
+                           alignItems: "stretch", gap: 1,
+                           padding: `${SPACE[6]}px ${SPACE[8]}px`, textAlign: "left",
+                           background: on ? "var(--accentMut)" : "transparent",
+                           border: "none", borderRadius: RADIUS.input,
+                           cursor: "pointer", fontFamily: FONT }}>
+                  <span style={{ fontSize: 12, overflow: "hidden",
+                                 textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                 color: on ? "var(--accent)" : "var(--text)" }}>
+                    {opt.label}
+                  </span>
+                  {opt.description && (
+                    <span style={{ fontSize: 9, color: "var(--textTer)",
+                                   overflow: "hidden", textOverflow: "ellipsis",
+                                   whiteSpace: "nowrap" }}>
+                      {opt.description}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             {!hits.length && (
               <span style={{ padding: SPACE[8], fontSize: 11, color: "var(--textTer)" }}>
                 nothing matches “{q.trim()}”
@@ -315,7 +429,6 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // frame. H3-only, one continuous take by definition - the state survives
   // engine/shot flips but is only ever SENT when the combination is legal.
   const [endId, setEndId] = useState("");
-  const bridgeEligible = activeEngine?.id === "h3" && activeShots === 1 && !isScript;
   const bridgeChoices = (history || []).filter((e) => e.id !== sourceId &&
     (e.images || []).some((im) => (im.media || "image") === "image")).slice(0, 8);
   const [videoLoraPlans, setVideoLoraPlans] = useState(loadVideoLoraPlans);
@@ -333,7 +446,45 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   const [fetchProg, setFetchProg] = useState(null);
   const fetchRef = useRef(null);
   const activeModel = availableModels.find((item) => item.id === model) || availableModels[0];
-  const showVideoLoraChain = activeEngine?.id === "h3" && activeModel?.id === "fl2va";
+  // Eligibility reads activeModel, so it has to be declared below it - as a
+  // `const` it would otherwise throw in the dead zone at render time, which
+  // builds clean and ships a blank dialog. REF2VA is EXCLUDED rather than
+  // FL2VA required, because that is precisely what the server refuses
+  // ("bridging is FL2VA-only", server.py); requiring fl2va would be stricter
+  // than the server and would block a tokenless finetune it would have run.
+  const bridgeEligible = activeEngine?.id === "h3" && activeShots === 1
+    && !isScript && modelBaseId(activeModel?.id) !== "ref2va";
+  // Base first, then its builds: a finetune belongs to exactly one base, so
+  // picking the family narrows the list - the architecture the flat row was
+  // missing (9.21). The segmented track only ever lists families (short stock
+  // labels); long community names live in the picker, never in a segment.
+  const { groups: modelGroups, loose: looseModels } = groupModels(availableModels);
+  const modelsSplit = modelGroups.length > 0 && looseModels.length === 0;
+  const activeGroup = modelGroups.find(
+    (g) => g.models.some((m) => m.id === activeModel?.id)) || modelGroups[0];
+  // A base flip lands on the family's stock build, but remembering each
+  // family's last pick means flipping away and back never loses the finetune
+  // the user was on.
+  const baseMemory = useRef({});
+  const pickModel = (id) => {
+    const baseId = modelBaseId(id);
+    if (baseId) baseMemory.current = { ...baseMemory.current, [baseId]: id };
+    setModel(id);
+  };
+  const pickBase = (baseId) => {
+    const group = modelGroups.find((g) => g.baseId === baseId);
+    if (!group || !group.models.length) return;
+    const remembered = baseMemory.current[baseId];
+    setModel(group.models.some((m) => m.id === remembered)
+      ? remembered : group.models[0].id);
+  };
+  // The BASE, not the id. A finetune's id is its own filename stem
+  // (`10eros_max_fl2va_skip_edges`), so this gate stopped firing for every
+  // finetune OF fl2va the moment the model row split into bases and builds -
+  // the whole chain vanished with no error, though the server had already
+  // attached a real `loras` array to that very entry.
+  const showVideoLoraChain = activeEngine?.id === "h3"
+    && modelBaseId(activeModel?.id) === "fl2va";
   const videoLoraCatalog = showVideoLoraChain ? (activeModel?.loras || []) : [];
   const activePlanKey = videoPlanKey(activeEngine?.id || "", activeModel?.id || model || "");
   const activeVideoPlan = normalizeVideoPlan(
@@ -466,16 +617,12 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   const fetching = Boolean(fetchProg && !fetchProg.done);
 
   return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 36, background: "rgba(0,0,0,0.5)" }}
-           onClick={onClose} />
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 37, width: 560, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto",
-        background: "var(--bg1)", border: "1px solid var(--borderHov)",
-        borderRadius: 20, boxShadow: SHADOW.xl, padding: SPACE[20],
-        display: "flex", flexDirection: "column", gap: SPACE[16], fontFamily: FONT,
-      }}>
+    <ModalShell onClose={onClose} boxStyle={{
+      width: 560, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto",
+      background: "var(--bg1)", border: "1px solid var(--borderHov)",
+      borderRadius: 20, boxShadow: SHADOW.xl, padding: SPACE[20],
+      display: "flex", flexDirection: "column", gap: SPACE[16], fontFamily: FONT,
+    }}>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
           <FilmStrip size={17} weight="duotone" style={{ color: "var(--accent)" }} />
           <span style={{ fontSize: TYPE.h3, fontWeight: W.heading, color: "var(--text)" }}>
@@ -522,7 +669,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE[12] }}>
           <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
             <span style={MICRO}>engine</span>
-            <Seg label="video engine" value={engineId} onChange={chooseEngine}
+            <SegmentedControl ariaLabel="video engine" value={engineId} onChange={chooseEngine}
               options={engines.map((item) => ({
                 v: item.id, label: item.label, Icon: ENGINE_ICONS[item.id],
                 disabled: item.available === false,
@@ -619,7 +766,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
             <span style={MICRO}>{activeShots > 1 ? "length · per shot" : "length"}</span>
-            <Seg label="clip length" value={secs} onChange={setSecs}
+            <SegmentedControl ariaLabel="clip length" value={secs} onChange={setSecs}
               options={lengths.map((l) => ({ v: l.s, label: l.label, title: l.gloss }))} />
             <span style={CAPTION}>
               {activeLength?.gloss || ""}
@@ -630,15 +777,11 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
 
         {/* ZONE 3 - the fold. Its collapsed row narrates any non-default it
             hides, so closed never means forgotten. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: SPACE[12] }}>
-          <button type="button" onClick={toggleFineTune} aria-expanded={fineTune}
-            style={{ display: "flex", alignItems: "center", gap: SPACE[8], width: "100%",
-                     padding: 0, background: "transparent", border: "none",
-                     cursor: "pointer", fontFamily: FONT }}>
-            <CaretRight size={11} weight="bold"
-              style={{ color: "var(--textTer)", flex: "none",
-                       transform: fineTune ? "rotate(90deg)" : "none",
-                       transition: `transform ${MOTION.press}` }} />
+        <Disclosure open={fineTune} onToggle={toggleFineTune}
+          caretStyle={{ color: "var(--textTer)" }}
+          style={{ display: "flex", flexDirection: "column", gap: SPACE[12] }}
+          contentStyle={{ display: "flex", flexDirection: "column", gap: SPACE[12] }}
+          trigger={<>
             <span style={{ ...MICRO, color: "var(--textSec)" }}>fine-tune</span>
             {!fineTune && tweaks.length > 0 && (
               <span style={{ ...CAPTION, overflow: "hidden", textOverflow: "ellipsis",
@@ -646,33 +789,43 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
             )}
             <span aria-hidden="true"
               style={{ flex: 1, borderTop: "1px solid var(--border)", minWidth: SPACE[12] }} />
-          </button>
-
-          <div style={{ display: "grid", gridTemplateRows: fineTune ? "1fr" : "0fr",
-                        transition: `grid-template-rows ${MOTION.layout}` }}>
-            <div style={{ overflow: "hidden", visibility: fineTune ? "visible" : "hidden",
-                          transition: `visibility ${MOTION.layout}`,
-                          display: "flex", flexDirection: "column", gap: SPACE[12] }}>
+          </>}>
               {availableModels.length > 1 && (
                 <Row label="model"
                   hint={activeModel?.nsfw
-                    ? "NSFW finetune — distill LoRA chained automatically" : null}>
-                  <Seg label={`${activeEngine?.label || "video"} model`} size="sm"
-                    value={model} onChange={setModel}
-                    options={availableModels.map((m) => ({
-                      v: m.id, label: m.label,
-                      title: m.description || (m.nsfw
-                        ? "NSFW finetune - distill LoRA chained automatically" : m.label),
-                    }))} />
+                    ? "NSFW finetune — distill LoRA chained automatically"
+                    : activeModel?.description || null}>
+                  {modelsSplit ? (
+                    <>
+                      {modelGroups.length > 1 && (
+                        <SegmentedControl ariaLabel={`${activeEngine?.label || "video"} model family`}
+                          size="sm" value={activeGroup?.baseId} onChange={pickBase}
+                          options={modelGroups.map((g) => ({
+                            v: g.baseId, label: g.label,
+                            title: (g.models.find((m) => m.id === g.baseId)
+                              || g.models[0])?.description || g.label,
+                          }))} />
+                      )}
+                      {activeGroup?.models.length > 1 && (
+                        <ModelPicker label={`${activeGroup.label} build`}
+                          options={activeGroup.models} value={activeModel?.id}
+                          onChange={pickModel} />
+                      )}
+                    </>
+                  ) : (
+                    <ModelPicker label={`${activeEngine?.label || "video"} model`}
+                      options={availableModels} value={activeModel?.id}
+                      onChange={pickModel} />
+                  )}
                 </Row>
               )}
 
               {shotsMax > 1 && (
-                <Row label="shots"
+                <Row label={<>shots <InfoTip size={11} text={"Shots chain end to end: each one starts from the last frame of the take before. Or write the note as a script — shots separated by --- on its own line ship verbatim, and the script sets the count."} /></>}
                   hint={isScript
                     ? "counted from your script — each shot renders and chains in order"
                     : activeShots === 1
-                      ? "one continuous take — or separate shots with --- in the note to send a script verbatim"
+                      ? "one continuous take"
                       : `~${activeShots * secs}s total — each shot continues from the last frame of the one before`}>
                   <Stepper label="shots" value={activeShots} min={1} max={shotsMax}
                     disabled={isScript} onChange={setShots} />
@@ -733,7 +886,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
 
               {fpsChoices.length > 1 && (
                 <Row label="frame rate" hint={`${Math.round(secs * fps)} frames`}>
-                  <Seg label="frame rate" size="sm" value={fps} onChange={setFps}
+                  <SegmentedControl ariaLabel="frame rate" size="sm" value={fps} onChange={setFps}
                     options={fpsChoices.map((rate) => ({
                       v: rate, label: `${rate}fps`,
                       title: `${rate} frames per second`,
@@ -746,7 +899,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                   hint={speedMode
                     ? `${speedMode.gloss} · ${speedMode.sampler}`
                     : null}>
-                  <Seg label="speed" size="sm"
+                  <SegmentedControl ariaLabel="speed" size="sm"
                     value={speedMode ? speedMode.id : defaultSpeed}
                     onChange={setSpeed}
                     options={speedModes.map((m) => ({
@@ -846,9 +999,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                   })}
                 </div>
               )}
-            </div>
-          </div>
-        </div>
+        </Disclosure>
 
         {/* Footer - the commitment. "surprise me" ships without a note; the
             director animates what's already in the frame. */}
@@ -878,7 +1029,6 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
             action
           </button>
         </div>
-      </div>
-    </>
+    </ModalShell>
   );
 };

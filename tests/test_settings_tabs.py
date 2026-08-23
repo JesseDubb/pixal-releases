@@ -10,6 +10,7 @@ describes the same tabs the UI now ships.
 """
 
 import re
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,81 +53,87 @@ TAB_KEYS = {
 }
 
 
-def test_tabs_are_the_five_media_rooms():
-    m = re.search(r"const TABS = \[(.*?)\];", SRC, re.S)
-    ids = re.findall(r'\{ id: "(\w+)", label: "(\w+)" \}', m.group(1))
-    assert ids == EXPECTED_TABS
+class SettingsTabs(unittest.TestCase):
+    """The 9.17a acceptance tests. They must hang off a TestCase:
+    `unittest discover` is this repo's runner and CI's, and it collects
+    nothing else - as bare module functions these ten ran under pytest
+    locally and nowhere in the gate."""
+
+    def test_tabs_are_the_five_media_rooms(self):
+        m = re.search(r"const TABS = \[(.*?)\];", SRC, re.S)
+        ids = re.findall(r'\{ id: "(\w+)", label: "(\w+)" \}', m.group(1))
+        assert ids == EXPECTED_TABS
 
 
-def test_no_models_tab_remains():
-    assert '{tab === "models"' not in SRC
-    assert set(BLOCKS) == {t for t, _ in EXPECTED_TABS}
+    def test_no_models_tab_remains(self):
+        assert '{tab === "models"' not in SRC
+        assert set(BLOCKS) == {t for t, _ in EXPECTED_TABS}
 
 
-def test_every_setting_reachable_after_the_move():
-    for tab, keys in TAB_KEYS.items():
-        assert tab in BLOCKS, f"tab block missing: {tab}"
-        for key in keys:
-            assert key in BLOCKS[tab], f"{key} not reachable under {tab}"
+    def test_every_setting_reachable_after_the_move(self):
+        for tab, keys in TAB_KEYS.items():
+            assert tab in BLOCKS, f"tab block missing: {tab}"
+            for key in keys:
+                assert key in BLOCKS[tab], f"{key} not reachable under {tab}"
 
 
-def test_no_setting_duplicated_across_tabs():
-    # a move, not a copy: each control lives under exactly one tab
-    for tab, keys in TAB_KEYS.items():
-        for key in keys:
-            homes = [t for t, body in BLOCKS.items() if key in body]
-            assert homes == [tab], f"{key} found in {homes}, expected only {tab}"
+    def test_no_setting_duplicated_across_tabs(self):
+        # a move, not a copy: each control lives under exactly one tab
+        for tab, keys in TAB_KEYS.items():
+            for key in keys:
+                homes = [t for t, body in BLOCKS.items() if key in body]
+                assert homes == [tab], f"{key} found in {homes}, expected only {tab}"
 
 
-def test_unknown_saved_tab_falls_back_to_general():
-    # the restore guard: a saved id that is not a current tab cannot restore,
-    # so a stale "models" (or any retired id) lands on "general"
-    assert 'TABS.some((t) => t.id === saved) ? saved : "general"' in SRC
-    m = re.search(r"const TABS = \[(.*?)\];", SRC, re.S)
-    ids = {i for i, _ in re.findall(r'\{ id: "(\w+)", label: "(\w+)" \}', m.group(1))}
-    assert "general" in ids
-    assert "models" not in ids
+    def test_unknown_saved_tab_falls_back_to_general(self):
+        # the restore guard: a saved id that is not a current tab cannot restore,
+        # so a stale "models" (or any retired id) lands on "general"
+        assert 'TABS.some((t) => t.id === saved) ? saved : "general"' in SRC
+        m = re.search(r"const TABS = \[(.*?)\];", SRC, re.S)
+        ids = {i for i, _ in re.findall(r'\{ id: "(\w+)", label: "(\w+)" \}', m.group(1))}
+        assert "general" in ids
+        assert "models" not in ids
 
 
-def test_settings_wire_is_frozen():
-    # top-level keys of every apply({...}) payload = the /api/settings write
-    # surface; this brief forbids changing it
-    found = set(re.findall(r"\bapply\(\{\s*(\w+)", SRC))
-    assert found == {
-        "comfy_url", "comfy_editor", "comfy_console", "explicit",
-        "vram_profile", "video", "critic", "vae", "edit", "upscale",
-        "pid", "llm", "extra_model_roots",
-    }
+    def test_settings_wire_is_frozen(self):
+        # top-level keys of every apply({...}) payload = the /api/settings write
+        # surface; this brief forbids changing it
+        found = set(re.findall(r"\bapply\(\{\s*(\w+)", SRC))
+        assert found == {
+            "comfy_url", "comfy_editor", "comfy_console", "explicit",
+            "vram_profile", "video", "critic", "vae", "edit", "upscale",
+            "pid", "llm", "extra_model_roots",
+        }
 
 
-def test_mode_switch_is_navigation_not_pills():
-    # the pill shape is retired: selection is SegRadio/TabStrip, action is Btn
-    assert "<Pill" not in SRC
-    brain = BLOCKS["brain"]
-    assert "<TabStrip" in brain
-    assert '{ id: "api", label: "API" }' in brain
-    assert '{ id: "local", label: "Local" }' in brain
+    def test_mode_switch_is_navigation_not_pills(self):
+        # the pill shape is retired: selection is SegmentedControl/TabStrip, action is Btn
+        assert "<Pill" not in SRC
+        brain = BLOCKS["brain"]
+        assert "<TabStrip" in brain
+        assert '{ id: "api", label: "API" }' in brain
+        assert '{ id: "local", label: "Local" }' in brain
 
 
-def test_at_most_two_segradio_rows_per_section():
-    for tab, body in BLOCKS.items():
-        for chunk in body.split("<Section "):
-            n = chunk.count("<SegRadio")
-            assert n <= 2, f"{tab} has a section stacking {n} SegRadio rows"
+    def test_at_most_two_segmented_rows_per_section(self):
+        for tab, body in BLOCKS.items():
+            for chunk in body.split("<Section "):
+                n = chunk.count("<SegmentedControl")
+                assert n <= 2, f"{tab} has a section stacking {n} segmented rows"
 
 
-def test_brain_model_list_clips_on_whole_rows():
-    # rows are 36px with 6px gaps; a fractional maxHeight sliced a row
-    # mid-height at the top edge and read as a rendering fault, not a scroll
-    m = re.search(r'maxHeight: (\d+), overflowY: "auto"', BLOCKS["brain"])
-    assert m, "brain model list has no bounded scroll height"
-    assert (int(m.group(1)) + 6) % 42 == 0
+    def test_brain_model_list_clips_on_whole_rows(self):
+        # rows are 36px with 6px gaps; a fractional maxHeight sliced a row
+        # mid-height at the top edge and read as a rendering fault, not a scroll
+        m = re.search(r'maxHeight: (\d+), overflowY: "auto"', BLOCKS["brain"])
+        assert m, "brain model list has no bounded scroll height"
+        assert (int(m.group(1)) + 6) % 42 == 0
 
 
-def test_help_settings_section_matches_the_new_tabs():
-    s6 = HELP.split("## 6. Settings reference")[1].split("## 7.")[0]
-    for heading in ["### General", "### Image", "### Video", "### Brain", "### About"]:
-        assert heading in s6, f"HELP.md §6 missing {heading}"
-    flat = re.sub(r"\s+", " ", HELP)
-    assert "Settings → Models" not in flat
-    assert "### Models" not in HELP
+    def test_help_settings_section_matches_the_new_tabs(self):
+        s6 = HELP.split("## 6. Settings reference")[1].split("## 7.")[0]
+        for heading in ["### General", "### Image", "### Video", "### Brain", "### About"]:
+            assert heading in s6, f"HELP.md §6 missing {heading}"
+        flat = re.sub(r"\s+", " ", HELP)
+        assert "Settings → Models" not in flat
+        assert "### Models" not in HELP

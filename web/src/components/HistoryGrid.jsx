@@ -12,6 +12,7 @@ import { ArrowClockwise, ArrowsOut, ArrowsOutSimple, FilmStrip, ImageSquare,
          X } from "@phosphor-icons/react";
 import { BORDER, CURVE, FONT, GLASS_SOLID, MOTION, RADIUS, SHADOW, SPACE, TYPE, W } from "../lib/design-tokens.js";
 import { buildColumns } from "../lib/masonry.js";
+import { OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { prettyTemplate, prettyResolvedModel } from "../lib/names.js";
 import { api } from "../store.js";
 import { imgUrl, thumbUrl } from "../transport.js";
@@ -227,8 +228,9 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
       </div>
 
       {hov && (
-        <div style={{
+        <div className="px-ov-pop" style={{
           position: "absolute", left: 0, right: 0, bottom: 0,
+          transformOrigin: "bottom center",
           padding: SPACE[10],
           background: "linear-gradient(to top, rgba(0,0,0,0.85), transparent)",
           color: "#fff", textAlign: "left",
@@ -250,7 +252,8 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
         </div>
       )}
       {hov && (
-        <div className="px-rail" onClick={(ev) => ev.stopPropagation()}>
+        <div className="px-rail px-ov-pop" style={{ transformOrigin: "top right" }}
+          onClick={(ev) => ev.stopPropagation()}>
             {[
               ...(!isVideo ? [
                 { a: "animate", Icon: FilmStrip, fn: onAnimate },
@@ -361,6 +364,7 @@ export const HistoryGrid = ({ history, onClose, onOpen, onAnimate, onReroll, onR
       display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
       <style>{CSS}</style>
+      <OverlayMotionStyle />
       <div style={{
         flexShrink: 0, borderBottom: "1px solid var(--border)",
         padding: `${SPACE[16]}px ${SPACE[32]}px`,

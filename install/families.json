@@ -1,0 +1,96 @@
+{
+  "_note": [
+    "One family table, read by both classifiers (brief 9.19a). server.py's",
+    "model_profile and lora_profile resolve family and variant through these",
+    "rows and nothing else: adding a model family is adding a row, never a",
+    "new elif, and the two classifiers can no longer drift. Kept beside",
+    "catalog.json so it stays next to the installer's own notion of what a",
+    "family is.",
+    "",
+    "Resolution order, most trustworthy first: the sidecar's declared",
+    "baseModel, then the by-hash record (9.19b fills server.BY_HASH_BASE_MODEL;",
+    "a mapping, not a fetch), then the safetensors header's own training",
+    "metadata (modelspec.architecture / ss_base_model_version / base_model /",
+    "lora_base_model), and only then the folder hint. Nobody downloading from",
+    "CivitAI inherits our folder layout. Rows are precedence-ordered: the",
+    "first row whose hints claim a file wins.",
+    "",
+    "Row shape:",
+    "  id                the family string recipes declare in RECIPE_SPECS",
+    "  base_model        substrings matched against the lowered declared base",
+    "  path_prefix       rel-path prefixes (backslash-terminated folders)",
+    "  path_contains     substrings matched anywhere in the lowered rel path",
+    "  path_contains_all token groups; every token in a group must appear",
+    "  variant           fixed variant - a string, or per consumer",
+    "                    {\"model\": ..., \"lora\": ...}",
+    "  variants          ordered variant rules, first match wins: shared",
+    "                    base_model substrings plus per-consumer hint keys",
+    "                    (model_path_prefix/model_path_contains/",
+    "                    lora_path_contains)",
+    "  variant_default   fallback variant per consumer",
+    "  source_only       reachable from a finished frame, never offered by",
+    "                    the composer as a text-to-image choice"
+  ],
+
+  "families": [
+    {
+      "id": "zimage",
+      "base_model": ["zimage", "z-image", "z_image"],
+      "path_prefix": ["zib\\", "zit\\", "zimage\\"],
+      "path_contains": ["z_image", "zimage"],
+      "variants": [
+        {"id": "turbo",
+         "base_model": ["turbo"],
+         "model_path_prefix": ["zit\\"],
+         "model_path_contains": ["turbo"],
+         "lora_path_contains": ["\\turbo\\"]},
+        {"id": "base",
+         "base_model": ["base"],
+         "lora_path_contains": ["\\base\\"]}
+      ],
+      "variant_default": {"model": "base", "lora": "any"}
+    },
+    {
+      "id": "anima",
+      "note": "Ordered before the qwen rows: Anima ships beside a Qwen text encoder and VAE, and a name-based fall-through would file it as qwen_image.",
+      "base_model": ["anima", "cosmos"],
+      "path_prefix": ["anima\\"],
+      "path_contains": ["anima-"],
+      "variants": [
+        {"id": "turbo",
+         "model_path_contains": ["turbo"],
+         "lora_path_contains": ["\\turbo\\"]}
+      ],
+      "variant_default": {"model": "base", "lora": "any"}
+    },
+    {
+      "id": "qwen_edit",
+      "note": "Qwen-Image-Edit only ever runs as the image editor. Ordered before qwen_image so an edit build never falls through to the text-to-image line.",
+      "base_model": ["qwen-image-edit", "qwen image edit", "qwen_image_edit"],
+      "path_contains_all": [["qwen", "edit"]],
+      "variant": {"model": "edit", "lora": "any"},
+      "source_only": true
+    },
+    {
+      "id": "qwen_image",
+      "base_model": ["qwen-image", "qwen_image", "qwen image", "qwen"],
+      "path_contains_all": [["qwen", "image"]],
+      "variant": "any"
+    },
+    {
+      "id": "krea2",
+      "base_model": ["krea"],
+      "path_prefix": ["krea 2\\"],
+      "path_contains": ["krea2", "krea-2"],
+      "variant": "any"
+    },
+    {
+      "id": "klein",
+      "note": "FLUX.2 Klein 9B: masked inpainting only - like qwen_edit it is reachable from a finished frame, never from the composer.",
+      "base_model": ["klein"],
+      "path_contains": ["klein"],
+      "variant": {"model": "edit", "lora": "any"},
+      "source_only": true
+    }
+  ]
+}

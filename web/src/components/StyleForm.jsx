@@ -18,6 +18,8 @@ import { CaretDown, Palette, X } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "../lib/design-tokens.js";
 import { styleSampler } from "../transport.js";
 import { buildLoraPlan, defaultLoraEntries } from "../store.js";
+import { Disclosure } from "../lib/Disclosure.jsx";
+import { ModalShell } from "../lib/ModalShell.jsx";
 import { LoraChain } from "./Composer.jsx";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -249,8 +251,6 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
 
   return (
     <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 36, background: "rgba(0,0,0,0.5)" }}
-           onClick={onClose} />
       {/* Pinned header and save bar around ONE scrolling body: the dialog's
           whole story is "name it, save it", so both stay on screen no matter
           how long the chain gets. The shell itself never scrolls - a flex
@@ -258,9 +258,8 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
           (tuning, LoRA chain) instead of overflowing, the clipped-modal bug of
           2026-08-22. The body's children are made non-shrinking by the
           .px-dialog-body rule in the theme stylesheet (Chat.jsx). */}
-      <div style={{
-        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
-        zIndex: 37, width: 460, maxWidth: "94vw", maxHeight: "86vh", overflow: "hidden",
+      <ModalShell onClose={onClose} boxStyle={{
+        width: 460, maxWidth: "94vw", maxHeight: "86vh", overflow: "hidden",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: RADIUS.dialog, boxShadow: "0 18px 44px rgba(0,0,0,0.6)",
         display: "flex", flexDirection: "column",
@@ -329,26 +328,19 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
         {tunable ? (
           <div style={{ border: "1px solid var(--border)", borderRadius: RADIUS.card,
                         background: "var(--bg2)", overflow: "hidden" }}>
-            <button type="button" onClick={() => setTuneOpen(!tuneOpen)}
-              style={{
-                width: "100%", minHeight: 38, display: "flex", alignItems: "center",
-                gap: SPACE[8], padding: `${SPACE[6]}px ${SPACE[12]}px`, cursor: "pointer",
-                background: "none", border: "none", color: "var(--textSec)",
-                fontFamily: FONT, fontSize: TYPE.ui, textAlign: "left",
-              }}>
-              <span style={{ flex: 1, lineHeight: 1.5 }}>
-                {changed ? `${changed} setting${changed > 1 ? "s" : ""} changed`
-                         : inheritLine}
-              </span>
-              <CaretDown size={11} weight="bold" style={{
-                color: "var(--textTer)", flexShrink: 0,
-                transform: tuneOpen ? "rotate(180deg)" : "none",
-                transition: `transform ${MOTION.hover}`,
-              }} />
-            </button>
-            {tuneOpen && (
-              <div style={{ padding: SPACE[12], paddingTop: SPACE[4],
-                            display: "flex", flexDirection: "column", gap: SPACE[10] }}>
+            <Disclosure open={tuneOpen} onToggle={() => setTuneOpen(!tuneOpen)}
+              caretSide="trailing" caretStyle={{ color: "var(--textTer)" }}
+              triggerStyle={{ minHeight: 38,
+                              padding: `${SPACE[6]}px ${SPACE[12]}px`,
+                              color: "var(--textSec)", fontSize: TYPE.ui }}
+              trigger={
+                <span style={{ flex: 1, lineHeight: 1.5 }}>
+                  {changed ? `${changed} setting${changed > 1 ? "s" : ""} changed`
+                           : inheritLine}
+                </span>
+              }
+              contentStyle={{ padding: SPACE[12], paddingTop: SPACE[4],
+                             display: "flex", flexDirection: "column", gap: SPACE[10] }}>
                 <div style={{ display: "grid", gap: SPACE[8],
                               gridTemplateColumns: tunes("eta") ? "1fr 1fr 1fr" : "1fr 1fr" }}>
                   {numberField("steps", "steps")}
@@ -362,8 +354,7 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
                   Blank follows the recipe, so the style keeps improving when the
                   recipe does — only what you change is saved.
                 </span>
-              </div>
-            )}
+            </Disclosure>
           </div>
         ) : (
           <span style={{ fontSize: TYPE.label, color: "var(--textSec)", lineHeight: 1.5 }}>
@@ -440,7 +431,7 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
               cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
             }}>{busy ? "saving…" : editId ? "save changes" : "save style"}</button>
         </div>
-      </div>
+      </ModalShell>
     </>
   );
 };

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Info } from "@phosphor-icons/react";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, LH, SHADOW, Z } from "../lib/design-tokens.js";
+import { OverlayMotionStyle } from "../lib/ModalShell.jsx";
 
 // Hover-revealed help tip, ported from desklight's ui/InfoTip.jsx (2026-08-22)
 // - the only change is the design-tokens import path. Phosphor Info (duotone)
@@ -64,6 +65,7 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
       onFocus={() => setShow(true)}
       onBlur={() => { setShow(false); setPos(null); }}
     >
+      <OverlayMotionStyle />
       <Info
         size={size}
         weight="duotone"
@@ -77,8 +79,18 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
       {show && createPortal(
         <div
           ref={tipRef}
+          // px-root carries the theme. applyThemeCss scopes every token to
+          // that class, and document.body sits OUTSIDE it - so without this
+          // the tip drew as inherited black on a fully transparent box, with
+          // the control it covers showing straight through the text. Exactly
+          // the failure ComfyBoot.jsx documents, and Composer.jsx avoids by
+          // portalling into .px-root instead. Body plus the class is the
+          // safer pair here: the tip still escapes every overflow ancestor,
+          // and it stops depending on where in the tree it was mounted.
+          className="px-root px-ov-pop"
           style={{
             position: "fixed",
+            transformOrigin: side === "top" ? "bottom center" : "top center",
             left: pos ? pos.left : -9999,
             top: pos ? pos.top : -9999,
             background: "var(--bg3)",

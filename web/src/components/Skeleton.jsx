@@ -25,7 +25,7 @@ const CSS = `
 export const SkeletonStyle = () => <style>{CSS}</style>;
 
 export const Bar = ({ w = "100%", h = 14, style }) => (
-  <div className="px-shim-skel" style={{
+  <div aria-hidden="true" className="px-shim-skel" style={{
     width: w, height: h, borderRadius: RADIUS.input, flexShrink: 0,
     background: "linear-gradient(90deg, var(--bg3) 25%, var(--bg4) 50%, var(--bg3) 75%)",
     backgroundSize: "800px 100%",
@@ -34,8 +34,8 @@ export const Bar = ({ w = "100%", h = 14, style }) => (
   }} />
 );
 
-// Segmented-control ghost: the same 40px capsule SegRadio renders (3px
-// padding, 1px border, 32px segments) - height-identical, so the real
+// Segmented-control ghost: the same 40px capsule SegmentedControl renders
+// (3px padding, 1px border, 32px segments) - height-identical, so the real
 // options land without pushing anything down.
 export const SegGhost = ({ segments = 3 }) => (
   <div aria-hidden="true" style={{
@@ -58,4 +58,24 @@ export const PickerGhost = () => (
   }}>
     <Bar w="45%" h={11} />
   </div>
+);
+
+// Whole-line ghost for a prose value that arrives late and takes the line
+// with it - the detected-card gloss is one sentence, so the whole line
+// ghosts. The flex wrapper pins the line box to the 1.5em the text will
+// occupy (gloss and footnote both run lineHeight 1.5), so the line neither
+// shrinks nor grows when the words land; the bar inside is just the shimmer.
+export const LineGhost = ({ w = "55%" }) => (
+  <span aria-hidden="true" style={{
+    display: "flex", alignItems: "center", height: "1.5em",
+  }}>
+    <Bar w={w} h={10} />
+  </span>
+);
+
+// Inline value ghost: the count in "Found 614 files." - the sentence is
+// known, the number is not. Sits in the text line at x-height, so the line
+// box stays the text's own; only the number's width is a guess.
+export const ValueGhost = ({ w = 64 }) => (
+  <Bar w={w} h={10} style={{ display: "inline-block", verticalAlign: "middle" }} />
 );

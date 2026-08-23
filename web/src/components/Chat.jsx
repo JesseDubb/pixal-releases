@@ -8,7 +8,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, ArrowUp, ArrowRight, CaretLeft, CaretRight,
          DiceOne, DiceTwo, DiceThree, DiceFour,
          DiceFive, DiceSix, DownloadSimple, LockSimple, Stop, UserCircle, UserCircleCheck,
-         UserCirclePlus, Sparkle, X } from "@phosphor-icons/react";
+         UserCirclePlus, Sparkle, X, Brain } from "@phosphor-icons/react";
 import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
 
 // The lobby die: every roll spins it a random 1¼–1¾ turns on a spring curve
@@ -20,7 +20,7 @@ import { renderRichText } from "../lib/richtext.js";
 import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
 import { imgUrl } from "../transport.js";
 import { useJobLive, useStore, dialOverrides, recipeDials } from "../store.js";
-import { ComposerBar, LoraChain, RecipeDials, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
+import { ComposerBar, LoraChain, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
 import { CharacterForm } from "./CharacterForm.jsx";
 import { InstallNudge } from "./InstallNudge.jsx";
 import { StyleForm } from "./StyleForm.jsx";
@@ -36,6 +36,47 @@ import { PhotonField } from "../lib/PhotonField.jsx";
 // The little eye ahead of the VRAM numbers is an NVIDIA-inspired mark; its accent
 // ink pulled way down via opacity so it reads as a much darker chartreuse on
 // bg0 and stays theme-correct (no color literals in components).
+// The brain, on the strip that already carries the card. Jesse: "add a little
+// chip for Local and CPU or GPU on the chat widget so you know what is
+// selected... and one for API and model used... its just so people know what
+// is being used. There could be tags for Vision and Uncensored as well."
+//
+// One line, same monospace and same muted grey as the VRAM readout beside it -
+// this is status, not a control, and it must never out-shout the render. The
+// tags are the two questions a local model actually raises: can it see, and
+// will it refuse. They only appear when true, so the common case stays short.
+const BrainChip = ({ brain, narrow }) => {
+  if (!brain || !brain.model) return null;
+  const tag = (text, title) => (
+    <span key={text} title={title}
+          style={{ fontSize: 9, lineHeight: 1.6, padding: "0 4px",
+                   borderRadius: RADIUS.pill, border: "1px solid var(--border)",
+                   color: "var(--textTer)", letterSpacing: "0.04em" }}>
+      {text}
+    </span>
+  );
+  return (
+    <span title={brain.mode === "local"
+          ? `local brain: ${brain.model}, running on ${brain.device}`
+          : `API brain: ${brain.model}`}
+          style={{ fontFamily: MONO, fontSize: 10, color: "var(--textTer)",
+                   display: "inline-flex", alignItems: "center", gap: 5,
+                   minWidth: 0, whiteSpace: "nowrap" }}>
+      <Brain size={11} weight="duotone" style={{ flexShrink: 0 }} />
+      {/* The model name is the one part that can be long, so it is the one
+          part allowed to ellipsis - the mode and the device never do. */}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+        {brain.model}
+      </span>
+      {brain.mode === "local"
+        ? <span style={{ flexShrink: 0 }}>{"\u00b7 "}{brain.device}</span>
+        : <span style={{ flexShrink: 0 }}>{"\u00b7 api"}</span>}
+      {!narrow && brain.vision && tag("VISION", "this brain can look at images")}
+      {!narrow && brain.nsfw && tag("UNCENSORED", "an unfiltered model")}
+    </span>
+  );
+};
+
 const NvidiaMark = () => (
   <svg width="12" height="8" viewBox="0 0 440 292" aria-hidden="true"
        style={{ flexShrink: 0, opacity: 0.4 }}>
@@ -1164,8 +1205,14 @@ export const Chat = () => {
                 {store.scan}
               </span>
             )}
+            {!store.scan && (
+              <span style={{ marginLeft: "auto", minWidth: 0, display: "inline-flex" }}>
+                <BrainChip brain={store.brain} narrow={narrow} />
+              </span>
+            )}
             {!store.scan && store.gpu && (
-              <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10,
+              <span style={{ marginLeft: store.brain ? 10 : "auto",
+                             fontFamily: MONO, fontSize: 10,
                              color: "var(--textTer)", whiteSpace: "nowrap",
                              display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <NvidiaMark />
@@ -1190,6 +1237,7 @@ export const Chat = () => {
             {inlineLoraChain && (
               <LoraChain opts={store.opts} options={store.options}
                          recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
+                         onDial={(key, value) => store.setRecipeDial(key, value)}
                          setEntries={(entries) => store.setActiveLoraEntries(entries)}
                          setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
                          setCoreStrength={(slot, value) =>
@@ -1197,9 +1245,6 @@ export const Chat = () => {
                            store.setCoreStageStrength(slot, value)}
                          resetPlan={() => store.resetActiveLoraPlan()} />
             )}
-            <RecipeDials opts={store.opts} options={store.options}
-                         recipeId={store.activeRecipeId}
-                         onDial={(key, value) => store.setRecipeDial(key, value)} />
           </div>
           {/* Concentric grid: shell radius 24, uniform pad 12, so anything
               touching a corner (pills, send) rounds at control(12). One shared
@@ -1450,21 +1495,20 @@ export const Chat = () => {
           width: vw < 1100 ? 288 : 320, height: "100%", flexShrink: 0,
           boxSizing: "border-box", padding: SPACE[12], overflow: "hidden",
           borderLeft: "1px solid var(--border)", zIndex: 4,
-          // The extender shares the rail below the chain: the column flexes so
-          // the chain keeps the leftover height and its list still scrolls.
+          // The chain owns the rail alone now: its cards carry the recipe
+          // dials (9.23a), and the column flexes so the list keeps the
+          // leftover height and still scrolls.
           display: "flex", flexDirection: "column",
         }}>
           <LoraChain rail opts={store.opts} options={store.options}
                      recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
+                     onDial={(key, value) => store.setRecipeDial(key, value)}
                      setEntries={(entries) => store.setActiveLoraEntries(entries)}
                      setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
                      setCoreStrength={(slot, value) =>
                        // 2026-08-21: core rows edit strength through the same store-owned plan.
                        store.setCoreStageStrength(slot, value)}
                      resetPlan={() => store.resetActiveLoraPlan()} />
-          <RecipeDials rail opts={store.opts} options={store.options}
-                       recipeId={store.activeRecipeId}
-                       onDial={(key, value) => store.setRecipeDial(key, value)} />
         </aside>
       )}
       </div>

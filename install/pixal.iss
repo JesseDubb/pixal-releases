@@ -13,7 +13,7 @@
 ; and NO install-mode dialog. "Never asks for admin" means never asking.
 
 #ifndef MyVersion
-  #define MyVersion "1.0.6b"
+  #define MyVersion "1.0.7b"
 #endif
 #ifndef MyStage
   #define MyStage "_build\stage"
@@ -69,10 +69,19 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "{#MyStage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyName}";           Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Comment: "Open Pixal"
+; AppUserModelID is the taskbar fold: pixal.vbs opens the studio as
+; `chrome --app=http://127.0.0.1:8190`, and Chrome stamps that window with
+; AppUserModelID "Chrome.127.0.0.1_/" (host + path, no port). A pinned
+; shortcut carrying the SAME id absorbs the window - one button, Pixal's
+; icon, pinnable. Without it the window groups under Chrome and the user
+; gets two buttons (2026-08-24). Never a Chrome._crx_ id here: that is what
+; an installed PWA's window carries, and pointing the shortcut at it breaks
+; the fold on every machine that has NOT installed the PWA - i.e. every
+; fresh install.
+Name: "{group}\{#MyName}";           Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Comment: "Open Pixal"; AppUserModelID: "Chrome.127.0.0.1_/"
 Name: "{group}\Pixal Setup";         Filename: "{app}\{#MyExeName}"; Parameters: "--setup"; IconFilename: "{app}\web\icons\pixal-block.ico"; Comment: "Add or repair ComfyUI and models"
 Name: "{group}\Uninstall {#MyName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyName}";     Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyName}";     Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Tasks: desktopicon; AppUserModelID: "Chrome.127.0.0.1_/"
 
 [Run]
 Filename: "{app}\{#MyExeName}"; Description: "Open &Pixal now"; Flags: nowait postinstall skipifsilent

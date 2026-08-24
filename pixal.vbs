@@ -21,9 +21,15 @@
 '     (under 15s) means someone is genuinely mid-boot: do not spawn a rival
 '     (the port-8188 bind fight of 2026-08-11), but keep waiting - a second
 '     click during boot opens the window the moment the sidecar answers.
-'   - The Chrome app-id comes from config.json ("chrome_app_id"); no id means
-'     chrome --app= (an app-shaped window that needs no installed PWA), and
-'     no Chrome at all means the default browser.
+'   - The window always opens as chrome --app=, never chrome_proxy --app-id.
+'     Chrome stamps a --app= window with AppUserModelID "Chrome.127.0.0.1_/"
+'     (host + path, no port), and the Pixal shortcuts carry exactly that
+'     System.AppUserModel.ID - so the window folds into the pinned taskbar
+'     button instead of opening a second, Chrome-attributed one. A PWA window
+'     (--app-id) would carry "Chrome._crx_<id>", match nothing the installer
+'     wrote, and bring the second button back (2026-08-24, four rounds of
+'     two-button days). No PWA, no discovery, no user step: the shortcut and
+'     the window agree by construction.
 Option Explicit
 
 Const STATUS_TIMEOUT_MS = 900      ' the sidecar is local; slow means not up yet
@@ -235,21 +241,6 @@ Function SpawnCmd()
                LogPath() & """ 2>&1"""
 End Function
 
-' "chrome_app_id" out of config.json, "" when unset or unreadable. A regex,
-' not a JSON parser: the value is a bare [a-z]{32} Chrome PWA id.
-Function ChromeAppId()
-    Dim raw, re, m
-    ChromeAppId = ""
-    On Error Resume Next
-    raw = fso.OpenTextFile(root & "\config.json", 1).ReadAll
-    On Error GoTo 0
-    If raw = "" Then Exit Function
-    Set re = New RegExp
-    re.Pattern = """chrome_app_id""\s*:\s*""([a-z]{32})"""
-    Set m = re.Execute(raw)
-    If m.Count > 0 Then ChromeAppId = m(0).SubMatches(0)
-End Function
-
 Function FindChrome(exeName)
     Dim dirs, d, p
     FindChrome = ""
@@ -264,35 +255,11 @@ Function FindChrome(exeName)
     Next
 End Function
 
-' Chrome keeps one folder per installed PWA. config.json can go on naming an
-' app the user has since uninstalled, and chrome_proxy with a dead --app-id
-' opens NOTHING and exits 0 - no window, no error, nothing in the log. The
-' sidecar was already answering, so the click looked like a success and the
-' shortcut looked broken (2026-08-17). Confirm the app really is installed
-' before trusting the id; otherwise fall through to chrome --app=, which needs
-' no install at all.
-Function AppInstalled(appId)
-    AppInstalled = False
-    If appId = "" Then Exit Function
-    AppInstalled = fso.FolderExists( _
-        shell.ExpandEnvironmentStrings("%LocalAppData%") & _
-        "\Google\Chrome\User Data\Default\Web Applications\_crx_" & appId)
-End Function
-
-' The installed PWA when config names one that is actually installed, chrome
-' --app= when Chrome exists without one (an app-shaped window, no install
-' needed), the default browser otherwise.
+' chrome --app= needs no installed PWA and no discovered id, and it is what
+' keeps the window on the AppUserModelID the shortcuts carry. Without Chrome
+' at all, the default browser.
 Sub OpenApp()
-    Dim appId, exe
-    appId = ChromeAppId()
-    If AppInstalled(appId) Then
-        exe = FindChrome("chrome_proxy.exe")
-        If exe <> "" Then
-            shell.Run """" & exe & """ --profile-directory=Default" & _
-                      " --app-id=" & appId, NORMAL, False
-            Exit Sub
-        End If
-    End If
+    Dim exe
     exe = FindChrome("chrome.exe")
     If exe <> "" Then
         shell.Run """" & exe & """ --app=" & base, NORMAL, False

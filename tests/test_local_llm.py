@@ -1311,7 +1311,9 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
     """The flag travels the whole lane: config -> spawn argv -> state json ->
     the next ensure's staleness compare. A state json WITHOUT the key (every
     install running today) must read as stale once - respawn, rewrite, then
-    settle - or the setting is a lie."""
+    settle - or the setting is a lie. Also home to the orphan-adoption lane
+    (same harness): a pidfile-less but still-listening brain is re-registered
+    through the smoke test instead of being adopted as a blind "external"."""
 
     def _cfg(self, model, **llm):
         return {"llm": {"base_url": server.LOCAL_LLM_URL,
@@ -1323,7 +1325,7 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
         return argv[argv.index("--n_gpu_layers") + 1]
 
     async def _ensure(self, td, cfg, state=None, port_open=(False,),
-                      mmproj=None, vision=True):
+                      mmproj=None, vision=True, serving=None):
         """Run _ensure_local_llm with every outside effect stubbed (the
         LIVE-MACHINE RULE: no real spawn, no real port probe, no real config).
         Returns (error, popen, kill, state_path)."""
@@ -1343,6 +1345,8 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
              patch.object(server, "_local_llm_mmproj", return_value=mmproj), \
              patch.object(server, "_vision_smoke_test",
                           AsyncMock(return_value=vision)), \
+             patch.object(server, "_local_llm_serving_model",
+                          AsyncMock(return_value=serving)), \
              patch.object(server, "resolve_local_llm_python",
                           return_value=(str(selected), None)), \
              patch.object(server, "_llm_kill") as kill, \
@@ -1440,6 +1444,70 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertIsNone(state["mmproj"])
             self.assertEqual(state.get("gpu_layers"), 0)
+
+    async def test_an_orphaned_brain_is_re_registered_sighted(self):
+        # 2026-08-24: the pidfile was gone but our spawn still listened, and
+        # the old adopt-as-external shortcut left every vision gate reading
+        # empty state - chat flattened images, the look fell to the 8B critic.
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "qwen3-vl-4b-heretic-Q8_0.gguf"
+            model.touch()
+            mmproj = str(Path(td) / "qwen3-vl-4b-heretic.mmproj-f16.gguf")
+            error, popen, kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                mmproj=mmproj, serving=str(model))
+            self.assertIsNone(error)
+            popen.assert_not_called()
+            kill.assert_not_called()
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state, {"pid": None, "model": str(model),
+                                     "mmproj": mmproj, "gpu_layers": -1,
+                                     "adopted": True})
+
+    async def test_an_orphan_that_fails_the_probe_is_registered_blind(self):
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "qwen3-vl-4b-heretic-Q8_0.gguf"
+            model.touch()
+            mmproj = str(Path(td) / "qwen3-vl-4b-heretic.mmproj-f16.gguf")
+            error, popen, kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                mmproj=mmproj, serving=str(model), vision=False)
+            self.assertIsNone(error)
+            popen.assert_not_called()
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state, {"pid": None, "model": str(model),
+                                     "mmproj": None, "blind_mmproj": mmproj,
+                                     "gpu_layers": -1, "adopted": True})
+
+    async def test_a_strangers_server_is_used_as_is_and_never_registered(self):
+        # A served model path that is NOT the configured one: run_llm.bat
+        # territory - use it, never kill it, never write a pidfile for it.
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "brain.gguf"
+            model.touch()
+            error, popen, kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                mmproj=None, serving="D:/elsewhere/other.gguf")
+            self.assertIsNone(error)
+            popen.assert_not_called()
+            kill.assert_not_called()
+            self.assertFalse(state_path.exists())
+
+    async def test_changed_settings_on_an_adopted_brain_refuse_a_doomed_spawn(self):
+        # A pidless adoption cannot be killed and must not be spawned into:
+        # the honest error beats the old "crashed loading" on the port bind.
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "brain.gguf"
+            model.touch()
+            error, popen, kill, _state_path = await self._ensure(
+                td, self._cfg(model, local_gpu_layers=0),
+                state={"pid": None, "model": str(model), "mmproj": None,
+                       "gpu_layers": -1, "adopted": True},
+                port_open=(True,))
+            self.assertIsNotNone(error)
+            self.assertIn("adopted", error)
+            popen.assert_not_called()
+            kill.assert_not_called()
 
 
 class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):

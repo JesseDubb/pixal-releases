@@ -1,5 +1,69 @@
 # Changelog
 
+## 1.0.7b — 2026-08-24
+
+The chat brain stops going blind, and Settings stops describing itself wrong.
+
+**Your brain keeps its eyes.** If Pixal lost track of a local brain it had
+started — its record on disk gone while the model itself was still loaded and
+answering — it treated that brain as somebody else's server and used it as-is.
+Every part of Pixal that asks "can this brain see?" reads that record, so a
+brain without one was blind for the rest of the session: images you attached to
+chat were flattened to "[attached image]", and asking for a look at a frame
+fell through to the big ComfyUI reviewer, loading a second model to do a job
+the brain could already do. Pixal now recognises its own brain by the model it
+is serving and re-registers it, running the same vision check a fresh start
+gets — so the eyes come back instead of quietly staying off.
+
+**Settings names the model that actually reviews your images.** The Vision
+section was a ComfyUI model picker titled "Image reviewer", which read as
+though that model does the reviewing. It does not. Whenever your chat brain has
+working vision it reviews directly, and the picker is only the fallback for a
+brain without eyes. It says so now — "Fallback reviewer", with the brain
+named — and when the brain cannot see, it tells you why.
+
+**An anime shot is called an anime shot.** Krea 2 has no anime graph, so
+choosing Anime runs the photo recipe with the anime direction folded into the
+writing. That is the right thing to run, and the render card then threw the
+choice away: a cel-shaded picture came back labelled "Realism", and the chat
+called it a realism shot. The card now names what you chose and keeps the
+recipe in its tooltip, and the brain calls the render what you asked for.
+
+**Plainer words.** The upscaler says **Upscale** where it said "Enlarge", and
+asks you to choose a local upscale model. The section that was called "PiD
+finish" is now **VAE decode**, which is what it is — and its tip explains what
+the setting swaps, and that it only ever applies to Identity Edit renders.
+
+**Pixal gets its own taskbar button.** Pin Pixal and you got Chrome's icon;
+open it and a second, blurry button appeared beside the one you pinned.
+
+Pixal opens its window through Chrome, and Windows decides which taskbar
+button a window belongs to by an identifier the window carries. Chrome's
+window carried Chrome's. The shortcut you pinned carried nothing, so the two
+could never be the same button — no icon setting could have fixed it. Both now
+carry the same identifier, so the window lands on the button you pinned,
+wearing Pixal's icon. Nothing to install and nothing to click: it is true from
+the first launch.
+
+The desktop shortcut also pointed at a script, and Windows will not pin a
+shortcut to a script — dragging it to the taskbar did nothing at all, with no
+error to say why. It points at Pixal.exe now.
+
+And the "install it as an app" button could not install anything: Chrome offers
+that prompt once, very early, and Pixal was not listening yet, so the button
+only ever opened another tab. It catches the offer now and asks properly — and
+when Chrome is not offering one, it says so instead of opening a tab that
+cannot help either. Installing as an app is optional now; the taskbar is
+correct either way.
+
+If you pinned Pixal from an earlier version, unpin and re-pin it once to pick
+this up.
+
+**Two things that were simply wrong.** The Video model dropdown painted behind
+the rows underneath it. And every info tip in Settings sat a couple of pixels
+above the text beside it — in all of them at once, which is why it read as a
+tilt rather than a typo.
+
 ## 1.0.6b — 2026-08-23
 
 MiniMax H3 renders about a third faster, and you can prove it yourself.

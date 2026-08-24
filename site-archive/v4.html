@@ -1,0 +1,1644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixal — every model you own, in one chat</title>
+<meta name="description" content="Pixal drives the ComfyUI you already run. Every checkpoint, LoRA, video model and upscaler you own, from one chat. Local, no account, nothing per picture.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Pixal — every model you own, in one chat">
+<meta property="og:description" content="Nobody wrote a prompt. The scene was corrected into existence — on your GPU, with your weights, $0.00 a picture.">
+<meta property="og:image" content="https://getpixal.com/assets/og-icon.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://getpixal.com/assets/og-icon.png">
+<link rel="icon" type="image/png" sizes="256x256" href="icons/tile-256.png">
+<link rel="icon" type="image/png" sizes="128x128" href="icons/tile-128.png">
+<link rel="icon" type="image/png" sizes="64x64" href="icons/tile-64.png">
+<link rel="icon" type="image/png" sizes="48x48" href="icons/tile-48.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/tile-32.png">
+<link rel="icon" type="image/png" sizes="24x24" href="icons/tile-24.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/tile-16.png">
+<link rel="apple-touch-icon" href="icons/block-192.png">
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   Pixal — v3
+
+   Three slabs, nothing else. Every headline is set at the punch scale v2
+   reserved for one band; the 3D mark is gone so the type is the only
+   spectacle. Same law as v2: hard edges, radius 0, no gradients, one
+   chartreuse and it always means "Pixal did this".
+   ══════════════════════════════════════════════════════════════════════ */
+@font-face{font-family:Geist;src:url("fonts/geist-400-n-latin.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:Geist;src:url("fonts/geist-600-n-latin.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:Syne;src:url("fonts/syne-700-n-latin.woff2") format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:JetBrains;src:url("fonts/jetbrains-mono-500-n-latin.woff2") format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:CascadiaTerm;src:url("fonts/cascadia-mono-400-term.woff2") format("woff2");font-weight:400;font-display:swap}
+
+:root{
+  --ink:#08080A; --raise:#0D0D11; --line:#1B1B21; --line-2:#26262D;
+  --cream:#F2F1EC; --dim:#8F8F89; --faint:#55554F;
+  --signal:#D6F32F;
+  --sans:Geist,system-ui,sans-serif; --display:Syne,system-ui,sans-serif;
+  --mono:JetBrains,ui-monospace,Consolas,monospace;
+  --gut:clamp(20px,5vw,76px);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--ink);color:var(--cream);font-family:var(--sans);
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img,video{max-width:100%;display:block}
+p{margin:0}
+a{color:inherit}
+
+.shell{max-width:1320px;margin:0 auto;padding-inline:var(--gut)}
+.eyebrow{display:inline-block;font:500 10px/1 var(--mono);letter-spacing:.2em;
+  text-transform:uppercase;color:var(--faint)}
+.eyebrow b{color:var(--signal);font-weight:500}
+.lede{color:var(--dim);font-size:clamp(14.5px,1.15vw,16.5px);line-height:1.68}
+.lede b{color:var(--cream);font-weight:600}
+
+/* the one voice on this page — v2's punch scale, on every slab */
+.shout{margin:0;font-family:var(--display);font-weight:700;text-transform:uppercase;
+  font-size:clamp(3rem,9vw,8rem);letter-spacing:-.055em;line-height:.88}
+.shout em{font-style:normal;color:var(--signal)}
+
+.rise{opacity:0;transform:translateY(16px);
+  transition:opacity .6s ease,transform .6s cubic-bezier(.2,.7,.3,1)}
+.rise.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .rise{opacity:1;transform:none;transition:none}
+}
+
+/* ── top bar ─────────────────────────────────────────────────────── */
+.top{border-bottom:1px solid var(--line)}
+.top .shell{display:flex;align-items:center;justify-content:space-between;
+  gap:20px;height:64px}
+.top .lk{width:104px;flex:0 0 auto}
+.top .lk svg{width:100%;height:auto;color:var(--cream)}
+.top .lk .dot{fill:var(--signal)}
+.top .t{font:500 10px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+  color:var(--faint)}
+
+/* ── slab 1 — the claim ──────────────────────────────────────────── */
+.slab{border-bottom:1px solid var(--line)}
+.slab .shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.78fr);
+  gap:clamp(28px,4.5vw,72px);align-items:center;
+  padding-block:clamp(56px,8vw,120px)}
+.slab .shout{margin-top:clamp(16px,2.2vw,24px)}
+.slab .lede{margin-top:clamp(18px,2.2vw,26px);max-width:44ch}
+
+.ctas{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  margin-top:clamp(24px,3vw,36px)}
+.btn{display:inline-flex;align-items:center;gap:11px;padding:16px 28px;
+  font:600 14px/1 var(--sans);text-decoration:none;border:1px solid transparent;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.btn-1{background:var(--signal);color:#111401}
+.btn-1:hover{background:var(--cream)}
+.btn-2{background:transparent;color:var(--cream);border-color:var(--line-2)}
+.btn-2:hover{border-color:var(--cream)}
+.note{font-size:12.5px;color:var(--faint)}
+
+/* the cube, hanging off the page's one loud chartreuse edge */
+.slab figure{margin:0;position:relative}
+.slab img{width:100%;height:auto;background:var(--raise);position:relative;z-index:1}
+/* the offset frame hugs the image alone — over the whole figure it ran its
+   side rails straight through the caption text */
+.slab .vwrap::after{content:"";position:absolute;inset:0;
+  transform:translate(14px,14px);border:2px solid var(--signal);z-index:0}
+.slab figcaption{margin-top:26px;font:500 9.5px/1.5 var(--mono);letter-spacing:.16em;
+  text-transform:uppercase;color:var(--faint)}
+/* figures come alive on hover: the H3 pass of the same frame, faded in over
+   the still. .vwrap bounds the overlay to the image alone — never the
+   caption — so the clip lands pixel-aligned on the still. */
+.vwrap{position:relative;display:block}
+.vwrap video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  opacity:0;transition:opacity .4s ease;z-index:2;pointer-events:none}
+figure.playing .vwrap video{opacity:1}
+/* the neon play badge: marks every still that comes alive on hover, and gets
+   out of the way once it is actually playing */
+.pbadge{position:absolute;right:10px;bottom:10px;z-index:3;width:24px;height:24px;
+  display:grid;place-items:center;background:var(--signal);color:#111401;
+  opacity:.92;transition:opacity .3s ease;pointer-events:none}
+.pbadge svg{width:10px;height:10px;display:block}
+figure.playing .pbadge{opacity:0}
+/* while the browser still has audio locked (no click yet this visit), the
+   playing clip wears an honest little tag instead of failing silently */
+figure.needsound .vwrap::before{content:"♪ click once for sound";
+  position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:3;
+  padding:5px 10px;background:var(--signal);color:#111401;white-space:nowrap;
+  font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  pointer-events:none}
+/* engine marks in captions: the footer's own artwork, masked and filled with
+   currentColor so they sit at the caption's ink — never a colored favicon. */
+figcaption .ci{display:inline-block;width:13px;height:13px;
+  vertical-align:-2px;margin-right:3px;background:currentColor;
+  -webkit-mask:var(--m) center/contain no-repeat;
+  mask:var(--m) center/contain no-repeat}
+/* the caption's one interactive: a bare copy glyph for the exact prompt.
+   Feedback is unmistakable: glyph becomes a check, a COPIED tag pops in the
+   signal color, and the press itself dips. */
+.copyp{position:relative;margin-left:6px;padding:2px;background:none;border:0;
+  cursor:pointer;color:var(--faint);vertical-align:-3px;transition:color .15s}
+.copyp svg{display:block;width:13px;height:13px}
+.copyp .c2{display:none}
+.copyp:hover{color:var(--cream)}
+.copyp:active{transform:translateY(1px) scale(.92)}
+.copyp.did{color:var(--signal)}
+.copyp.did .c1{display:none}
+.copyp.did .c2{display:block}
+.copyp.did::after{content:"copied";position:absolute;left:50%;bottom:calc(100% + 6px);
+  transform:translateX(-50%);padding:4px 8px;background:var(--signal);color:#111401;
+  font:600 9px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  white-space:nowrap;pointer-events:none}
+@media(max-width:860px){
+  .slab .shell{grid-template-columns:1fr}
+  .slab figure{order:-1;max-width:400px}
+}
+
+/* ── slab 2 — the machine ────────────────────────────────────────
+   The section IS the product: the conversation types itself, the render
+   obeys. Everything animated is opacity or transform, and every timing is
+   clock-based — a 239Hz display plays it at the same speed as a 60Hz one. */
+.proof{border-bottom:1px solid var(--line)}
+.proof .shell{padding-block:clamp(56px,8vw,120px)}
+.proof .shout{margin-top:clamp(16px,2.2vw,24px)}
+.proof > .shell > .lede{margin-top:clamp(18px,2.2vw,26px);max-width:64ch}
+
+.demo{display:grid;grid-template-columns:auto minmax(0,1fr);
+  gap:clamp(22px,3.2vw,48px);margin-top:clamp(28px,3.6vw,48px);align-items:start}
+.canvas{position:relative;height:clamp(380px,46vw,600px);aspect-ratio:768/1344;
+  background:var(--raise);border:1px solid var(--line)}
+.canvas img,.canvas video{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;opacity:0;transition:opacity .45s ease}
+.canvas .on{opacity:1}
+.canvas video{z-index:2;pointer-events:none}
+.canvas video.on{pointer-events:auto}
+.stat{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;
+  font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint)}
+.stat b{color:var(--cream);font-weight:500}
+.stat .hi{color:var(--signal)}
+
+.log{display:flex;flex-direction:column;gap:11px;min-height:0}
+.log .u{display:flex;gap:12px;align-items:baseline;font-size:14px;line-height:1.5;
+  color:var(--faint);opacity:0;transform:translateY(6px);
+  transition:opacity .3s ease,transform .3s ease}
+.log .u.in{opacity:1;transform:none}
+.log .u.now{color:var(--cream)}
+.log .u i{font:500 9px/1.7 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  font-style:normal;color:var(--signal);flex:0 0 44px}
+.log .u.px i{color:var(--dim)}
+.log .u.px{color:var(--dim)}
+.caret{display:inline-block;width:8px;height:14px;margin-left:2px;
+  background:var(--signal);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.replay{margin-top:6px;align-self:flex-start;display:none;
+  font:500 10px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  color:var(--signal);background:none;border:1px solid var(--line-2);
+  padding:10px 14px;cursor:pointer}
+.replay:hover{border-color:var(--signal)}
+.replay.show{display:inline-block}
+@media(max-width:860px){
+  .demo{grid-template-columns:1fr}
+  .canvas{height:auto;width:100%;max-width:380px;aspect-ratio:768/1344}
+}
+
+/* the strip doubles as the scrubber — click any frame to jump the machine */
+.strip{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;
+  margin-top:clamp(24px,3vw,40px)}
+.strip figure{margin:0;min-width:0;cursor:pointer}
+.strip img{width:100%;height:auto;background:var(--raise);opacity:.55;
+  transition:opacity .25s ease}
+.strip figure.here img,.strip figure:hover img{opacity:1}
+.strip figure.here{outline:1px solid var(--signal);outline-offset:2px}
+.strip figcaption{margin-top:7px;font-size:10.5px;line-height:1.35;
+  color:var(--faint);display:flex;gap:5px}
+.strip figcaption b{color:var(--dim);font-weight:600}
+.sc-n{color:var(--signal);font:500 9.5px/1.5 var(--mono);flex:0 0 auto}
+/* the gallery, carried over from the first site: masonry columns, the
+   caption under each render is the recipe that made it */
+.gal{columns:4 250px;column-gap:10px;margin-top:clamp(34px,4.5vw,64px)}
+.gal figure{margin:0 0 10px;break-inside:avoid;background:var(--raise)}
+.gal img{display:block;width:100%;height:auto}
+.gal figcaption{padding:10px 12px 12px;font:500 10.5px/1.5 var(--mono);
+  letter-spacing:.05em;color:var(--dim)}
+.gal figcaption b{color:var(--signal);font-weight:500}
+@media(max-width:1120px){.strip{grid-template-columns:repeat(6,1fr)}}
+@media(max-width:620px){.strip{grid-template-columns:repeat(3,1fr)}}
+
+.receipt{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:9px 12px;
+  border:1px solid var(--line);background:var(--raise);
+  font:500 10.5px/1 var(--mono);color:var(--faint)}
+.receipt em{font-style:normal;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.14em;font-size:9px}
+.receipt b{color:var(--cream);font-weight:500}
+.receipt .hi{color:var(--signal)}
+.rcpts{display:flex;flex-wrap:wrap;gap:8px;margin-top:clamp(18px,2.2vw,26px)}
+
+/* ── slab 3 — the ask ────────────────────────────────────────────── */
+.get .shell{padding-block:clamp(72px,10vw,150px)}
+.get .shout{margin-top:clamp(16px,2.2vw,24px);
+  font-size:clamp(4rem,13vw,11.5rem)}
+.get .lede{margin-top:clamp(18px,2.4vw,28px);max-width:52ch}
+.get .receipt{margin-top:clamp(24px,3vw,36px)}
+/* the spec grid: three labelled columns on shared hairlines — what it
+   needs, the 16 GB story, what it was proven on. Chartreuse only where
+   Pixal earns it. */
+.spec{margin-top:clamp(24px,3vw,36px);display:grid;
+  grid-template-columns:repeat(3,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line)}
+.spec-col{background:var(--ink);padding:18px 20px}
+.spec-col em{display:block;font:500 10px/1 var(--mono);letter-spacing:.2em;
+  text-transform:uppercase;color:var(--dim);font-style:normal;margin-bottom:14px}
+.spec-col ul{list-style:none;margin:0;padding:0;display:flex;
+  flex-direction:column;gap:11px}
+.spec-col li b{display:block;font:500 13px/1.4 var(--sans);color:var(--cream)}
+.spec-col li span{display:block;margin-top:2px;font-size:11.5px;line-height:1.5;
+  color:var(--dim)}
+.spec-col li.hi b{color:var(--signal)}
+.spec-col li.brains{display:flex;align-items:center;gap:16px;margin-top:2px}
+.spec-col .brains i{display:inline-flex;align-items:center;gap:7px;
+  font:500 11px/1 var(--mono);letter-spacing:.05em;color:var(--cream);
+  font-style:normal;white-space:nowrap}
+.spec-col .brains img{width:13px;height:13px;display:block;filter:invert(.92)}
+@media(max-width:860px){.spec{grid-template-columns:1fr}}
+
+/* ── the FAQ ──────────────────────────────────────────────────────
+   The objections people actually raise before downloading a
+   stranger's installer, answered in the product's own words. Same
+   hairline grid as the spec block above, so the page keeps one
+   system rather than inventing a second card style. */
+.faq{border-bottom:1px solid var(--line)}
+.faq .shell{padding-block:clamp(64px,8.5vw,132px)}
+.faq .shout{margin-top:clamp(16px,2.2vw,24px)}
+.faq .lede{margin-top:clamp(18px,2.4vw,26px);max-width:56ch}
+.qa{margin-top:clamp(30px,4vw,54px);display:grid;
+  grid-template-columns:repeat(2,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line)}
+.qa-i{background:var(--ink);padding:22px 24px 24px}
+.qa-i h3{margin:0;font:500 14px/1.45 var(--sans);color:var(--cream)}
+.qa-i p{margin:9px 0 0;font-size:13px;line-height:1.62;color:var(--dim)}
+.qa-i b{color:var(--cream);font-weight:500}
+.qa-i .hi{color:var(--signal);font-weight:500}
+.qa-i code{font:500 12px/1 var(--mono);color:var(--cream);
+  background:var(--raise);padding:2px 5px;border-radius:4px;
+  white-space:nowrap}
+.qa-i a{color:var(--cream);text-decoration:none;border-bottom:1px solid var(--line-2)}
+.qa-i a:hover{border-bottom-color:var(--signal)}
+.qa-more{margin-top:clamp(18px,2.4vw,28px);font-size:13px;line-height:1.62;
+  color:var(--dim)}
+.qa-more a{color:var(--cream);text-decoration:none;
+  border-bottom:1px solid var(--line-2)}
+.qa-more a:hover{border-bottom-color:var(--signal)}
+@media(max-width:860px){.qa{grid-template-columns:1fr}}
+
+/* ── the neon band footer ─────────────────────────────────────────
+   Dark ink on the signal chartreuse, carried over from the first site:
+   the credits, the reference machine, and the mark you can spin. */
+.foot{background:var(--signal);color:#111401}
+.foot .shell{display:grid;grid-template-columns:auto 1fr;gap:10px 34px;
+  align-items:center;padding-block:34px}
+.bf-mark{width:92px;height:92px;grid-row:1/span 2;cursor:grab;touch-action:none}
+.bf-mark.dragging{cursor:grabbing}
+.bf-mark canvas{display:block;width:100%;height:100%}
+.built{display:flex;align-items:center;gap:8px 22px;flex-wrap:wrap}
+.built .t{font:500 10px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+  color:rgba(17,20,1,.55);margin-right:4px}
+.built ul{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap;
+  list-style:none;margin:0;padding:0}
+.built li{display:inline-flex;align-items:center;gap:7px;
+  font:500 12.5px/1 var(--mono);letter-spacing:.04em;color:rgba(17,20,1,.78)}
+.built li img{width:17px;height:17px;display:block}
+.built li img.mark{width:auto;height:15px}
+.built li img.wordmark{width:auto;height:19px}
+.built li svg{height:13px;width:auto;display:block}
+.built li b{font-weight:500;color:#111401}
+/* the test bench plate sits under NEEDS with a tighter top margin - the two
+   read as one fact pair: what it needs, what it was proven on */
+.get .receipt.bench{margin-top:10px}
+.bf-legal{display:flex;justify-content:space-between;gap:14px 24px;flex-wrap:wrap;
+  font:500 10.5px/1.7 var(--mono);letter-spacing:.11em;text-transform:uppercase;
+  color:rgba(17,20,1,.55)}
+.bf-legal a{color:#111401;text-decoration:none;border-bottom:1px solid rgba(17,20,1,.35)}
+.bf-legal a:hover{border-bottom-color:#111401}
+@media(max-width:720px){.foot .shell{grid-template-columns:1fr}
+  .bf-mark{grid-row:auto}}
+/* ── slab — the product, played back ──────────────────────────────
+   A scroll-locked replay of one session. Six beats on breadcrumbs:
+   launch (the app's real loading screen, ComfyBoot.jsx 1:1, with the
+   product's own 3D mark turning) → engine room (the console fakes a
+   real startup on its own clock) → the ask → the render → the edit →
+   animate. Windows mined token-for-token from design-tokens.js (DARK),
+   NavRail/Chat/JobCard/Composer.jsx and comfy_tui.py. Site law outside
+   the windows, app tokens inside. With JS off, reduced motion or <900px
+   the section stands still at the story's final frame — .pw-run (set by
+   JS) is what buys the 640vh runway and the sticky pin. */
+.product{border-bottom:1px solid var(--line);overflow-x:clip}
+.pw-scroller{position:relative}
+.product.pw-run .pw-scroller{height:640vh}
+.product.pw-run .pw-pin{position:sticky;top:0;height:100vh;overflow:clip}
+.product .shell{max-width:min(1720px,96vw);height:100%;box-sizing:border-box;
+  display:flex;flex-direction:column;padding-block:clamp(14px,2vh,28px)}
+.product:not(.pw-run) .shell{height:auto}
+/* the six step headlines, stacked; JS crossfades them. With JS off only
+   the last one shows — the story's closing caption. */
+.pw-heads{position:relative;margin-top:clamp(8px,1.2vh,14px);min-height:78px}
+.pw-h{position:absolute;inset:0;opacity:0;pointer-events:none}
+.pw-h:last-child{position:relative;opacity:1}
+.product.pw-run .pw-h:last-child{position:absolute;opacity:0}
+.pw-h h3{margin:0;font-family:var(--display);font-weight:700;
+  text-transform:uppercase;letter-spacing:.01em;
+  font-size:clamp(19px,2.5vw,30px);line-height:1.08;color:var(--cream)}
+.pw-h p{margin:7px 0 0;font-size:13.5px;line-height:1.55;color:var(--dim);max-width:74ch}
+.pw-h b{color:var(--cream);font-weight:600}
+.pw-mlede{display:none;margin:14px 0 0;font-size:13.5px;line-height:1.65;
+  color:var(--dim);max-width:60ch}
+/* the progress rail: one hairline per beat, filling left to right with
+   the signal as that beat plays. No numbers, no ticks, no labels - the
+   headline directly above already names the beat, and printing the same
+   fact twice is what made the old rail read busy. The <i> and <span>
+   stay in the DOM, hidden: the scrub loop reads their text. Track is
+   line-2, not line - at 2px on this ink, --line is invisible and the
+   six-segment structure has to be legible before it fills. */
+.pw-crumbs{list-style:none;display:flex;align-items:center;
+  gap:clamp(5px,.55vw,9px);margin:clamp(14px,2.2vh,24px) 0 0;padding:0}
+.pw-crumbs li{flex:1 1 0;min-width:0;height:2px;border-radius:1px;--f:0;
+  background:linear-gradient(to right,
+    var(--signal) calc(var(--f)*100%),var(--line-2) 0)}
+.pw-crumbs li i,.pw-crumbs li span{display:none}
+
+/* the 3D stage: active window big front-left, the other small at the
+   right, rotated away and pushed back in Z — JS scrubs the poses so they
+   genuinely pass each other in depth mid-swap. Bleed is clipped by the
+   slab (.product overflow-x), NOT here: overflow on the stage would
+   flatten its 3D context. */
+.pw-stage{position:relative;min-width:0;flex:1;min-height:320px;
+  perspective:1700px;transform-style:preserve-3d}
+.pw-win{position:absolute;top:50%;left:0;width:74%;
+  border:1px solid var(--line);background:#0B0D0F;
+  border-radius:12px;overflow:hidden;
+  transform-origin:center center;will-change:transform}
+/* defaults = the story's final frame: the console has signed off and the
+   app owns the whole stage. Run mode drives every one of these inline. */
+.pw-app{width:100%;height:100%;min-height:0;transform:translate3d(0,-50%,0)}
+.pw-tui{max-height:100%;opacity:0;visibility:hidden;
+  transform:translate3d(61%,-50%,-300px) rotateY(-16deg) scale(.62)}
+.pw-tui .pw-con{overflow:hidden}
+@media(max-height:840px){.pw-term{font-size:9.5px}}
+@media(max-height:700px){.pw-term{font-size:8.5px}}
+@media(max-width:899px){
+  .pw-stage{height:auto;flex:none;perspective:none;transform-style:flat;
+    display:flex;flex-direction:column;gap:18px}
+  .pw-win{position:relative;top:auto;left:auto;width:100% !important;transform:none !important}
+  .pw-app{height:auto;order:1}
+  .pw-tui{order:2;max-height:none;opacity:1 !important;visibility:visible !important}
+  .pw-heads{display:none}
+  .pw-crumbs{display:none}
+  .pw-mlede{display:block}
+}
+/* ── the caption column ───────────────────────────────────────────
+   From 1180px up the writing sits BESIDE the stage instead of on top
+   of it. Stacked, the eyebrow, headline, paragraph and crumb rail
+   spent ~190px of a 100vh pin before the windows got a single pixel,
+   and the app window wore the loss: its composer ended up a quarter
+   of the frame. Beside, the windows take the pin's full height, and
+   the step rail reads better vertically anyway. Below 1180px nothing
+   changes - it stacks exactly as it did. */
+@media(min-width:1180px){
+  .product .shell{flex-direction:row;align-items:stretch;
+    gap:clamp(28px,3.4vw,64px)}
+  .pw-aside{flex:0 0 clamp(272px,23vw,368px);min-width:0;display:flex;
+    flex-direction:column;justify-content:center;
+    padding-block:clamp(10px,2vh,26px)}
+  /* the six captions stack in ONE grid cell instead of on absolute
+     inset:0, so the block is exactly as tall as its tallest beat and
+     the rail sits under the text rather than under a guessed height. */
+  .pw-heads{margin-top:clamp(14px,2vh,22px);min-height:0;
+    display:grid;align-items:center}
+  .pw-h,.product.pw-run .pw-h:last-child{position:relative;inset:auto;
+    grid-area:1/1}
+  .pw-h h3{font-size:clamp(21px,1.75vw,32px)}
+  .pw-h p{max-width:none}
+  .pw-stage{flex:1 1 auto;min-height:0}
+}
+
+/* ── the app's own loading screen (ComfyBoot.jsx, 1:1): block mark, the
+   "Starting ComfyUI" line, a 2px calibrated bar that never claims done
+   (CEILING .94), and the stage note + honest seconds under it. Hidden
+   entirely outside run mode — the static final frame is a booted app. */
+.pw-boot{display:none;position:absolute;inset:0;z-index:6;
+  align-items:center;justify-content:center;padding:20px;
+  background:var(--bg0)}
+.product.pw-run .pw-boot{display:flex}
+.pw-bwrap{display:flex;flex-direction:column;align-items:center;gap:16px;
+  width:min(340px,88%);position:relative;z-index:1}
+.pw-blogo{width:132px;height:132px;position:relative}
+.pw-blogo svg,.pw-blogo canvas{display:block;width:100%;height:100%}
+.pw-blogo canvas{position:absolute;inset:0}
+.pw-btitle{font-size:14px;font-weight:600;color:var(--text);text-align:center}
+.pw-bbarwrap{width:100%}
+.pw-bbar{position:relative;height:2px;width:100%;border-radius:999px;
+  background:var(--bg3);overflow:hidden}
+.pw-bfill{height:100%;width:0;border-radius:999px;background:var(--accent)}
+.pw-bnote{display:flex;align-items:baseline;gap:8px;
+  justify-content:space-between;margin-top:8px}
+.pw-bnote span:first-child{font-size:11px;color:var(--textTer);line-height:1.5}
+.pw-btime{font:300 9px/1.5 ui-monospace,Consolas,monospace;color:var(--textMut);
+  white-space:nowrap}
+
+/* run-mode chrome inside the chat: the typing caret, the lit send button,
+   the glowing action chip, and the video card's frame */
+.pw-caret{display:inline-block;width:7px;height:13px;margin-left:2px;
+  background:var(--accent);vertical-align:-2px;opacity:0}
+.pw-composer.pw-typing .pw-caret{opacity:1;animation:pw-blink 1.06s steps(1) infinite}
+.pw-composer.pw-typing .pw-ta{color:var(--text)}
+@keyframes pw-blink{50%{opacity:0}}
+.pw-send.hot{background:var(--accent);color:#111401}
+.pw-act.pw-glow{color:#111401;background:var(--accent);border-color:var(--accent)}
+/* the clip invites a click: H3 bakes its audio into the file, and the
+   lightbox is where it gets to be heard */
+.pw-cclick{position:relative}
+.pw-cclick video{cursor:pointer}
+.pw-vhint{position:absolute;right:16px;bottom:16px;pointer-events:none;
+  font:500 10px/1 ui-monospace,Consolas,monospace;letter-spacing:.08em;
+  text-transform:uppercase;color:#111401;background:var(--accent);
+  padding:6px 9px;border-radius:999px}
+.pw-light{position:fixed;inset:0;z-index:120;display:flex;align-items:center;
+  justify-content:center;background:rgba(4,5,2,.9);padding:4vmin}
+.pw-light[hidden]{display:none}
+.pw-light video{max-width:min(92vw,880px);max-height:88vh;
+  border:1px solid var(--line);border-radius:12px;background:#000}
+.pw-light-x{position:absolute;top:16px;right:20px;width:40px;height:40px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  font:500 15px/1 var(--mono);color:var(--cream);background:none;
+  border:1px solid var(--line);border-radius:999px}
+.pw-light-x:hover{color:#111401;background:var(--signal);border-color:var(--signal)}
+
+/* ══ inside the chat window: the app's DARK token set verbatim
+   (design-tokens.js DARK → Chat.jsx applyThemeCss) ══ */
+.pw-appwin{
+  --bg0:#0B0D0F;--bg1:#101316;--bg2:#15181C;--bg3:#1D2126;
+  --text:#EAEDEF;--textSec:rgba(234,237,239,0.65);--textTer:rgba(234,237,239,0.38);
+  --border:rgba(234,237,239,0.06);
+  --accent:#D6F32F;--accentMut:rgba(214,243,47,0.09);--accentStr:rgba(214,243,47,0.22);
+  --surface:rgba(16,19,22,0.72);
+  position:relative;overflow:hidden;display:flex;flex-direction:row;height:100%;
+  background:var(--bg0);color:var(--text);text-align:left;
+  font-family:Geist,-apple-system,BlinkMacSystemFont,sans-serif;
+  font-size:13px;line-height:1.5}
+/* the desk-lamp glow (.px-lamp, Chat.jsx) — fixed→absolute, same gradient */
+.pw-lamp{position:absolute;top:-26%;left:50%;transform:translateX(-50%);
+  width:130%;height:78%;pointer-events:none;z-index:0;
+  background:radial-gradient(50% 58% at 50% 0%,rgba(214,243,47,0.10) 0%,
+    rgba(214,243,47,0.04) 36%,rgba(214,243,47,0) 70%)}
+/* static stand-in for the cursor-reactive PhotonField canvas: same rgb
+   triplet, same 32px grid, mid-breath alpha */
+.pw-photon{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(rgba(238,241,235,0.05) 1.3px,transparent 1.3px);
+  background-size:32px 32px}
+/* NavRail.jsx: 76px column, 48px round doors, 24px light icons, 7px dot */
+.pw-rail{position:relative;z-index:4;width:76px;flex-shrink:0;display:flex;
+  flex-direction:column;align-items:center;padding:16px 0;gap:10px}
+.pw-logo{display:block;width:54px;height:54px}
+.pw-rgap{height:8px}
+.pw-rbtn{display:inline-flex;align-items:center;justify-content:center;
+  width:48px;height:48px;border-radius:999px;color:var(--textTer)}
+.pw-rbtn svg{display:block}
+/* the lane you are in, exactly as NavRail.jsx paints it: bg3 pill, accent
+   glyph, and Phosphor's DUOTONE weight rather than light - the 0.2-opacity
+   backing shape is what carries "selected" at 24px, where a colour change
+   alone reads as a hover. Path data lifted from @phosphor-icons/react's
+   own Chats defs so the silhouette is the shipped one, not a lookalike. */
+.pw-rbtn.on{background:var(--bg3);color:var(--accent)}
+.pw-rsp{flex:1}
+.pw-dot{display:flex;align-items:center;justify-content:center;width:24px;
+  height:24px;margin-top:6px}
+.pw-dot i{width:7px;height:7px;border-radius:999px;background:#7BB495}
+/* the content surface (Chat.jsx): margin 12 12 12 0, translucent, radius 32 */
+.pw-surface{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;
+  position:relative;z-index:1;margin:12px 12px 12px 0;background:var(--surface);
+  border:1px solid var(--border);border-radius:32px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.30)}
+.pw-lane{position:relative;z-index:2;padding:20px 24px;flex:1;min-height:0;
+  display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+.pw-col{max-width:880px;margin:0 auto;width:100%;display:flex;
+  flex-direction:column;gap:24px}
+.pw-user{display:flex;justify-content:flex-end}
+.pw-ub{max-width:82%;padding:10px 16px;border:1px solid var(--border);
+  border-radius:8px;font-size:13px;color:var(--text);line-height:1.55}
+/* JobCard.jsx: capped at min(540px,92%), bg1, radius dialog 12. The card
+   hugs its media: the frame shows WHOLE at its real aspect (never cropped
+   to a band), height-capped so a portrait card still fits the lane. */
+.pw-card{width:fit-content;min-width:min(340px,80%);max-width:min(620px,92%);
+  background:var(--bg1);
+  border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.pw-chead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:8px 12px;border-bottom:1px solid var(--border)}
+.pw-chipt{font-size:10px;color:var(--accent);background:var(--accentMut);
+  border:1px solid var(--accentStr);border-radius:4px;padding:2px 7px}
+.pw-chipm{font-size:10px;color:var(--textSec);background:var(--bg3);
+  border:1px solid var(--border);border-radius:4px;padding:2px 7px}
+.pw-seed{display:inline-flex;align-items:center;gap:3px;
+  font:500 10px/1.5 ui-monospace,Consolas,monospace;color:var(--textTer)}
+.pw-slock{display:inline-flex;padding:2px}
+.pw-slock svg{display:block}
+.pw-scene{padding:8px 12px 4px;font-size:12px;color:var(--textSec)}
+.pw-cimg{display:grid;gap:6px;padding:8px}
+.pw-cimg img,.pw-cimg video{width:auto;height:auto;max-width:100%;
+  max-height:min(44vh,560px);object-fit:contain;
+  border-radius:8px;display:block;background:var(--bg0)}
+@media(max-width:899px){.pw-cimg img,.pw-cimg video{max-height:none;width:100%}}
+.pw-cfoot{display:flex;flex-direction:column;gap:8px;padding:8px 12px 10px}
+.pw-meta{font-size:11px;color:var(--textTer)}
+.pw-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pw-act{display:inline-flex;align-items:center;gap:4px;height:26px;
+  padding:0 10px;font-size:11px;color:var(--textSec);
+  border:1px solid var(--border);border-radius:999px;background:var(--bg2)}
+.pw-act svg{display:block}
+/* the composer zone (Chat.jsx): status line, then the shell */
+.pw-compzone{position:relative;z-index:3;flex-shrink:0;padding:12px 24px 20px}
+.pw-cwrap{max-width:926px;margin:0 auto}
+.pw-cinner{max-width:880px;margin:0 auto}
+.pw-status{display:flex;align-items:center;gap:6px;padding:0 12px 8px;
+  color:var(--textTer);font-size:11px}
+.pw-sdot{width:7px;height:7px;border-radius:999px;background:#7BB495;flex-shrink:0}
+.pw-gpu{margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+  font:500 10px/1.5 ui-monospace,Consolas,monospace;color:var(--textTer);
+  white-space:nowrap}
+.pw-gpu svg{opacity:.4;flex-shrink:0}
+.pw-rescan{display:inline-flex;align-items:center;padding:2px;
+  color:var(--textTer);margin-left:4px}
+.pw-rescan svg{display:block}
+/* the composer shell: radius 24, pad 12, corner children at control 12 */
+.pw-composer{position:relative;display:flex;flex-direction:column;gap:8px;
+  background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:24px;padding:12px}
+.pw-ta{width:100%;box-sizing:border-box;color:var(--textTer);font-size:14px;
+  line-height:1.5;padding:4px 48px 0 10px;min-height:46px}
+.pw-sparkle{position:absolute;top:8px;right:12px;z-index:5;width:40px;
+  height:30px;display:inline-flex;align-items:center;justify-content:center;
+  color:var(--accent);border-radius:999px}
+.pw-sparkle svg{display:block}
+.pw-prow{display:flex;align-items:flex-end;gap:8px}
+.pw-pills{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pw-pill{display:inline-flex;align-items:center;gap:6px;height:28px;
+  padding:0 10px;font-size:12px;color:var(--textSec);border-radius:12px;
+  white-space:nowrap}
+.pw-pill.on{color:var(--accent);background:var(--accentMut)}
+.pw-pill svg{display:block}
+.pw-pill .cr{display:inline-flex;opacity:.6}
+.pw-round{flex:none;width:28px;height:28px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--textSec)}
+.pw-round svg{display:block}
+.pw-send{flex-shrink:0;width:40px;height:40px;border-radius:999px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--bg3);color:var(--textTer)}
+.pw-send svg{display:block}
+/* the app's own narrow layout (<720px viewport flips the rail to a top
+   bar — NavRail.jsx horizontal), triggered at the mock's phone widths */
+@media(max-width:559px){
+  .pw-appwin{flex-direction:column}
+  .pw-rail{width:100%;flex-direction:row;padding:8px 12px 4px;gap:6px}
+  .pw-logo{width:40px;height:40px}
+  .pw-logo svg{width:40px;height:40px}
+  .pw-rgap{flex:1;height:auto}
+  .pw-rsp{display:none}
+  .pw-dot{margin:0 0 0 4px}
+  .pw-surface{margin:0 8px 8px}
+  .pw-lane{padding:20px 12px}
+  .pw-compzone{padding:8px 10px 12px}
+  .pw-gpu .gbig{display:none}
+  .pw-ta{font-size:16px;min-height:52px}
+}
+
+/* ══ inside the console window: comfy_tui.py's palette (rgb tuples) ══ */
+.pw-con{background:#0C0C0C;color:#EAEDEF;text-align:left;
+  font-family:JetBrains,ui-monospace,Consolas,monospace}
+/* the console's real title, set by SetConsoleTitleW("Pixal · ComfyUI") */
+.pw-tbar{height:30px;background:#0B0D0F;display:flex;align-items:stretch;
+  border-bottom:1px solid rgba(234,237,239,0.06)}
+.pw-ttab{display:inline-flex;align-items:center;margin-left:8px;padding:0 14px;
+  background:#0C0C0C;font-size:11px;color:#EAEDEF;letter-spacing:.02em}
+.pw-tbtns{margin-left:auto;display:inline-flex;align-items:center;gap:18px;
+  padding:0 14px;color:#767E86}
+.pw-tbtns svg{display:block;width:10px;height:10px}
+.pw-term{margin:0;padding:10px 12px 12px;font-size:11px;line-height:1.15;
+  font-family:CascadiaTerm,"Cascadia Mono",Consolas,ui-monospace,monospace;
+  white-space:pre;overflow:hidden}
+.pw-term .A{color:#D6F32F}/* ACCENT 214,243,47   */ .pw-term .O{color:#7BB495}/* OK 123,180,149 */
+.pw-term .W{color:#FBBF24}/* WARN 251,191,36    */ .pw-term .B{color:#E0576B}/* BAD 224,87,107 */
+.pw-term .D{color:#767E86}/* DIM 118,126,134    */ .pw-term .T{color:#EAEDEF}/* TEXT 234,237,239 */
+.pw-term .M{color:#969EA6}/* MUTE 150,158,166   */
+/* console font size is the terminal's, not the product's — small screens
+   shrink the face to keep all 107 columns in view; layout and colours stay
+   exact. 62.7em = 107 ch of Cascadia Mono's 0.58594em advance, minus the
+   pre's pad. The face must be the terminal's: Cascadia draws box-drawing
+   glyphs wider and taller than their cell so they always connect. */
+@media(max-width:899px){.pw-term{font-size:min(11px,max(4.6px,calc((90vw - 24px)/62.7)))}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="shell">
+    <span class="lk" id="lockup"></span>
+    <span class="t">Pre-release · Windows</span>
+  </div>
+</header>
+
+<section class="slab">
+  <div class="shell">
+    <div>
+      <span class="eyebrow">Local · your GPU · your weights · <b>$0.00 a picture</b></span>
+      <h1 class="shout rise">Every<br>model<br>you own.<br><em>One chat.</em></h1>
+      <p class="lede rise">Pixal sits beside the ComfyUI you already run and drives it —
+        every checkpoint, LoRA, video model and upscaler on your disk. You describe it,
+        you correct it, it re-renders. <b>Nothing to re-wire, nothing to re-download.</b></p>
+      <div class="ctas rise">
+        <!-- TODO: swap for the real release URL at first tag. -->
+        <a class="btn btn-1" href="dl/Pixal-Setup-1.0.6b-win-x64.exe" download><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 0h7.55v7.55H0zM8.45 0H16v7.55H8.45zM0 8.45h7.55V16H0zM8.45 8.45H16V16H8.45z"/></svg>Download for Windows <i aria-hidden="true">→</i></a>
+        <a class="btn btn-2" href="#proof">See it work</a>
+      </div>
+    </div>
+    <figure class="rise">
+      <span class="vwrap"><img src="assets/get-cube.webp"
+           srcset="assets/get-cube-640.webp 640w, assets/get-cube.webp 1080w"
+           sizes="(max-width:860px) 90vw, 38vw"
+           width="1080" height="1920"
+           alt="A girl in a chartreuse beanie reaches up to a green glass cube assembling itself from a cloud of glass pixels against a clear blue sky.">
+      <video class="hoverclip" src="assets/hero-cube.mp4" muted loop playsinline preload="metadata"
+             aria-hidden="true"></video></span>
+      <figcaption><i class="ci" style="--m:url(assets/krea.png)" role="img" aria-label="Krea"></i>krea 2 turbo ·
+        seed 35735140 · rendered by pixal, directed in chat —
+        <i class="ci" style="--m:url(assets/minimax.svg)" role="img" aria-label="MiniMax"></i>minimax h3 on hover
+        <button class="copyp" type="button" data-p="Zario, clad in a charcoal-grey utility jacket and chartreuse-lime beanie, leaps fist-first toward a glowing chartreuse-green cube suspended high above him—its faces perfectly blank. Tiny glass pixels explode from the impact point as lime light bursts outward; he's frozen mid-air, dynamic tension captured. Bright airy daylight floods the scene: crisp blue sky with sun flare, Kodak Ektar saturation making every hue pop vividly against razor-sharp clarity. Tall portrait framing places him low, cube high and suspended in air—no murk, no haze, just pure motion and color. This is not Mario—it's Zario, raw and electric. She is fully dressed in the clothing described above." aria-label="Copy the prompt" title="Copy the prompt"><svg class="c1" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8"/><path d="M9.5 4.5v-3h-8v8h3"/></svg><svg class="c2" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 7.5l3.2 3.2 5.8-7.4"/></svg></button></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="proof" id="proof">
+  <div class="shell">
+    <span class="eyebrow">One line in — <b>the caption is the recipe</b></span>
+    <h2 class="shout rise">Every one<br>started as<br><em>a sentence.</em></h2>
+    <p class="lede rise">The caption under each is the recipe Pixal ran to get it — family, sampler,
+      steps, canvas. <b>All of it is inspectable, and all of it is overridable.</b> It's in front of
+      you when you want it and out of the way when you're working.</p>
+
+    <div class="gal rise">
+      <figure><img src="assets/k12_dinner.webp" alt="A candlelit 1970s dinner party where every guest wears the same identical face mask, seated around a long dark table." loading="lazy"><figcaption><b>Krea 2</b> · realism · 8 steps · cfg 1.0 · 1056×1888</figcaption></figure>
+      <figure><img src="assets/k10_barber.webp" alt="A barber cutting hair in the middle of a wheat field under storm clouds, one chair and one mirror standing in the golden stalks." loading="lazy"><figcaption><b>Krea 2</b> · realism · 8 steps · cfg 1.0 · 1056×1888</figcaption></figure>
+      <figure><img src="assets/k14_foxsuit.webp" alt="A man in a full fox suit sitting at a kitchen table filling in tax forms under a lamp, a suburban street through the window behind him." loading="lazy"><figcaption><b>Krea 2</b> · realism · 1:1 · 1408×1408</figcaption></figure>
+      <figure><img src="assets/a8_kitsune.webp" alt="Anime illustration of a nine-tailed fox spirit in a crimson kimono perched on a shrine roof above a village at dusk." loading="lazy"><figcaption><b>Anima</b> · er_sde · 30 steps · cfg 4.0 · 896×1152</figcaption></figure>
+      <figure><span class="vwrap"><img src="assets/k17_ninja.webp" alt="A 19th-century Japanese ninja kneeling in prayer on a moss-covered stone step beneath a cherry blossom tree, hands pressed together, low golden light raking through the petals behind her." loading="lazy"><video class="hoverclip" src="assets/ninja-h3.mp4" muted loop playsinline preload="metadata" aria-hidden="true"></video></span><figcaption><b>Krea 2</b> · realism · gauss-legendre_2s · 5 steps · 1232×1648 · <i class="ci" style="--m:url(assets/minimax.svg)" role="img" aria-label="MiniMax"></i>h3 on hover</figcaption></figure>
+      <figure><img src="assets/g5_fantasy.webp" alt="A painted fantasy scene: a warrior on a rock above the clouds facing a serpent under two moons." loading="lazy"><figcaption><b>Krea 2</b> · fantasy style · 1056×1888</figcaption></figure>
+      <figure><img src="assets/a1_gashadokuro.webp" alt="Anime illustration of a colossal skeleton yokai stooping over a burning mountain village as villagers flee with lanterns." loading="lazy"><figcaption><b>Anima</b> · one sentence, six seconds · 1152×896</figcaption></figure>
+      <figure><img src="assets/k13_boxer.webp" alt="A heavyweight boxer under a single overhead bulb against a black background, taped fists raised, shot like a 1950s sports magazine cover." loading="lazy"><figcaption><b>Krea 2</b> · realism · 6.4 s · 1152×1728</figcaption></figure>
+      <figure><img src="assets/k16_sumo.webp" alt="A sumo wrestler in a neon-pink bathrobe striding deadpan across Shibuya crossing at dawn." loading="lazy"><figcaption><b>Krea 2</b> · realism · 6.5 s · 1056×1888</figcaption></figure>
+      <figure><img src="assets/a9_neon.webp" alt="Anime illustration of a magical girl hanging above a night crossing while a kaiju built from neon signage rears behind her, its limbs spelling RAMEN and OPEN." loading="lazy"><figcaption><b>Anima</b> · neon signage asked for by name · 896×1152</figcaption></figure>
+      <figure><img src="assets/a7_rover.webp" alt="Anime illustration, cel shaded: a blonde woman in a pink and black racing jacket and chunky boots sitting sideways in the open door of a parked SUV on a dry California hillside." loading="lazy"><figcaption><b>Krea 2</b> · Ultra Realism · gauss-legendre_2s · 5 steps · 2096×2800</figcaption></figure>
+      <figure><img src="assets/a3_kaiju.webp" alt="Anime illustration of a magical girl mid-transformation with a kaiju made of glowing neon tubing rearing behind her." loading="lazy"><figcaption><b>Anima</b> · 30 steps · cfg 4.0 · 896×1152</figcaption></figure>
+      <figure><img src="assets/a10_lantern.webp" alt="Anime illustration of a woman in red standing in a night garden strung with paper lanterns, shot from a low angle with amber bokeh behind her." loading="lazy"><figcaption><b>Anima</b> · aesthetic v1.1 · er_sde · 30 steps · 896×1152</figcaption></figure>
+      <figure><img src="assets/p2_dust.webp" alt="A woman in a long coat running for the open door of a pickup as a wall of ochre dust swallows the road behind her." loading="lazy"><figcaption><b>Krea 2</b> · 1978 Kodachrome direction · 1152×896</figcaption></figure>
+      <figure><img src="assets/k11_climber.webp" alt="A climber dangling from a rocky overhang at dusk, headlamp beam cutting through thick fog above a four-thousand-foot drop." loading="lazy"><figcaption><b>Krea 2</b> · realism · 6.8 s · 1056×1888</figcaption></figure>
+      <figure><span class="vwrap"><img src="assets/an_onyx-h3-poster.webp" alt="An anime girl in dark armour riding a sleek black mech named Onyx as it banks over canyon plains at twilight." loading="lazy"><video class="hoverclip" src="assets/an_onyx-h3.mp4" muted loop playsinline preload="metadata" aria-hidden="true"></video></span><figcaption><b>Krea 2</b> · his name is onyx · corrected into existence · 768×1344 · <i class="ci" style="--m:url(assets/minimax.svg)" role="img" aria-label="MiniMax"></i>h3 on hover</figcaption></figure>
+      <figure><img src="assets/k15_pose.webp" alt="An anime-styled figure in a red bodysuit and thigh boots in a three-quarter pose against a moonlit garden." loading="lazy"><figcaption><b>Krea 2</b> · realism · style LoRAs switched off · 1152×1728</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section class="product" id="product">
+  <div class="pw-scroller"><div class="pw-pin">
+  <div class="shell">
+    <div class="pw-aside">
+    <span class="eyebrow">One session, played back — <b>scroll runs it</b></span>
+
+    <div class="pw-heads" aria-live="polite">
+      <div class="pw-h" data-h="0">
+        <h3>Pixal starts your ComfyUI.</h3>
+        <p>Same launcher, same flags — wrapped, not replaced. The bar is calibrated to
+          <b>your machine's</b> last cold boot, so it never lies about progress.</p>
+      </div>
+      <div class="pw-h" data-h="1">
+        <h3>You can see it boot.</h3>
+        <p>Every phase timed, VRAM on a meter, an <b>errors-only</b> log. Close this
+          window and ComfyUI closes with it.</p>
+      </div>
+      <div class="pw-h" data-h="2">
+        <h3>You ask in a sentence.</h3>
+        <p>No graph, no nodes. Model, style, character and canvas ride along
+          as <b>pills</b> — touch them or don't.</p>
+      </div>
+      <div class="pw-h" data-h="3">
+        <h3>The card lands finished.</h3>
+        <p>What ran is on the frame — <b>model, seed, size</b> — and the next move
+          is one click.</p>
+      </div>
+      <div class="pw-h" data-h="4">
+        <h3>Correct it in words.</h3>
+        <p>"change her hair to platinum blonde" — same scene, one change.
+          Edits run a <b>dedicated image-edit model</b>, not a re-roll.</p>
+      </div>
+      <div class="pw-h" data-h="5">
+        <h3>Then ask for motion.</h3>
+        <p>Animate hands the frame to a <b>video model</b> — the clip lands in the
+          same chat, sound baked in. <b>Click it to hear it.</b></p>
+      </div>
+    </div>
+    <p class="pw-mlede">One session: Pixal boots your ComfyUI, you ask in a sentence,
+      the card lands finished — then you correct it in words and ask for motion.
+      Both windows below are coded 1:1 from the product's own source.</p>
+
+    <ol class="pw-crumbs" aria-hidden="true">
+      <li data-c="0"><i>01</i><span>launch</span></li>
+      <li data-c="1"><i>02</i><span>the console</span></li>
+      <li data-c="2"><i>03</i><span>the ask</span></li>
+      <li data-c="3"><i>04</i><span>the render</span></li>
+      <li data-c="4"><i>05</i><span>the edit</span></li>
+      <li data-c="5"><i>06</i><span>animate</span></li>
+    </ol>
+    </div>
+
+      <div class="pw-stage">
+        <svg class="pw-defs" width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="pw-i-chats" viewBox="0 0 256 256"><path d="M229.93,186.58A78,78,0,0,0,168.16,74.42,78,78,0,1,0,26.07,138.58L18.58,164A14,14,0,0,0,36,181.42l25.46-7.49a78,78,0,0,0,26.39,7.63,78,78,0,0,0,106.77,40.37L220,229.42A14,14,0,0,0,237.42,212ZM62,161.5a6.05,6.05,0,0,0-1.69.24l-27.77,8.17a2,2,0,0,1-2.48-2.48l8.17-27.77a6.05,6.05,0,0,0-.47-4.53,66,66,0,1,1,27.08,27.08A6,6,0,0,0,62,161.5Zm155.71,26.16,8.17,27.77a2,2,0,0,1-2.48,2.48l-27.77-8.17a6.06,6.06,0,0,0-4.53.47,66,66,0,0,1-90-28.4,77.92,77.92,0,0,0,71-94.68,66,66,0,0,1,46.07,96A6.05,6.05,0,0,0,217.74,187.66Z"/></symbol><symbol id="pw-i-chats-duo" viewBox="0 0 256 256"><path d="M224,96V224l-39.58-32H88a8,8,0,0,1-8-8V144h88a8,8,0,0,0,8-8V88h40A8,8,0,0,1,224,96Z" opacity="0.2"/><path d="M216,80H184V48a16,16,0,0,0-16-16H40A16,16,0,0,0,24,48V176a8,8,0,0,0,13,6.22L72,154V184a16,16,0,0,0,16,16h93.59L219,230.22a8,8,0,0,0,5,1.78,8,8,0,0,0,8-8V96A16,16,0,0,0,216,80ZM66.55,137.78,40,159.25V48H168v88H71.58A8,8,0,0,0,66.55,137.78ZM216,207.25l-26.55-21.47a8,8,0,0,0-5-1.78H88V152h80a16,16,0,0,0,16-16V96h32Z"/></symbol><symbol id="pw-i-images" viewBox="0 0 256 256"><path d="M216,42H72A14,14,0,0,0,58,56V74H40A14,14,0,0,0,26,88V200a14,14,0,0,0,14,14H184a14,14,0,0,0,14-14V182h18a14,14,0,0,0,14-14V56A14,14,0,0,0,216,42ZM70,56a2,2,0,0,1,2-2H216a2,2,0,0,1,2,2v67.57L204.53,110.1a14,14,0,0,0-19.8,0l-21.42,21.41L117.9,86.1a14,14,0,0,0-19.8,0L70,114.2ZM186,200a2,2,0,0,1-2,2H40a2,2,0,0,1-2-2V88a2,2,0,0,1,2-2H58v82a14,14,0,0,0,14,14H186Zm30-30H72a2,2,0,0,1-2-2V131.17l36.58-36.58a2,2,0,0,1,2.83,0l49.66,49.66a6,6,0,0,0,8.49,0l25.65-25.66a2,2,0,0,1,2.83,0l22,22V168A2,2,0,0,1,216,170ZM162,84a10,10,0,1,1,10,10A10,10,0,0,1,162,84Z"/></symbol><symbol id="pw-i-userplus" viewBox="0 0 256 256"><path d="M170,56a6,6,0,0,1,6-6h18V32a6,6,0,0,1,12,0V50h18a6,6,0,0,1,0,12H206V80a6,6,0,0,1-12,0V62H176A6,6,0,0,1,170,56Zm58.59,55A101.9,101.9,0,1,1,145,27.41a6,6,0,1,1-2,11.83A91.66,91.66,0,0,0,128,38,89.95,89.95,0,0,0,62.49,189.64a77.53,77.53,0,0,1,40-31.38,46,46,0,1,1,51,0,77.53,77.53,0,0,1,40,31.38A89.65,89.65,0,0,0,218,128a91.76,91.76,0,0,0-1.24-15,6,6,0,1,1,11.83-2ZM128,154a34,34,0,1,0-34-34A34,34,0,0,0,128,154Zm0,64A89.58,89.58,0,0,0,184.56,198a66,66,0,0,0-113.12,0A89.58,89.58,0,0,0,128,218Z"/></symbol><symbol id="pw-i-gear" viewBox="0 0 256 256"><path d="M128,82a46,46,0,1,0,46,46A46.06,46.06,0,0,0,128,82Zm0,80a34,34,0,1,1,34-34A34,34,0,0,1,128,162Zm108-54.4a6,6,0,0,0-2.92-4L202.64,86.22l-.42-.71L202.1,51.2A6,6,0,0,0,200,46.64a110.12,110.12,0,0,0-36.07-20.31,6,6,0,0,0-4.84.45L128.46,43.86h-1L96.91,26.76a6,6,0,0,0-4.86-.44A109.92,109.92,0,0,0,56,46.68a6,6,0,0,0-2.12,4.55l-.16,34.34c-.14.23-.28.47-.41.71L22.91,103.57A6,6,0,0,0,20,107.62a104.81,104.81,0,0,0,0,40.78,6,6,0,0,0,2.92,4l30.42,17.33.42.71.12,34.31A6,6,0,0,0,56,209.36a110.12,110.12,0,0,0,36.07,20.31,6,6,0,0,0,4.84-.45l30.61-17.08h1l30.56,17.1A6.09,6.09,0,0,0,162,230a5.83,5.83,0,0,0,1.93-.32,109.92,109.92,0,0,0,36-20.36,6,6,0,0,0,2.12-4.55l.16-34.34c.14-.23.28-.47.41-.71l30.42-17.29a6,6,0,0,0,2.92-4.05A104.81,104.81,0,0,0,236,107.6Zm-11.25,35.79L195.32,160.1a6.07,6.07,0,0,0-2.28,2.3c-.59,1-1.21,2.11-1.86,3.14a6,6,0,0,0-.91,3.16l-.16,33.21a98.15,98.15,0,0,1-27.52,15.53L133,200.88a6,6,0,0,0-2.93-.77h-.14c-1.24,0-2.5,0-3.74,0a6,6,0,0,0-3.07.76L93.45,217.43a98,98,0,0,1-27.56-15.49l-.12-33.17a6,6,0,0,0-.91-3.16c-.64-1-1.27-2.08-1.86-3.14a6,6,0,0,0-2.27-2.3L31.3,143.4a93,93,0,0,1,0-30.79L60.68,95.9A6.07,6.07,0,0,0,63,93.6c.59-1,1.21-2.11,1.86-3.14a6,6,0,0,0,.91-3.16l.16-33.21A98.15,98.15,0,0,1,93.41,38.56L123,55.12a5.81,5.81,0,0,0,3.07.76c1.24,0,2.5,0,3.74,0a6,6,0,0,0,3.07-.76l29.65-16.56a98,98,0,0,1,27.56,15.49l.12,33.17a6,6,0,0,0,.91,3.16c.64,1,1.27,2.08,1.86,3.14a6,6,0,0,0,2.27,2.3L224.7,112.6A93,93,0,0,1,224.73,143.39Z"/></symbol><symbol id="pw-i-monitor" viewBox="0 0 256 256"><path d="M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24H208a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40Zm8,136a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H208a8,8,0,0,1,8,8Zm-48,48a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,224Z"/></symbol><symbol id="pw-i-lightning" viewBox="0 0 256 256"><path d="M96,240l16-80L48,136,160,16,144,96l64,24Z" opacity="0.2"/><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"/></symbol><symbol id="pw-i-userdashed" viewBox="0 0 256 256"><path d="M96.26,37A8,8,0,0,1,102,27.29a104.11,104.11,0,0,1,52,0,8,8,0,0,1-2,15.75,8.15,8.15,0,0,1-2-.26,88,88,0,0,0-44,0A8,8,0,0,1,96.26,37ZM33.35,110a8,8,0,0,0,9.85-5.57,87.88,87.88,0,0,1,22-38.09A8,8,0,0,0,53.79,55.14a104,104,0,0,0-26,45A8,8,0,0,0,33.35,110ZM150,213.22a88,88,0,0,1-44,0,8,8,0,0,0-4,15.49,104.11,104.11,0,0,0,52,0,8,8,0,0,0-4-15.49Zm62.8-108.77a8,8,0,0,0,15.42-4.28,104,104,0,0,0-26-45,8,8,0,1,0-11.41,11.21A88.14,88.14,0,0,1,212.79,104.45Zm15.44,51.39a103.68,103.68,0,0,1-30.68,49.47A8,8,0,0,1,185.07,203a64,64,0,0,0-114.14,0,8,8,0,0,1-5.67,4.23,8.11,8.11,0,0,1-1.46.14,8,8,0,0,1-5.35-2.05,103.74,103.74,0,0,1-30.68-49.49,8,8,0,0,1,15.42-4.27,87.58,87.58,0,0,0,19,34.88,79.57,79.57,0,0,1,36.1-28.77,48,48,0,1,1,59.38,0,79.57,79.57,0,0,1,36.1,28.77,87.58,87.58,0,0,0,19-34.88,8,8,0,1,1,15.42,4.28ZM128,152a32,32,0,1,0-32-32A32,32,0,0,0,128,152Z"/></symbol><symbol id="pw-i-imgsquare" viewBox="0 0 256 256"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM48,48H208v77.38l-24.69-24.7a16,16,0,0,0-22.62,0L53.37,208H48ZM208,208H76l96-96,36,36v60ZM96,120A24,24,0,1,0,72,96,24,24,0,0,0,96,120Zm0-32a8,8,0,1,1-8,8A8,8,0,0,1,96,88Z"/></symbol><symbol id="pw-i-caret" viewBox="0 0 256 256"><path d="M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z"/></symbol><symbol id="pw-i-plus" viewBox="0 0 256 256"><path d="M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z"/></symbol><symbol id="pw-i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol><symbol id="pw-i-arrowup" viewBox="0 0 256 256"><path d="M208.49,120.49a12,12,0,0,1-17,0L140,69V216a12,12,0,0,1-24,0V69L64.49,120.49a12,12,0,0,1-17-17l72-72a12,12,0,0,1,17,0l72,72A12,12,0,0,1,208.49,120.49Z"/></symbol><symbol id="pw-i-film" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,88h80v80H40Zm96-16V56h32V72Zm-16,0H88V56h32Zm0,112v16H88V184Zm16,0h32v16H136Zm0-16V88h80v80Zm80-96H184V56h32ZM72,56V72H40V56ZM40,184H72v16H40Zm176,16H184V184h32v16Z"/></symbol><symbol id="pw-i-pencil" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></symbol><symbol id="pw-i-review" viewBox="0 0 256 256"><path d="M192,112a80,80,0,1,1-80-80A80,80,0,0,1,192,112Z" opacity="0.2"/><path d="M229.66,218.34,179.6,168.28a88.21,88.21,0,1,0-11.32,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol><symbol id="pw-i-upscale" viewBox="0 0 256 256"><path d="M216,48V96a8,8,0,0,1-16,0V67.31l-50.34,50.35a8,8,0,0,1-11.32-11.32L188.69,56H160a8,8,0,0,1,0-16h48A8,8,0,0,1,216,48ZM106.34,138.34,56,188.69V160a8,8,0,0,0-16,0v48a8,8,0,0,0,8,8H96a8,8,0,0,0,0-16H67.31l50.35-50.34a8,8,0,0,0-11.32-11.32Z"/></symbol><symbol id="pw-i-reroll" viewBox="0 0 256 256"><path d="M216,128a88,88,0,1,1-88-88A88,88,0,0,1,216,128Z" opacity="0.2"/><path d="M240,56v48a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16H211.4L184.81,71.64l-.25-.24a80,80,0,1,0-1.67,114.78,8,8,0,0,1,11,11.63A95.44,95.44,0,0,1,128,224h-1.32A96,96,0,1,1,195.75,60L224,85.8V56a8,8,0,1,1,16,0Z"/></symbol><symbol id="pw-i-iterate" viewBox="0 0 256 256"><path d="M80,56v96L32,104Z" opacity="0.2"/><path d="M128,96H88V56a8,8,0,0,0-13.66-5.66l-48,48a8,8,0,0,0,0,11.32l48,48A8,8,0,0,0,88,152V112h40a88.1,88.1,0,0,1,88,88,8,8,0,0,0,16,0A104.11,104.11,0,0,0,128,96ZM72,132.69,43.31,104,72,75.31Z"/></symbol><symbol id="pw-i-lockopen" viewBox="0 0 256 256"><path d="M208,80H96V56a32,32,0,0,1,32-32c15.37,0,29.2,11,32.16,25.59a8,8,0,0,0,15.68-3.18C171.32,24.15,151.2,8,128,8A48.05,48.05,0,0,0,80,56V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80Zm0,128H48V96H208V208Z"/></symbol><symbol id="pw-i-block" viewBox="0 0 100 100"><path fill="#E8E7E1" fill-rule="evenodd" d="M72.2 0 A5.5 5.5 0 0 1 77.7 5.5 L77.7 22.3 L94.5 22.3 A5.5 5.5 0 0 1 100 27.8 L100 72.2 A5.5 5.5 0 0 1 94.5 77.7 L77.7 77.7 L77.7 94.5 A5.5 5.5 0 0 1 72.2 100 L5.5 100 A5.5 5.5 0 0 1 0 94.5 L0 27.8 A5.5 5.5 0 0 1 5.5 22.3 L22.3 22.3 L22.3 5.5 A5.5 5.5 0 0 1 27.8 0 Z M22.3 22.3 L77.7 22.3 L77.7 77.7 L41 77.7 L22.3 100 Z"/><path fill="#D6F32F" d="M60.1 37.3 A3.5 3.5 0 0 1 63.6 40.8 L63.6 59.2 A3.5 3.5 0 0 1 60.1 62.7 L39.9 62.7 A3.5 3.5 0 0 1 36.4 59.2 L36.4 40.8 A3.5 3.5 0 0 1 39.9 37.3 Z"/></symbol><symbol id="pw-i-nvidia" viewBox="0 0 440 292"><path fill="var(--accent)" d="M164.109 86.8594V60.5625C166.656 60.3828 169.234 60.2422 171.859 60.1641C243.734 57.9063 290.93 121.953 290.93 121.953C290.93 121.953 239.984 192.719 185.359 192.719C178.138 192.751 170.96 191.603 164.109 189.32V109.594C192.102 112.977 197.703 125.336 214.555 153.391L251.984 121.828C251.984 121.828 224.641 85.9922 178.617 85.9922C173.772 86.014 168.931 86.3009 164.117 86.8516M164.117 0V39.2812C166.695 39.0703 169.281 38.9141 171.867 38.8203C271.867 35.4531 337 120.852 337 120.852C337 120.852 262.164 211.805 184.211 211.805C177.469 211.805 170.74 211.212 164.102 210.031V234.313C169.654 235.02 175.246 235.375 180.844 235.375C253.383 235.375 305.844 198.328 356.625 154.484C365.039 161.234 399.516 177.633 406.625 184.82C358.32 225.258 245.758 257.852 181.945 257.852C175.797 257.852 169.883 257.484 164.086 256.922V291.039H385.812C415.636 291.039 439.812 266.862 439.812 237.039V54.0063C439.812 24.1835 415.637 0.00713438 385.814 0.00628846L164.117 0ZM164.117 189.305V210.023C97.0078 198.078 78.3828 128.344 78.3828 128.344C78.3828 128.344 110.602 92.6484 164.109 86.875V109.594H164C135.93 106.227 114 132.445 114 132.445C114 132.445 126.297 176.609 164.125 189.32M44.9062 125.305C44.9062 125.305 84.6719 66.625 164.078 60.5625V39.2812C76.1562 46.3125 0 120.812 0 120.812C0 120.812 43.1328 245.531 164.109 256.937V234.281C75.3359 223.141 44.9062 125.305 44.9062 125.305Z"/></symbol></svg>
+        <div class="pw-win pw-tui">
+          <div class="pw-con" role="img"
+               aria-label="The Pixal ComfyUI console: pixel-block PIXAL banner, boot phase checklist, boot and VRAM meters, log tail, and the key legend.">
+            <div class="pw-tbar"><span class="pw-ttab">Pixal · ComfyUI</span><span class="pw-tbtns" aria-hidden="true"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M0 5h10"/></svg><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M0 0l10 10M10 0L0 10"/></svg></span></div>
+            <pre class="pw-term">
+  <span class="A">██████╗ ██╗██╗  ██╗ █████╗ ██╗     </span>
+  <span class="A">██╔══██╗██║╚██╗██╔╝██╔══██╗██║     </span>   <span class="M">e n g i n e   r o o m</span>
+  <span class="A">██████╔╝██║ ╚███╔╝ ███████║██║     </span>
+  <span class="A">██╔═══╝ ██║ ██╔██╗ ██╔══██║██║     </span>   <span class="D">run_nvidia_gpu_fast_fp16_accumulation.bat</span>
+  <span class="A">██║     ██║██╔╝ ██╗██║  ██║███████╗</span>
+  <span class="A">╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝</span>
+
+  <span class="D" id="pwInfo">ComfyUI 0.32.0 · NVIDIA GeForce RTX 5090 · torch 2.10.0+cu130 · sage attention</span>
+
+  <span class="D">╭─ boot ───────────────────────────────────────────────────────╮</span>
+  <span class="D">│</span><span class="pw-bi" id="pwR0"> <span class="O">✓</span><span class="M">  waking Python</span><span class="D">                                         </span><span class="M">7.1s</span></span><span class="D">│</span>
+  <span class="D">│</span><span class="pw-bi" id="pwR1"> <span class="O">✓</span><span class="M">  prestart hooks</span><span class="D">                                        </span><span class="M">4.5s</span></span><span class="D">│</span>
+  <span class="D">│</span><span class="pw-bi" id="pwR2"> <span class="O">✓</span><span class="M">  loading node packs</span><span class="D">                                   </span><span class="M">28.2s</span></span><span class="D">│</span>
+  <span class="D">│</span><span class="pw-bi" id="pwR3"> <span class="O">✓</span><span class="M">  final checks</span><span class="D">                                          </span><span class="M">1.9s</span></span><span class="D">│</span>
+  <span class="D">│</span><span class="pw-bi" id="pwR4"> <span class="O">✓</span><span class="M">  starting the web server</span><span class="D">                               </span><span class="M">0.6s</span></span><span class="D">│</span>
+  <span class="D">╰──────────────────────────────────────────────────────────────╯</span>
+
+  <span class="M">boot  </span><span class="A" id="pwMF">████████████████████████████████</span><span class="D" id="pwMR"></span><span class="T" id="pwMP">  100%</span><span class="D" id="pwMT">  42.3s of ~42.3s</span>
+  <span class="M">vram  </span><span class="A" id="pwVF">███████████████████</span><span class="D" id="pwVR">░░░░░░░░░░░░░</span><span class="T" id="pwVG">  19.2</span><span class="D" id="pwVX">/31.8 GB   11%  46°C</span>
+
+  <span class="pw-lg">  <span class="D">[rgthree-comfy] Loaded 48 magnificent nodes. 🎉</span></span>
+  <span class="pw-lg">  <span class="D">⚡ SeedVR2 optimizations check: SageAttention ✅ | Flash Attention ✅ | Triton ✅</span></span>
+  <span class="pw-lg">  <span class="D">🔧 Conv3d workaround active: PyTorch 2.10.0, cuDNN 91200 (fixing VAE 3x memory bug)</span></span>
+  <span class="pw-lg">  <span class="D">📊 Initial CUDA memory: 30.12GB free / 31.84GB total</span></span>
+  <span class="pw-lg">     <span class="D">🔧 torchaudio.save/load globally patched (scipy for WAV files, no TorchCodec)</span></span>
+  <span class="pw-lg">  <span class="D">To see the GUI go to: http://127.0.0.1:8188</span></span>
+
+  <span class="D">  </span><span class="W">1 warning</span>                                                  <span class="D">C:\Pixal\logs\comfy.log</span>
+    <span class="A">E</span><span class="D"> error log</span><span class="D">   </span><span class="A">L</span><span class="D"> full log</span><span class="D">   </span><span class="A">V</span><span class="D"> raw output</span><span class="D">   </span><span class="A">Q</span><span class="D"> quit - stops ComfyUI</span></pre>
+          </div>
+        </div>
+
+        <div class="pw-win pw-app">
+          <div class="pw-appwin" role="img"
+               aria-label="The Pixal app: icon rail, a chat where a render, an edit and an animation land as cards, and the message composer with its option pills.">
+            <div class="pw-lamp" aria-hidden="true"></div>
+            <div class="pw-photon" aria-hidden="true"></div>
+            <div class="pw-boot" aria-hidden="true">
+              <div class="pw-photon"></div>
+              <div class="pw-bwrap">
+                <span class="pw-blogo" id="pwMarkBoot"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#pw-i-block"/></svg></span>
+                <div class="pw-btitle">Starting ComfyUI</div>
+                <div class="pw-bbarwrap">
+                  <div class="pw-bbar"><div class="pw-bfill" id="pwBF"></div></div>
+                  <div class="pw-bnote"><span id="pwBN">booting ComfyUI</span><span class="pw-btime" id="pwBT"></span></div>
+                </div>
+              </div>
+            </div>
+            <nav class="pw-rail" aria-hidden="true">
+              <span class="pw-logo" id="pwMarkRail"><svg width="54" height="54" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-block"/></svg></span>
+              <span class="pw-rgap"></span>
+              <span class="pw-rbtn on"><svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-chats-duo"/></svg></span>
+              <span class="pw-rbtn"><svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-images"/></svg></span>
+              <span class="pw-rbtn"><svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-userplus"/></svg></span>
+              <span class="pw-rsp"></span>
+              <span class="pw-rbtn"><svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-gear"/></svg></span>
+              <span class="pw-dot"><i></i></span>
+            </nav>
+            <div class="pw-surface">
+              <div class="pw-lane">
+                <div class="pw-col">
+                  <div class="pw-user pw-m1"><div class="pw-ub">a ninja praying under a cherry blossom tree</div></div>
+                  <div class="pw-card pw-c1">
+                    <div class="pw-chead">
+                      <span class="pw-chipt">Realism</span>
+                      <span class="pw-chipm">Krea 2 Turbo</span>
+                      <span class="pw-seed">seed 896531744820458546 <span class="pw-slock"><svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-lockopen"/></svg></span></span>
+                    </div>
+                    <div class="pw-scene">A 19th-century Japanese ninja in a dark, layered kimono kneels on mossy stone steps beneath a cherry blossom tree, her hands clasped in prayer as she bows low.</div>
+                    <div class="pw-cimg"><img src="assets/k17_ninja.webp" width="1232" height="1648" loading="lazy"
+                      alt="A 19th-century Japanese ninja kneeling in prayer on mossy stone steps beneath a cherry blossom tree."></div>
+                    <div class="pw-cfoot">
+                      <div class="pw-meta">19.0s&nbsp;&nbsp;·&nbsp;&nbsp;1232 × 1648</div>
+                      <div class="pw-acts">
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-film"/></svg>animate</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-pencil"/></svg>edit</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-review"/></svg>review</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-upscale"/></svg>upscale</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-reroll"/></svg>re-roll</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-iterate"/></svg>iterate</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pw-user pw-m2"><div class="pw-ub">change her hair to platinum blonde</div></div>
+                  <div class="pw-card pw-c2">
+                    <div class="pw-chead">
+                      <span class="pw-chipm">Qwen Image Edit 2511</span>
+                      <span class="pw-seed">seed 3572153061202929487 <span class="pw-slock"><svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-lockopen"/></svg></span></span>
+                    </div>
+                    <div class="pw-scene">change her hair to platinum blonde</div>
+                    <div class="pw-cimg"><img src="assets/k17_ninja_blonde.webp" width="896" height="1200" loading="lazy"
+                      alt="The same ninja frame, her hair now platinum blonde."></div>
+                    <div class="pw-cfoot">
+                      <div class="pw-meta">17.4s&nbsp;&nbsp;·&nbsp;&nbsp;896 × 1200</div>
+                      <div class="pw-acts">
+                        <span class="pw-act pw-act-anim"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-film"/></svg>animate</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-pencil"/></svg>edit</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-review"/></svg>review</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-upscale"/></svg>upscale</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-reroll"/></svg>re-roll</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-iterate"/></svg>iterate</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pw-card pw-c3">
+                    <div class="pw-chead">
+                      <span class="pw-chipm">MiniMax H3 FL2VA</span>
+                    </div>
+                    <div class="pw-cimg pw-cclick"><video class="pw-cvid" src="assets/ninja-blonde-h3.mp4" width="768" height="1024"
+                      muted loop playsinline preload="metadata" aria-label="The platinum-blonde ninja frame in motion: a petal lands, she opens her eyes and speaks."></video>
+                      <span class="pw-vhint" aria-hidden="true">▶&nbsp;&nbsp;play with sound</span></div>
+                    <div class="pw-cfoot">
+                      <div class="pw-meta">180.2s&nbsp;&nbsp;·&nbsp;&nbsp;768 × 1024&nbsp;&nbsp;·&nbsp;&nbsp;5s with audio</div>
+                      <div class="pw-acts">
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-upscale"/></svg>upscale</span>
+                        <span class="pw-act"><svg width="10" height="10" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-reroll"/></svg>re-roll</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="pw-compzone">
+                <div class="pw-cwrap"><div class="pw-cinner">
+                  <div class="pw-status">
+                    <span class="pw-sdot"></span>connected to comfyui
+                    <span class="pw-gpu"><svg width="12" height="8" viewBox="0 0 440 292" aria-hidden="true"><use href="#pw-i-nvidia"/></svg><span class="gbig">RTX 5090 · </span><span id="pwGV">19.2/31.8 GB</span><span class="gbig"> VRAM · 41.2/63.8 GB RAM</span></span>
+                    <span class="pw-rescan"><svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-reroll"/></svg></span>
+                  </div>
+                  <div class="pw-composer">
+                    <span class="pw-sparkle"><svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-sparkle"/></svg></span>
+                    <div class="pw-ta"><span id="pwTA">Message pixal</span><span class="pw-caret" aria-hidden="true"></span></div>
+                    <div class="pw-prow">
+                      <div class="pw-pills">
+                        <span class="pw-round"><svg width="15" height="15" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-plus"/></svg></span>
+                        <span class="pw-pill"><svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-monitor"/></svg>model · let Pixal choose<span class="cr"><svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-caret"/></svg></span></span>
+                        <span class="pw-pill on"><svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-lightning"/></svg>style · realism<span class="cr"><svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-caret"/></svg></span></span>
+                        <span class="pw-pill"><svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-userdashed"/></svg>character<span class="cr"><svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-caret"/></svg></span></span>
+                        <span class="pw-pill on"><svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-imgsquare"/></svg>1:1 · 1.89MP<span class="cr"><svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-caret"/></svg></span></span>
+                      </div>
+                      <span class="pw-send"><svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><use href="#pw-i-arrowup"/></svg></span>
+                    </div>
+                  </div>
+                </div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+  </div>
+  </div></div>
+  <div class="pw-light" id="pwLight" hidden>
+    <button class="pw-light-x" type="button" aria-label="Close the clip">✕</button>
+    <video controls playsinline preload="metadata" aria-label="The animated clip, playing with its sound."></video>
+  </div>
+</section>
+
+<section class="faq" id="faq">
+  <div class="shell">
+    <span class="eyebrow rise">Before you download — <b>the things I'd ask</b></span>
+    <h2 class="shout rise">Fair<br>questions<em>.</em></h2>
+    <p class="lede rise">Running a stranger's installer is a real risk and worth being
+      careful about. Here is everything I would want to know first, answered straight.</p>
+    <div class="qa rise">
+      <div class="qa-i">
+        <h3>Can I read the source before I run it?</h3>
+        <p>Yes, and you don't have to run it to do so. Pixal installs as plain Python — nothing compiled, nothing obfuscated — and the installer payload is a <code>git archive</code> of the repository, so the code on your disk after setup <b>is</b> the code. The full source is going public as a repository, with that exact tree attached to each release as a source zip carrying its own sha256. Unpacking the <b>.exe</b> itself won't work today — it's Inno Setup 6.4, which neither 7-Zip nor innoextract 1.9 can open — so the zip is the route. Read it, change it for yourself; the licence asks only that you don't pass it on.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Does anything leave my machine?</h3>
+        <p>By default, <b>nothing</b>. Pixal listens on 127.0.0.1; chats, characters, settings and history stay in the Pixal folder; renders stay under <code>output\pixal_dm</code>. Two exceptions, both yours to switch on: an API chat brain receives the messages you send it, and LAN access puts the app on your own network behind an access key.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Is it free? Is anything metered?</h3>
+        <p>Free. <span class="hi">No account, no queue, $0.00 a picture.</span> The only thing that can cost money is optional: point the chat brain at an API provider and that provider bills your key, under your account with them. The local brain has neither.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Will it touch the ComfyUI I already run?</h3>
+        <p>It installs <b>beside</b> it, never inside it, and refuses to install over one. It starts your existing install with your existing launcher and flags, adds only the node packs it needs, and leaves a ComfyUI carrying local edits alone. Uninstall it and nothing about your setup has changed.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Does it free VRAM between the chat brain and ComfyUI?</h3>
+        <p>Yes, and you decide how. The chat brain can stay resident for instant replies, unload after every reply, or run on the CPU — one setting. Settings → Compute has <b>free VRAM</b> and <b>free brain</b> for eviction on demand, and a render that runs out of card clears it and retries a size down rather than dying.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Can it use the models and LoRAs I already have?</h3>
+        <p>Point Pixal at your existing folders and rescan — nothing is moved or copied. Your checkpoints appear in the <b>model</b> pill if they belong to a family Pixal has a profile for (Krea 2, Z-Image and Anima today), and your LoRAs join the chain, filtered to the ones the selected model can actually take.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Do I need to know ComfyUI?</h3>
+        <p>No. Pixal builds and queues the graphs; you never see a node. If you want the full editor it is one setting away, or at the ComfyUI address any time — but nothing in the normal flow asks for it.</p>
+      </div>
+      <div class="qa-i">
+        <h3>What does it need?</h3>
+        <p>Windows 11 x64 and an NVIDIA card on driver 580 or newer. <b>24 GB and up</b> runs everything, video included; <b>16 GB</b> runs every still model and LTX video; <b>8–16 GB</b> wants quantized builds. Under the comfortable tier things still run — they stream weights and slow down rather than refuse.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Mac? Linux?</h3>
+        <p>Windows is the supported target today. The Linux port is written but unreleased — <code>LINUX.md</code> is the runbook and makes no promises. There is no Mac build.</p>
+      </div>
+      <div class="qa-i">
+        <h3>Can I sell what I make with it?</h3>
+        <p>The pictures are yours; the licence claims no rights in your output, and you may run Pixal commercially. Three components in the box carry non-commercial terms of their own — the Anima model, FLUX.2 Klein and the PiD upscaler — and those ride on the checkpoint, not on your pictures.</p>
+      </div>
+    </div>
+    <p class="qa-more rise">Longer answers — install, settings, troubleshooting, the
+      full FAQ — live in <a href="https://github.com/JesseDubb/pixal-releases/blob/main/HELP.md">the manual</a>, which also ships in the box.</p>
+  </div>
+</section>
+
+<section class="get" id="get">
+  <div class="shell">
+    <span class="eyebrow">The whole thing · one grab · <b>nothing missing</b></span>
+    <h2 class="shout rise">Get<br>Pixal<em>.</em></h2>
+    <p class="lede rise">One installer. Every model fetched and verified byte for byte,
+      resumed if the line drops. It lands <b>beside</b> your ComfyUI, never inside it —
+      remove it and nothing changed. <b>No account, no queue, no upload. Ever.</b></p>
+    <div class="ctas rise">
+      <!-- TODO: both links go live at v0.1. -->
+      <a class="btn btn-1" href="dl/Pixal-Setup-1.0.6b-win-x64.exe" download><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 0h7.55v7.55H0zM8.45 0H16v7.55H8.45zM0 8.45h7.55V16H0zM8.45 8.45H16V16H8.45z"/></svg>Download for Windows <i aria-hidden="true">→</i></a>
+      <span class="note">Pre-release · Windows first</span>
+    </div>
+    <div class="spec rise">
+      <div class="spec-col">
+        <em>needs</em>
+        <ul>
+          <li><b>Windows 11</b></li>
+          <li><b>NVIDIA · 16 GB+</b><span>8 GB runs quantized · 24 GB for video</span></li>
+          <li><b>the ComfyUI you already run</b><span>Pixal lands beside it, never inside it</span></li>
+          <li class="hi"><b>weights: yours, on your disk</b></li>
+        </ul>
+      </div>
+      <div class="spec-col">
+        <em>on a 16 gb card</em>
+        <ul>
+          <li><b>image models run fine</b><span>quantized — it's the local chat brain that crowds VRAM</span></li>
+          <li><b>point chat at an API brain instead</b><span>one config field — or skip the brain in the installer</span></li>
+          <li class="brains" aria-label="API brains: Kimi K3, Claude, ChatGPT">
+            <i><img src="assets/moonshotai.svg" alt="" width="13" height="13">Kimi K3</i>
+            <i><img src="assets/anthropic.svg" alt="" width="13" height="13">Claude</i>
+            <i><img src="assets/openai.svg" alt="" width="13" height="13">ChatGPT</i>
+          </li>
+        </ul>
+      </div>
+      <div class="spec-col">
+        <em>proven on</em>
+        <ul>
+          <li><b>RTX 5090 FE</b><span>32 GB VRAM</span></li>
+          <li><b>i7-14700KF</b><span>64 GB RAM</span></li>
+          <li><b>Windows 11</b><span>driver 591.74</span></li>
+          <li class="hi"><b>runs solid</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="shell">
+    <div class="bf-mark" id="stage" title="drag me" aria-hidden="true"></div>
+    <div class="built">
+      <span class="t">Built on</span>
+      <ul>
+        <li><img src="assets/comfyui-dark.svg" alt=""><b>ComfyUI</b></li>
+        <li><svg viewBox="316.2 33.8 630.2 118.2" role="img" aria-label="NVIDIA"><path fill="#111401" d="M578.2 34v118h33.3V34h-33.3zm-262-.2v118.1h33.6V60.2l26.2.1c8.6 0 14.6 2.1 18.7 6.5 5.3 5.6 7.4 14.7 7.4 31.2v53.9h32.6V86.7c0-46.6-29.7-52.9-58.7-52.9h-59.8zm315.7.2v118h54c28.8 0 38.2-4.8 48.3-15.5 7.2-7.5 11.8-24.1 11.8-42.2 0-16.6-3.9-31.4-10.8-40.6C723 37.2 705.2 34 678.6 34h-46.7zm33 25.6h14.3c20.8 0 34.2 9.3 34.2 33.5s-13.4 33.6-34.2 33.6h-14.3V59.6zM530.2 34l-27.8 93.5L475.8 34h-36l38 118h48l38.4-118h-34zm231.4 118h33.3V34h-33.3v118zM855 34l-46.5 117.9h32.8l7.4-20.9h55l7 20.8h35.7L899.5 34H855zm21.6 21.5l20.2 55.2h-41l20.8-55.2z"/></svg> PiD</li>
+        <li><img class="mark" src="assets/blackforestlabs.svg" alt=""><b>Black Forest Labs</b> Flux 2 Klein</li>
+        <li><img class="wordmark" src="assets/lightricks.svg" alt="Lightricks"> LTX 2.5</li>
+        <li><img class="mark" src="assets/krea.png" alt=""><b>Krea</b> Krea 2 · Turbo</li>
+        <li><img class="mark" src="assets/minimax.svg" alt=""><b>MiniMax</b> H3</li>
+        <li><b>Qwen</b> · Z-Image · Anima</li>
+      </ul>
+    </div>
+    <div class="bf-legal">
+      <span>Pixal — chat in, images out</span>
+      <a href="mailto:hello@getpixal.com">hello@getpixal.com</a>
+      <span>© 2026 Jesse Dubberke ·
+        <a href="https://github.com/JesseDubb/pixal-releases/blob/main/LICENSE">source-available license</a></span>
+    </div>
+  </div>
+</footer>
+
+<noscript><style>
+  .rise,.log .u{opacity:1;transform:none}
+  .canvas img:first-child,.canvas video{opacity:1}
+  .canvas img:not(:first-child){display:none}
+  .caret{display:none}
+</style></noscript>
+
+<script type="module">
+/* the flat lockup, inlined so currentColor reaches the mark */
+(async () => {
+  const svg = new DOMParser().parseFromString(
+    await (await fetch("brand/pixal-lockup.svg")).text(), "image/svg+xml").documentElement;
+  svg.removeAttribute("width"); svg.removeAttribute("height");
+  document.getElementById("lockup").append(svg);
+})();
+
+const io = new IntersectionObserver((es) => {
+  for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+}, { rootMargin: "0px 0px -8% 0px" });
+for (const el of document.querySelectorAll(".rise")) io.observe(el);
+
+/* ── the hero, alive on hover ────────────────────────────────────
+   Muted, because a hover is not the user gesture autoplay-with-sound
+   requires. Pause waits for the fade so the still never snaps back over a
+   moving frame. */
+{
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Sound unlocks on the first real gesture of the visit (refresh resets it).
+  // Until then a hover plays silent — and SAYS so, because a silent fallback
+  // that looks identical to working reads as "audio is broken".
+  let unlocked = false;
+  const wake = () => {
+    unlocked = true;
+    for (const c of document.querySelectorAll("video.hoverclip"))
+      if (!c.paused && c.muted) c.muted = false;
+    for (const f of document.querySelectorAll("figure.needsound"))
+      f.classList.remove("needsound");
+  };
+  addEventListener("pointerdown", wake);
+  addEventListener("keydown", wake);
+  for (const b of document.querySelectorAll(".copyp")) {
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(b.dataset.p); } catch { return; }
+      b.classList.add("did");
+      setTimeout(() => b.classList.remove("did"), 1400);
+    });
+  }
+  if (!still) for (const clip of document.querySelectorAll("video.hoverclip")) {
+    const fig = clip.closest("figure");
+    // the promise of motion, visible before anyone hovers
+    const badge = document.createElement("span");
+    badge.className = "pbadge";
+    badge.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 1.5v7l6-3.5z" fill="currentColor"/></svg>';
+    clip.parentElement.append(badge);
+    let fadeT = 0;
+    fig.addEventListener("pointerenter", () => {
+      clearTimeout(fadeT);
+      fig.classList.add("playing");
+      // Sound first, silence as the fallback: browsers refuse unmuted play
+      // until the visitor has clicked the page once. After that first click
+      // every hover carries its audio.
+      clip.muted = false;
+      clip.play().then(() => { unlocked = true; }).catch(() => {
+        clip.muted = true;
+        if (!unlocked) fig.classList.add("needsound");
+        clip.play().catch(() => {});
+      });
+    });
+    fig.addEventListener("pointerleave", () => {
+      fig.classList.remove("playing", "needsound");
+      fadeT = setTimeout(() => { clip.pause(); clip.currentTime = 0; }, 420);
+    });
+  }
+}
+
+</script>
+
+<script>
+/* ── the product, played back: the scroll engine ────────────────────
+   One driver for the whole slab. Scroll position is the story clock for
+   the windows, the headlines and the breadcrumbs (scrubbed, so it runs
+   the same at 60Hz and 239Hz); the boot itself plays on its OWN clock —
+   a compressed replay of a real 42.3s cold start (the checklist, meters
+   and log lines land on real timings, ~7x). Run mode never engages under
+   prefers-reduced-motion or below 900px: there the section stands still
+   at the story's final frame, which is also the no-JS render. */
+{
+  const sect = document.querySelector(".product");
+  const $ = (s) => sect.querySelector(s);
+  const $$ = (s) => [...sect.querySelectorAll(s)];
+  const scroller = $(".pw-scroller");
+  if (sect && scroller) {
+    const app = $(".pw-app"), tui = $(".pw-tui"), boot = $(".pw-boot");
+    const col = $(".pw-col"), lane = $(".pw-lane");
+    const heads = $$(".pw-h"), crumbs = $$(".pw-crumbs li");
+    const m1 = $(".pw-m1"), c1 = $(".pw-c1"), m2 = $(".pw-m2"),
+          c2 = $(".pw-c2"), c3 = $(".pw-c3");
+    const vid = $(".pw-cvid"), animAct = $(".pw-act-anim");
+    /* the clip's lightbox: a click is the user gesture that buys the sound */
+    const light = $("#pwLight"), lightV = light?.querySelector("video");
+    if (light && vid) {
+      const openLight = () => {
+        light.hidden = false;
+        lightV.src = vid.currentSrc || vid.src;
+        lightV.currentTime = 0; lightV.muted = false; lightV.volume = 1;
+        lightV.play().catch(() => {});
+        vid.pause();
+        document.documentElement.style.overflow = "hidden";
+      };
+      const closeLight = () => {
+        light.hidden = true;
+        lightV.pause(); lightV.removeAttribute("src"); lightV.load();
+        document.documentElement.style.overflow = "";
+      };
+      vid.addEventListener("click", openLight);
+      light.addEventListener("click", (e) => {
+        if (e.target === light || e.target.closest(".pw-light-x")) closeLight();
+      });
+      addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !light.hidden) closeLight();
+      });
+    }
+    const composer = $(".pw-composer"), ta = $("#pwTA"), send = $(".pw-send");
+    const BF = $("#pwBF"), BN = $("#pwBN"), BT = $("#pwBT");
+    const rows = [0,1,2,3,4].map((i) => $("#pwR" + i));
+    const MF = $("#pwMF"), MR = $("#pwMR"), MP = $("#pwMP"), MT = $("#pwMT");
+    const VF = $("#pwVF"), VR = $("#pwVR"), VG = $("#pwVG"), VX = $("#pwVX");
+    const GV = $("#pwGV"), info = $("#pwInfo"), logs = $$(".pw-lg");
+    const crumbNums = crumbs.map((li) => li.querySelector("i").textContent);
+
+    const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+    const seg = (p, a, b) => clamp((p - a) / (b - a), 0, 1);
+    const sm = (t) => t * t * (3 - 2 * t);
+    const pad = (n) => " ".repeat(Math.max(0, n));
+
+    const T1 = "a ninja praying under a cherry blossom tree";
+    const T2 = "change her hair to platinum blonde";
+
+    /* the real cold start this machine reported, compressed ~7x */
+    const STAGES = [["waking Python", 7.1], ["prestart hooks", 4.5],
+      ["loading node packs", 28.2], ["final checks", 1.9],
+      ["starting the web server", 0.6]];
+    const STARTS = [0, 7.1, 11.6, 39.8, 41.7], TOTAL = 42.3, EXPECTED = 43.1;
+    const LOG_AT = [14, 19, 25, 31, 36, 42.4];
+    const SIM = { started: false, t: 0, speed: 7.2 };
+
+    /* story beats on the scroll clock */
+    const RANGES = [[0, .21], [.21, .45], [.45, .58], [.58, .72], [.72, .86], [.86, 2]];
+    const HEADR  = [[0, .21], [.21, .45], [.45, .58], [.58, .72], [.72, .86], [.86, 1.2]];
+
+    const row = (el, state, name, ts) => {
+      const [gc, g, lc, tc] = state === 2 ? ["O", "✓", "M", "M"]
+        : state === 1 ? ["A", "-", "T", "T"] : ["D", "·", "D", "D"];
+      el.innerHTML = ` <span class="${gc}">${g}</span><span class="${lc}">  ${name}</span>` +
+        `<span class="D">${pad(62 - 4 - name.length - ts.length)}</span><span class="${tc}">${ts}</span>`;
+    };
+    const bar = (fillEl, restEl, n, total) => {
+      fillEl.textContent = "█".repeat(n);
+      restEl.textContent = "░".repeat(total - n);
+    };
+
+    let lastSimT = -1, lastVram = -1, lastUtil = -1;
+    const simPaint = (t, vram, util) => {
+      if (Math.abs(t - lastSimT) < .02 && vram === lastVram && util === lastUtil) return;
+      lastSimT = t; lastVram = vram; lastUtil = util;
+      const tc = Math.min(t, TOTAL);
+      for (let i = 0; i < 5; i++) {
+        const [name, dur] = STAGES[i], a = STARTS[i], b = a + dur;
+        if (t >= b) row(rows[i], 2, name, dur.toFixed(1) + "s");
+        else if (t >= a) row(rows[i], 1, name, (t - a).toFixed(1) + "s");
+        else row(rows[i], 0, name, "");
+      }
+      bar(MF, MR, Math.round(32 * tc / TOTAL), 32);
+      MP.textContent = (Math.round(100 * tc / TOTAL) + "%").padStart(6);
+      MT.textContent = `  ${tc.toFixed(1)}s of ~${TOTAL}s`;
+      bar(VF, VR, clamp(Math.round(32 * vram / 31.8), 0, 32), 32);
+      VG.textContent = "  " + vram.toFixed(1);
+      VX.textContent = `/31.8 GB ${(util + "%").padStart(5)}  46°C`;
+      GV.textContent = `${vram.toFixed(1)}/31.8 GB`;
+      info.style.opacity = t > 1.2 ? 1 : 0;
+      logs.forEach((el, i) => { el.style.opacity = t >= LOG_AT[i] ? 1 : 0; });
+      /* the app's loading screen mirrors the same clock (ComfyBoot: the
+         last sliver belongs to ComfyUI actually answering — CEILING .94) */
+      BF.style.width = (Math.min(.94, tc / EXPECTED) * 100).toFixed(1) + "%";
+      BT.textContent = `${Math.floor(tc)}s / ~${Math.round(EXPECTED)}s`;
+      BN.textContent = t <= 0.4 ? "booting ComfyUI"
+        : t >= TOTAL ? "starting the web server"
+        : STAGES[STARTS.findLastIndex((s) => t >= s)][0];
+    };
+
+    /* chat scroll anchors: which message sits at the composer line */
+    let colH = 0, anchors = {};
+    const shiftOf = (el) => colH - (el.offsetTop + el.offsetHeight);
+    const measure = () => {
+      colH = col.offsetHeight;
+      anchors = { m1: shiftOf(m1), c1: shiftOf(c1), m2: shiftOf(m2),
+                  c2: shiftOf(c2), c3: shiftOf(c3) };
+    };
+    const SHIFTS = [[.58, .63, "m1", "c1"], [.72, .76, "c1", "m2"],
+                    [.775, .82, "m2", "c2"], [.885, .925, "c2", "c3"]];
+
+    const popIn = (el, k, dist) => {
+      el.style.opacity = k;
+      el.style.transform = `translateY(${((1 - k) * dist).toFixed(2)}px)`;
+    };
+    const resolveMedia = (card, k) => {
+      const media = card.querySelector("img,video");
+      media.style.opacity = clamp(k * 3, 0, 1);
+      media.style.filter = `blur(${(18 * (1 - sm(k))).toFixed(2)}px)`;
+      card.querySelector(".pw-cfoot").style.opacity = seg(k, .88, 1);
+    };
+
+    const apply = (p) => {
+      /* the 3D handoff: 0 = app front, 1 = console front. Once the boot is
+         done (s2), the console signs off — fades out for good — and the app
+         widens to own the whole stage for the chat beats. */
+      const s2 = sm(seg(p, .38, .45));
+      const tuiT = sm(seg(p, .14, .21)) * (1 - s2);
+      app.style.transform = `translate3d(${(61 * tuiT).toFixed(2)}%,-50%,${(-300 * tuiT).toFixed(1)}px) rotateY(${(-16 * tuiT).toFixed(2)}deg) scale(${(1 - .38 * tuiT).toFixed(3)})`;
+      tui.style.transform = `translate3d(${(61 - 54 * tuiT).toFixed(2)}%,-50%,${(-300 * (1 - tuiT)).toFixed(1)}px) rotateY(${(-16 * (1 - tuiT)).toFixed(2)}deg) scale(${(.62 + .52 * tuiT).toFixed(3)})`;
+      app.style.width = (74 + 26 * s2).toFixed(2) + "%";
+      app.style.height = (97 + 3 * s2).toFixed(2) + "%";
+      app.style.filter = `brightness(${(1 - .18 * tuiT).toFixed(3)})`;
+      tui.style.filter = `brightness(${(.82 + .18 * tuiT).toFixed(3)})`;
+      tui.style.opacity = (1 - s2).toFixed(3);
+      tui.style.visibility = s2 >= 1 ? "hidden" : "visible";
+      const overlayOp = 1 - s2;
+      boot.style.opacity = overlayOp;
+      boot.style.visibility = overlayOp > 0 ? "visible" : "hidden";
+
+      /* boot sim clock + the story's VRAM truth: models load at render time */
+      if (p >= .45) SIM.t = Math.max(SIM.t, TOTAL + 1);
+      const bootVram = .4 + 1.3 * seg(SIM.t, STARTS[2], STARTS[3]);
+      const story = sm(seg(p, .60, .67));
+      const vram = Math.max(bootVram, .4 + (19.2 - .4) * story);
+      const busy = (p > .59 && p < .70) || (p > .74 && p < .84) || (p > .875 && p < .96);
+      simPaint(SIM.t, +vram.toFixed(1), busy ? 98 : 11);
+
+      /* the ask, the render, the edit, animate */
+      const askQ = seg(p, .45, .58), renQ = seg(p, .58, .72),
+            edtQ = seg(p, .72, .86), aniQ = seg(p, .86, .99);
+      let typed = "";
+      if (askQ > .02 && askQ < .85) typed = T1.slice(0, Math.floor(clamp(askQ / .72, 0, 1) * T1.length));
+      if (edtQ > .01 && edtQ < .38) typed = T2.slice(0, Math.floor(clamp(edtQ / .3, 0, 1) * T2.length));
+      ta.textContent = typed || "Message pixal";
+      composer.classList.toggle("pw-typing", !!typed);
+      send.classList.toggle("hot", !!typed);
+      popIn(m1, sm(seg(askQ, .78, .9)), 12);
+      popIn(c1, sm(seg(renQ, 0, .16)), 26);
+      c1.querySelectorAll(".pw-chead > *").forEach((chip, i) =>
+        popIn(chip, sm(seg(renQ, .04 + i * .05, .16 + i * .05)), 8));
+      resolveMedia(c1, seg(renQ, .14, .82));
+      popIn(m2, sm(seg(edtQ, .32, .42)), 12);
+      popIn(c2, sm(seg(edtQ, .46, .6)), 26);
+      resolveMedia(c2, seg(edtQ, .55, .95));
+      const glow = aniQ > .02 && aniQ < .3;
+      animAct.classList.toggle("pw-glow", glow);
+      animAct.style.transform = glow ? `scale(${(1 + .07 * Math.sin(seg(aniQ, .02, .3) * Math.PI)).toFixed(3)})` : "";
+      popIn(c3, sm(seg(aniQ, .28, .42)), 26);
+      resolveMedia(c3, seg(aniQ, .4, .78));
+      if (vid && (!light || light.hidden)) {
+        if (aniQ > .3 && vid.paused) vid.play().catch(() => {});
+        if (aniQ <= .3 && !vid.paused) vid.pause();
+      }
+
+      /* chat scroll: the newest message docks at the composer line */
+      let shift = anchors.m1 || 0;
+      for (const [a, b, from, to] of SHIFTS)
+        if (p >= a) shift = anchors[from] + (anchors[to] - anchors[from]) * sm(seg(p, a, b));
+      col.style.transform = `translateY(${shift.toFixed(2)}px)`;
+
+      /* headlines + breadcrumbs */
+      heads.forEach((h, i) => {
+        const [a, b] = HEADR[i];
+        const tin = i === 0 ? 1 : seg(p, a, a + .035);
+        const tout = 1 - seg(p, b - .035, b);
+        const op = Math.min(tin, tout);
+        h.style.opacity = op.toFixed(3);
+        h.style.transform = `translateY(${((1 - tin) * 14 - (1 - tout) * 14).toFixed(2)}px)`;
+      });
+      crumbs.forEach((li, i) => {
+        const [a, b] = RANGES[i];
+        const on = p >= a && p < b, done = p >= b;
+        li.classList.toggle("on", on);
+        li.classList.toggle("done", done);
+        li.querySelector("i").textContent = done ? "✓" : crumbNums[i];
+        li.style.setProperty("--f", seg(p, a, Math.min(b, 1)).toFixed(3));
+      });
+
+    };
+
+    const mqM = matchMedia("(max-width:899px)");
+    const mqR = matchMedia("(prefers-reduced-motion: reduce)");
+    let runOn = false, active = false, rafId = 0, lastNow = 0, lastP = -1;
+    const loop = (now) => {
+      if (!active) { rafId = 0; return; }
+      rafId = requestAnimationFrame(loop);
+      const dt = Math.min(now - (lastNow || now), 100); lastNow = now;
+      if (!runOn) return;
+      const r = scroller.getBoundingClientRect();
+      const span = r.height - innerHeight;
+      const p = span > 0 ? clamp(-r.top / span, 0, 1) : 0;
+      if (!SIM.started && p > .005) SIM.started = true;
+      if (SIM.started && SIM.t < TOTAL + 1) SIM.t += dt / 1000 * SIM.speed;
+      /* the 3D marks keep turning whenever they're on stage — every frame,
+         outside the idle skip, so parking mid-beat never settles them */
+      const marks = window.__pwMarks;
+      if (marks) {
+        if (p < .47) marks.boot?.wake();
+        if (p > .35 && p < 1.05) marks.rail?.wake();
+      }
+      if (Math.abs(p - lastP) < 1e-5 && SIM.t > TOTAL + 1 && p >= .45 && p < .86) return;
+      lastP = p;
+      apply(p);
+    };
+    const setMode = () => {
+      const want = !mqM.matches && !mqR.matches;
+      if (want === runOn) return;
+      runOn = want;
+      sect.classList.toggle("pw-run", want);
+      if (want) { measure(); lastP = -1; apply(0); }
+      else { SIM.t = TOTAL + 1; measure(); apply(1); }
+    };
+    new IntersectionObserver((es) => {
+      active = es[0].isIntersecting;
+      if (active && !rafId) { lastNow = 0; rafId = requestAnimationFrame(loop); }
+    }, { rootMargin: "60% 0px" }).observe(scroller);
+    addEventListener("resize", () => { measure(); lastP = -1; }, { passive: true });
+    mqM.addEventListener("change", setMode);
+    mqR.addEventListener("change", setMode);
+    $$(".pw-col img").forEach((im) => im.addEventListener("load", () => { measure(); lastP = -1; }));
+    vid?.addEventListener("loadedmetadata", () => { measure(); lastP = -1; });
+    setMode();
+    if (runOn) { measure(); apply(0); }
+  }
+}
+</script>
+
+<script type="module">
+/* ── the footer mark: the product's own spinner, ported ──────────
+   web/src/lib/BlockLogo.jsx + block-mark.js, de-Reacted. Chamfered block P,
+   unlit chartreuse chip, idle drift (a full turn every ~16s while you are
+   around), proximity lift, drag. Same loop discipline as the app: a stopped
+   loop is a CANCELLED rAF, and per-second motion so no refresh rate — 60 or
+   239 — changes what your hand feels. */
+import * as THREE from "./vendor/three.module.js";
+
+/* block-mark.js, inlined: one corner table for the silhouette, arcs
+   flattened here so triangle count is set, not hoped for. */
+const HULL = [
+  [[77.7, 0.0], 5.5], [[77.7, 22.3], 0], [[100.0, 22.3], 5.5],
+  [[100.0, 77.7], 5.5], [[77.7, 77.7], 0], [[77.7, 100.0], 5.5],
+  [[0.0, 100.0], 5.5], [[0.0, 22.3], 5.5], [[22.3, 22.3], 0],
+  [[22.3, 0.0], 5.5],
+];
+const BUBBLE = [[22.3, 22.3], [77.7, 22.3], [77.7, 77.7], [41.0, 77.7], [22.3, 100.0]];
+const CHIP = [36.4, 37.3, 63.6, 62.7];
+const CHIP_R = 3.5;
+
+const flatten = (corners, steps) => {
+  const pts = [];
+  const n = corners.length;
+  for (let i = 0; i < n; i++) {
+    const [[cx, cy], r] = corners[i];
+    if (r <= 0) { pts.push([cx, cy]); continue; }
+    const dirs = [corners[(i - 1 + n) % n][0], corners[(i + 1) % n][0]].map(([ox, oy]) => {
+      const dx = ox - cx, dy = oy - cy, len = Math.hypot(dx, dy);
+      return [dx / len, dy / len];
+    });
+    const [[ax, ay], [bx, by]] = dirs;
+    const mx = cx + r * (ax + bx), my = cy + r * (ay + by);
+    const a0 = Math.atan2(cy + r * ay - my, cx + r * ax - mx);
+    const a1 = Math.atan2(cy + r * by - my, cx + r * bx - mx);
+    const sweep = ((a1 - a0 + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    for (let s = 0; s <= steps; s++) {
+      const a = a0 + sweep * (s / steps);
+      pts.push([mx + r * Math.cos(a), my + r * Math.sin(a)]);
+    }
+  }
+  return pts;
+};
+const rectCorners = ([x0, y0, x1, y1], r) =>
+  [[[x1, y0], r], [[x1, y1], r], [[x0, y1], r], [[x0, y0], r]];
+const blockShapes = ({ steps = 2, size = 2.4 } = {}) => {
+  const k = size / 100;
+  const to = ([x, y]) => new THREE.Vector2(x * k - size / 2, size / 2 - y * k);
+  const hull = new THREE.Shape(flatten(HULL, steps).map(to));
+  hull.holes.push(new THREE.Path(BUBBLE.map(to)));
+  const chip = new THREE.Shape(flatten(rectCorners(CHIP, CHIP_R), steps).map(to));
+  return { hull, chip };
+};
+
+/* The main nav's BlockLogo geometry and motion, wearing GlassLogo's material
+   in onyx: black glass with the house recipe (transmission + clearcoat).
+   Affordable here because the loop settles and stops — the app swapped glass
+   out to keep the GPU free for sampling, a constraint a footer doesn't have.
+   The chip breathes between two fixed anchors — the ComfyUI-icon yellow down
+   to a darker neon green, never white — because chartreuse IS the band. */
+const BODY = 0x0b0b0e;
+const CHIP_HI = new THREE.Color(0xf0ff41);   // the comfyui-dark.svg yellow
+const CHIP_LO = new THREE.Color(0x66770b);   // the signal, pulled dark
+const FRAME_MS = 33;
+const BUSY_FRAME_MS = 16;
+const SETTLE_MS = 6000;
+const DRIFT = 0.013;
+
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* One factory, three marks: the footer's interactive glass P, the loading
+   screen's working spinner (faster drift — it means "busy"), and the app
+   rail's little idle mark. Each carries its own renderer and settle-stop
+   loop; non-interactive marks only turn while the product demo calls
+   wake() on them, so an idle page costs nothing. */
+function mountMark(host, { size, interactive = false, drift = DRIFT,
+                           steps = 6, bevelSegments = 3 } = {}) {
+  if (!host) return null;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); }
+  catch { return null; /* no WebGL: the static SVG fallback stays put */ }
+  size = size || host.clientWidth || 92;
+  // Never below 2: on a 1x display the canvas would rasterize at its CSS size
+  // and no MSAA rescues a 92px raster. 2x is supersampling on those screens.
+  renderer.setPixelRatio(Math.min(Math.max(devicePixelRatio || 1, 2), 3));
+  renderer.setSize(size, size);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.domElement.style.cssText = "display:block;width:100%;height:100%;" +
+    (interactive ? "cursor:grab;touch-action:none;" : "pointer-events:none;");
+  const fallback = host.querySelector("svg");
+  if (fallback) fallback.style.display = "none";
+  host.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 30);
+  camera.position.set(0, 0, 7.4);
+
+  const env = new THREE.Scene();
+  env.background = new THREE.Color(0x07080a);
+  const panel = (rgb, w, h, pos, rot) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(...rgb), side: THREE.DoubleSide }));
+    m.position.set(...pos); m.rotation.set(...rot); env.add(m);
+  };
+  panel([6, 6, 6.4], 6, 2.4, [0, 4, 0], [Math.PI / 2, 0, 0]);
+  panel([2.6, 3.1, 0.5], 2.4, 5, [4, 0.4, 1], [0, -Math.PI / 2.6, 0]);
+  panel([0.5, 0.7, 1.5], 2.6, 4, [-4, -0.5, 0.5], [0, Math.PI / 2.4, 0]);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(env, 0.05).texture;
+  env.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+  pmrem.dispose();
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  // steps 6 / bevelSegments 3 at footer size; the 54px rail mark takes the
+  // app's own 2/2 (tuned for a nav rail, where facets never read).
+  const { hull, chip } = blockShapes({ steps, size: 2.4 });
+  const extrude = (shape, depth, bevel) => new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+    bevelSegments, curveSegments: 1,
+  });
+
+  const bodyGeo = extrude(hull, 0.34, 0.07);
+  bodyGeo.center();
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color: BODY, metalness: 0, roughness: 0.07,
+    transmission: 0.9, thickness: 1.2, ior: 1.5,
+    attenuationColor: new THREE.Color(0x101204), attenuationDistance: 1.6,
+    clearcoat: 1, clearcoatRoughness: 0.05,
+    iridescence: 0.25, iridescenceIOR: 1.3, envMapIntensity: 1.35,
+    // Glass shows its own interior: without DoubleSide the inner walls of the
+    // bubble cutout are culled and the mark reads hollow from most angles.
+    side: THREE.DoubleSide });
+  group.add(new THREE.Mesh(bodyGeo, bodyMat));
+
+  const chipGeo = extrude(chip, 0.30, 0.05);
+  chipGeo.center();
+  const chipMat = new THREE.MeshBasicMaterial({ toneMapped: false, side: THREE.DoubleSide });
+  chipMat.color.copy(CHIP_HI);
+  const chipMesh = new THREE.Mesh(chipGeo, chipMat);
+  chipMesh.position.z = 0.12;
+  group.add(chipMesh);
+
+  const IDLE = reduced ? 0 : drift;
+  let rotY = reduced ? -0.4 : -0.45, velY = IDLE;
+  let tiltX = reduced ? -0.1 : 0, tiltY = 0;
+  let targetTiltX = tiltX, targetTiltY = 0;
+  let near = 0, targetNear = 0;
+  let dragging = false, lastX = 0, lastY = 0, raf = 0, t = 0;
+  let running = false, last = 0, awake = 0;
+
+  const PROX_RADIUS = 230;
+  if (interactive) {
+    addEventListener("pointermove", (e) => {
+      awake = performance.now();
+      if (!reduced) {
+        const r = renderer.domElement.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const s = Math.max(0, 1 - Math.hypot(dx, dy) / PROX_RADIUS);
+        targetNear = s;
+        targetTiltY = (dx / PROX_RADIUS) * s * 0.55;
+        targetTiltX = (dy / PROX_RADIUS) * s * 0.55;
+      }
+      if (dragging) {
+        velY = (e.clientX - lastX) * 0.011;
+        targetTiltX += (e.clientY - lastY) * 0.004;
+        lastX = e.clientX; lastY = e.clientY;
+      }
+      sync();
+    }, { passive: true });
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+      awake = performance.now();
+      renderer.domElement.setPointerCapture(e.pointerId);
+      renderer.domElement.style.cursor = "grabbing";
+      sync();
+    });
+    addEventListener("pointerup", (e) => {
+      dragging = false; awake = performance.now();
+      try { renderer.domElement.releasePointerCapture(e.pointerId); } catch { /* gone */ }
+      renderer.domElement.style.cursor = "grab";
+      sync();
+    });
+  }
+
+  const wanted = (now) => {
+    if (dragging) return true;
+    if (reduced) return false;
+    if (document.hidden || !document.hasFocus()) return false;
+    return now - awake < SETTLE_MS;
+  };
+
+  const draw = (now) => {
+    const busy = dragging || near > 0.01;
+    if (now - last < (busy ? BUSY_FRAME_MS : FRAME_MS)) return;
+    const dt = last ? Math.min(now - last, 100) : FRAME_MS;
+    last = now;
+    t += dt / 1000;
+    const rate = dt / FRAME_MS;
+    const ease = (k) => 1 - Math.pow(1 - k, rate);
+    if (!dragging) velY = IDLE + (velY - IDLE) * Math.pow(0.955, rate);
+    rotY += velY * rate * (1 + near * 0.25);
+    tiltX += (targetTiltX - tiltX) * ease(0.12);
+    tiltY += (targetTiltY - tiltY) * ease(0.12);
+    near += (targetNear - near) * ease(0.1);
+    group.rotation.set(tiltX, rotY + tiltY, 0);
+    group.position.y = reduced ? 0 : Math.sin(t * 1.3) * 0.04;
+    group.scale.setScalar(1 + near * 0.07);
+    bodyMat.envMapIntensity = 1.5 + near * 0.8;
+    // The chip breathes between its two anchors on a ~5s cycle — yellow to a
+    // darker neon green, never through white.
+    chipMat.color.lerpColors(CHIP_LO, CHIP_HI, 0.5 + 0.5 * Math.sin(t * 1.25));
+    renderer.render(scene, camera);
+  };
+
+  const frame = (now) => {
+    if (!wanted(now)) { running = false; raf = 0; return; }
+    raf = requestAnimationFrame(frame);
+    draw(now);
+  };
+  function sync() {
+    const now = performance.now();
+    if (wanted(now)) {
+      if (!running) { running = true; last = 0; raf = requestAnimationFrame(frame); }
+    } else if (running) {
+      cancelAnimationFrame(raf); running = false; raf = 0;
+      // Never park invisible: the settled frame always carries the yellow chip.
+      chipMat.color.copy(CHIP_HI);
+      renderer.render(scene, camera);
+    }
+  }
+
+  group.rotation.set(tiltX, rotY, 0);
+  renderer.render(scene, camera);
+  awake = performance.now();
+  sync();
+
+  document.addEventListener("visibilitychange", sync);
+  addEventListener("focus", sync);
+  addEventListener("blur", sync);
+  return { wake() { awake = performance.now(); sync(); } };
+}
+
+mountMark(document.getElementById("stage"), { interactive: true });
+window.__pwMarks = {
+  boot: mountMark(document.getElementById("pwMarkBoot"), { size: 132, drift: 0.085 }),
+  rail: mountMark(document.getElementById("pwMarkRail"), { size: 54, steps: 2, bevelSegments: 2, drift: 0.045 }),
+};
+</script>
+</body>
+</html>

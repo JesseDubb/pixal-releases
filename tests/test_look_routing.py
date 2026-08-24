@@ -73,7 +73,9 @@ class BrainVlReadGates(unittest.TestCase):
             "remote preset": dict(
                 config=cfg(base_url="https://api.remote.example/v1"), states=[]),
             "running demoted-blind": dict(
-                states=[{"pid": 1, "mmproj": None}], mmproj="proj-on-disk"),
+                states=[{"pid": 1, "mmproj": None,
+                         "blind_mmproj": "proj-on-disk"}],
+                mmproj="proj-on-disk"),
             "no projector anywhere": dict(
                 states=[{}], mmproj=None, provision=BLIND_PROVISION_REFUSAL),
             "frame unreadable": dict(states=[SIGHTED], write_frame=False),
@@ -103,6 +105,18 @@ class BrainVlReadGates(unittest.TestCase):
                     mocks.ensure.assert_awaited_once()
                     self.assertIn("warmed", why)
         self.assertEqual(len(set(reasons.values())), 8, reasons)
+
+    def test_a_pidless_adopted_demote_short_circuits_the_same_way(self):
+        # An adoption registers a blind orphan with pid None; the old
+        # pid-keyed check waved it through to a call that could never count.
+        with tempfile.TemporaryDirectory() as td:
+            (text, why), mocks = _read(
+                td, states=[{"pid": None, "mmproj": None,
+                             "blind_mmproj": "proj-on-disk"}],
+                mmproj="proj-on-disk")
+        self.assertIsNone(text)
+        self.assertIn("running blind", why)
+        mocks.llm.assert_not_awaited()
 
     def test_a_warm_sighted_brain_answers_and_names_no_reason(self):
         with tempfile.TemporaryDirectory() as td:

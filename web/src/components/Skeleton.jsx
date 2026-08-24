@@ -15,7 +15,13 @@ import { SPACE, RADIUS } from "../lib/design-tokens.js";
 const CSS = `
 @keyframes px-shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
 @keyframes px-ghost-in { from { opacity: 0; } to { opacity: 1; } }
-.px-ghost-in { animation: px-ghost-in 160ms ease-out both; }
+.px-ghost-in { animation: px-ghost-in 160ms ease-out; }
+/* No fill-mode ("both"/"forwards"), on purpose: a filling opacity animation
+   keeps will-change semantics AFTER it ends, so the element stays a stacking
+   context forever - and any popover it wraps (the ScrollPicker dropdown) gets
+   its z-index trapped behind later px-ghost-in siblings (2026-08-24: the Video
+   model dropdown painted under the Upscaler rows). The fade is identical
+   without it - the end keyframe IS the resting state. */
 .px-calm .px-shim-skel { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .px-shim-skel, .px-ghost-in { animation: none !important; }

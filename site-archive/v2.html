@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pixal — every model you own, in one conversation</title>
+<meta name="description" content="Pixal drives the ComfyUI you already run. Every checkpoint, LoRA, video model and upscaler you own, from one conversation. Local, no account, nothing per picture.">
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   Pixal — v2
+
+   One signature element: the mark, alive, lit from inside by the accent.
+   Everything else is deliberately quiet so it stays the only thing that
+   moves. No gradients on type, no glass cards, no floating blurs; the
+   single chartreuse in the whole page is the one inside the logo and the
+   one on the primary button.
+
+   Self-contained stylesheet - it does NOT share index.html's, because
+   that file already owns .band, .thread and .strip, and this page needs
+   its own meanings for all three.
+   ══════════════════════════════════════════════════════════════════════ */
+@font-face{font-family:Geist;src:url("fonts/geist-400-n-latin.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:Geist;src:url("fonts/geist-600-n-latin.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:Syne;src:url("fonts/syne-600-n-latin.woff2") format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:Syne;src:url("fonts/syne-700-n-latin.woff2") format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:JetBrains;src:url("fonts/jetbrains-mono-500-n-latin.woff2") format("woff2");font-weight:500;font-display:swap}
+
+:root{
+  --ink:#08080A; --raise:#0D0D11; --line:#1B1B21; --line-2:#26262D;
+  --cream:#F2F1EC; --dim:#8F8F89; --faint:#55554F; --ghost:#3A3A36;
+  --signal:#D6F32F;
+  --sans:Geist,system-ui,sans-serif; --display:Syne,system-ui,sans-serif;
+  --mono:JetBrains,ui-monospace,Consolas,monospace;
+  --gut:clamp(20px,5vw,76px);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--ink);color:var(--cream);font-family:var(--sans);
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img,video{max-width:100%;display:block}
+h1,h2,h3{margin:0;font-family:var(--display);letter-spacing:-.05em;line-height:.96}
+p{margin:0}
+a{color:inherit}
+
+.shell{max-width:1320px;margin:0 auto;padding-inline:var(--gut)}
+.eyebrow{display:inline-block;font:500 10px/1 var(--mono);letter-spacing:.2em;
+  text-transform:uppercase;color:var(--faint)}
+.eyebrow b{color:var(--signal);font-weight:500}
+.lede{color:var(--dim);font-size:clamp(14.5px,1.15vw,16.5px);line-height:1.68}
+.lede b{color:var(--cream);font-weight:600}
+
+/* scroll reveal — transform + opacity only, nothing that repaints layout */
+.rise{opacity:0;transform:translateY(16px);
+  transition:opacity .6s ease,transform .6s cubic-bezier(.2,.7,.3,1)}
+.rise.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .rise{opacity:1;transform:none;transition:none}
+}
+
+/* ── nav ─────────────────────────────────────────────────────────── */
+.nav{position:sticky;top:0;z-index:40;background:rgba(8,8,10,.86);
+  border-bottom:1px solid var(--line)}
+.nav .shell{display:flex;align-items:center;gap:26px;height:64px}
+.nav .lk{width:108px;flex:0 0 auto}
+.nav .lk svg{width:100%;height:auto;color:var(--cream)}
+.nav .lk .dot{fill:var(--signal)}
+.nav nav{margin-left:auto;display:flex;gap:26px;font-size:13.5px;color:var(--dim)}
+.nav nav a{text-decoration:none}
+.nav nav a:hover{color:var(--cream)}
+@media(max-width:760px){.nav nav{display:none}}
+
+/* ── hero ────────────────────────────────────────────────────────── */
+.hero{position:relative;border-bottom:1px solid var(--line);overflow:hidden}
+.hero .shell{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);
+  align-items:center;gap:clamp(30px,5vw,80px);
+  padding-block:clamp(48px,7.5vw,104px)}
+.hero h1{font-weight:700;font-size:clamp(2.4rem,5.5vw,4.6rem)}
+.hero h1 em{font-style:normal;color:var(--signal)}
+.hero .lede{margin-top:clamp(20px,2.4vw,28px);max-width:46ch}
+.hero .eyebrow{margin-bottom:clamp(20px,2.4vw,30px)}
+
+.ctas{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  margin-top:clamp(26px,3vw,38px)}
+.btn{display:inline-flex;align-items:center;gap:11px;padding:15px 26px;
+  font:600 14px/1 var(--sans);text-decoration:none;border:1px solid transparent;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.btn-1{background:var(--signal);color:#111401}
+.btn-1:hover{background:var(--cream)}
+.btn-2{background:transparent;color:var(--cream);border-color:var(--line-2)}
+.btn-2:hover{border-color:var(--cream)}
+.note{font-size:12.5px;color:var(--faint)}
+
+/* The stage. A bounded square, never full-bleed — canvas area is the
+   single largest cost on the page, so it is sized rather than stretched. */
+.stage{position:relative;width:100%;max-width:460px;margin-inline:auto;
+  aspect-ratio:1;cursor:grab;touch-action:none}
+.stage.dragging{cursor:grabbing}
+.stage canvas{position:relative;display:block;width:100%;height:100%}
+/* The room glow is a gradient, not geometry: a floor plane plus a bloom pass
+   would be real GPU work every frame for something CSS paints once. */
+.stage::before{content:"";position:absolute;inset:-26%;border-radius:50%;
+  background:radial-gradient(circle,rgba(214,243,47,.17),rgba(214,243,47,.045) 42%,transparent 68%);
+  pointer-events:none}
+.stage .hint{position:absolute;left:50%;bottom:-30px;transform:translateX(-50%);
+  white-space:nowrap;font:500 9px/1 var(--mono);letter-spacing:.15em;
+  text-transform:uppercase;color:var(--ghost)}
+@media (prefers-reduced-motion:reduce){.stage .hint{display:none}}
+
+@media(max-width:900px){
+  .hero .shell{grid-template-columns:1fr;padding-block:clamp(38px,7vw,60px)}
+  .stage{max-width:340px;order:-1;margin-inline:0}
+}
+
+/* ── runs on ─────────────────────────────────────────────────────── */
+.runs{border-bottom:1px solid var(--line);background:var(--raise)}
+.runs .shell{display:flex;align-items:center;gap:clamp(16px,2.4vw,34px);
+  flex-wrap:wrap;padding-block:20px}
+.runs .t{font:500 10px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+  color:var(--faint);flex:0 0 auto}
+.runs ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;
+  gap:clamp(14px,2vw,28px);font:500 12px/1 var(--mono);letter-spacing:.06em;
+  color:var(--dim)}
+.runs b{color:var(--cream);font-weight:500}
+
+/* ── acts ────────────────────────────────────────────────────────── */
+.act{padding-block:clamp(56px,7.5vw,108px);border-bottom:1px solid var(--line)}
+.act h2{margin-top:clamp(16px,2vw,22px);font-weight:600;
+  font-size:clamp(1.7rem,3.5vw,2.9rem)}
+.act h2 em{font-style:normal;color:var(--signal)}
+.act > .shell > .lede{margin-top:clamp(14px,1.8vw,20px);max-width:70ch}
+
+/* the filmstrip — eleven corrections, in order */
+.sc-strip{display:grid;grid-template-columns:repeat(11,1fr);gap:5px;
+  margin-top:clamp(26px,3.4vw,44px)}
+.sc-strip figure{margin:0;min-width:0}
+.sc-strip img{width:100%;height:auto;background:var(--raise)}
+.sc-strip figcaption{margin-top:7px;font-size:10.5px;line-height:1.35;
+  color:var(--faint);display:flex;gap:5px}
+.sc-strip figcaption b{color:var(--dim);font-weight:600}
+.sc-n{color:var(--signal);font:500 9.5px/1.5 var(--mono);flex:0 0 auto}
+@media(max-width:1120px){.sc-strip{grid-template-columns:repeat(6,1fr)}}
+@media(max-width:620px){.sc-strip{grid-template-columns:repeat(3,1fr)}}
+
+/* the result band — height-capped so the portrait clip cannot run the page */
+.sc-band{display:grid;grid-template-columns:auto 1fr;gap:clamp(14px,1.9vw,24px);
+  margin-top:clamp(16px,2vw,26px);align-items:start}
+.sc-band figure{margin:0}
+.sc-band video,.sc-band .sc-fall{display:block;height:clamp(320px,44vw,480px);
+  width:auto;background:var(--raise)}
+.sc-band .sc-fall{display:none}
+.sc-pair{display:grid;grid-template-columns:1fr 1fr;gap:6px;max-width:620px}
+.sc-pair figcaption{margin-top:6px;font:500 9.5px/1 var(--mono);letter-spacing:.13em;
+  text-transform:uppercase;color:var(--faint)}
+@media(max-width:860px){
+  .sc-band{grid-template-columns:1fr}
+  .sc-band video{display:none}
+  .sc-band .sc-fall{display:block;height:auto;width:100%}
+}
+
+.sc-rcpt{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.receipt{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:9px 12px;
+  border:1px solid var(--line);background:var(--raise);
+  font:500 10.5px/1 var(--mono);color:var(--faint)}
+.receipt em{font-style:normal;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.14em;font-size:9px}
+.receipt b{color:var(--cream);font-weight:500}
+.receipt .hi{color:var(--signal)}
+
+.sc-dl{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:16px;
+  padding-top:14px;border-top:1px solid var(--line)}
+.sc-dl .sc-t{font:500 9.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  color:var(--faint)}
+.sc-dl a{font-size:12.5px;color:var(--dim);text-decoration:none;
+  border-bottom:1px solid var(--line-2);padding-bottom:2px}
+.sc-dl a:hover{color:var(--signal);border-bottom-color:var(--signal)}
+.sc-dl i{font-style:normal;color:var(--ghost)}
+
+/* ── the punch — the campaign frame, the ask ─────────────────────── */
+.punch{padding-block:clamp(56px,7.5vw,108px);border-bottom:1px solid var(--line)}
+.punch .shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.82fr);
+  gap:clamp(28px,4.5vw,72px);align-items:center}
+.punch h2{font-weight:700;font-size:clamp(3.4rem,8.5vw,7.6rem);letter-spacing:-.055em;
+  line-height:.88;margin-top:clamp(14px,2vw,20px);text-transform:uppercase}
+.punch h2 em{font-style:normal;color:var(--signal)}
+.punch .lede{margin-top:clamp(16px,2vw,24px);max-width:44ch}
+.punch .ctas{margin-top:clamp(20px,2.6vw,30px)}
+.punch figure{margin:0;position:relative}
+.punch img{width:100%;height:auto;background:var(--raise);position:relative;z-index:1}
+/* the frame it hangs off — the page's one loud chartreuse edge */
+.punch figure::after{content:"";position:absolute;inset:0;
+  transform:translate(14px,14px);border:2px solid var(--signal);z-index:0}
+.punch figcaption{margin-top:14px;font:500 9.5px/1.5 var(--mono);letter-spacing:.16em;
+  text-transform:uppercase;color:var(--faint)}
+@media(max-width:860px){.punch .shell{grid-template-columns:1fr}
+  .punch figure{order:-1;max-width:420px}}
+
+/* ── get ─────────────────────────────────────────────────────────── */
+.close-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);
+  gap:clamp(28px,4vw,64px);margin-top:clamp(22px,3vw,34px)}
+@media(max-width:860px){.close-grid{grid-template-columns:1fr}}
+.spec{border:1px solid var(--line);background:var(--raise);padding:22px 24px}
+.spec h3{font-weight:600;font-size:14px;letter-spacing:-.02em;margin-bottom:14px}
+.spec dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:9px 18px;
+  font-size:12.5px}
+.spec dt{font:500 10px/1.5 var(--mono);letter-spacing:.13em;text-transform:uppercase;
+  color:var(--faint)}
+.spec dd{margin:0;color:var(--dim)}
+
+.foot{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  padding-block:26px;font-size:12.5px;color:var(--faint)}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="shell">
+    <span class="lk" id="lockup"></span>
+    <nav>
+      <a href="#scene">See it work</a>
+      <a href="#runs">What it drives</a>
+      <a href="#get">Get it</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="shell">
+    <div>
+      <span class="eyebrow">Local · your GPU · your weights · <b>$0.00 a picture</b></span>
+      <h1>Every model you own,<br>in one conversation<em>.</em></h1>
+      <p class="lede">Pixal sits beside the ComfyUI you already run and drives it — every
+        checkpoint, LoRA, video model and upscaler on your disk. You describe it, you correct it,
+        it re-renders. <b>Nothing to re-wire, nothing to re-download.</b></p>
+      <div class="ctas">
+        <!-- TODO: swap for the real release URL at first tag. -->
+        <button class="btn btn-1" type="button">Download for Windows <i aria-hidden="true">→</i></button>
+        <a class="btn btn-2" href="#scene">See it work</a>
+        <span class="note">Pre-release · Windows first</span>
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="hint">drag to turn</div>
+    </div>
+  </div>
+</section>
+
+<section class="runs" id="runs">
+  <div class="shell">
+    <span class="t">Drives</span>
+    <ul>
+      <li><b>Krea 2</b></li>
+      <li><b>Flux 2 Klein</b></li>
+      <li><b>Qwen Image</b></li>
+      <li><b>Z-Image</b></li>
+      <li><b>Anima</b></li>
+      <li><b>MiniMax H3</b></li>
+      <li><b>LTX 2.5</b></li>
+      <li><b>NVIDIA PiD</b></li>
+      <li>…and the rest of your shelf</li>
+    </ul>
+  </div>
+</section>
+
+<!-- The example. Assets are all assets/an_* — swapping in a better scene is a
+     matter of replacing those files and the eleven captions. -->
+<section class="act" id="scene">
+  <div class="shell">
+    <span class="eyebrow">One scene, all the way through</span>
+    <h2 class="rise">Nobody wrote a prompt.<br><em>They had a conversation.</em></h2>
+    <p class="lede rise">Every frame below is a real render, in order, each one produced by a
+      single sentence of correction. Nothing was specified up front and nothing was re-prompted
+      from scratch. <b>It was corrected into existence</b> — then animated and finished without
+      another word being written.</p>
+
+    <div class="sc-strip rise">
+      <figure><img src="assets/an_step01.webp" width="232" height="415" loading="lazy" alt="A dark-haired girl in front of a red and teal mech in a neon city."><figcaption><span class="sc-n">01</span>a cyber mech neon dark girl, year 3000</figcaption></figure>
+      <figure><img src="assets/an_step02.webp" width="232" height="415" loading="lazy" alt="The same scene with the girl now platinum blonde."><figcaption><span class="sc-n">02</span>platinum blonde, less boring mech</figcaption></figure>
+      <figure><img src="assets/an_step03.webp" width="232" height="415" loading="lazy" alt="The girl seated, cleaning a large futuristic rifle."><figcaption><span class="sc-n">03</span>sitting, cleaning her gun</figcaption></figure>
+      <figure><img src="assets/an_step04.webp" width="232" height="415" loading="lazy" alt="The girl small against a much larger mech, emphasising scale."><figcaption><span class="sc-n">04</span>he is huge — show that scale</figcaption></figure>
+      <figure><img src="assets/an_step05.webp" width="232" height="415" loading="lazy" alt="The girl in full armour on a white and purple Japanese-styled mech."><figcaption><span class="sc-n">05</span>full armour, japanese mech</figcaption></figure>
+      <figure><img src="assets/an_step06.webp" width="232" height="415" loading="lazy" alt="The mech's head reduced to a flat plate with a red visor."><figcaption><span class="sc-n">06</span>less personality, less of a face</figcaption></figure>
+      <figure><img src="assets/an_step07.webp" width="232" height="415" loading="lazy" alt="A clean angular white mech with the spikes removed."><figcaption><span class="sc-n">07</span>remove the spikes</figcaption></figure>
+      <figure><img src="assets/an_step08.webp" width="232" height="415" loading="lazy" alt="The girl riding on the mech's back as it jets across red alien terrain."><figcaption><span class="sc-n">08</span>riding his back, another planet</figcaption></figure>
+      <figure><img src="assets/an_step09.webp" width="232" height="415" loading="lazy" alt="The same scene with the mech's lights shifted to blue."><figcaption><span class="sc-n">09</span>make the lights blue</figcaption></figure>
+      <figure><img src="assets/an_step10.webp" width="232" height="415" loading="lazy" alt="The mech restyled away from a western silhouette."><figcaption><span class="sc-n">10</span>don't make it look so american</figcaption></figure>
+      <figure><img src="assets/an_step11.webp" width="232" height="415" loading="lazy" alt="The final frame: a dark polished mech named Onyx flying over canyon plains at twilight."><figcaption><span class="sc-n">11</span>sleeker, dark and shiny — <b>his name is onyx</b></figcaption></figure>
+    </div>
+
+    <div class="sc-band rise">
+      <figure>
+        <video src="assets/an_onyx-h3.mp4" poster="assets/an_onyx-h3-poster.webp"
+               width="768" height="1344" controls playsinline preload="none"
+               aria-label="Frame 11 animated for ten seconds with sound: the mech banks and dives over the canyon as the rider shouts."></video>
+        <img class="sc-fall" src="assets/an_onyx-h3-poster.webp" width="768" height="1344"
+             loading="lazy" alt="A frame from the ten-second clip: the mech diving over the canyon, engines flaring.">
+      </figure>
+
+      <div>
+        <div class="sc-pair">
+          <figure>
+            <img src="assets/an_onyx-vsr-before.webp" width="580" height="480" loading="lazy"
+                 alt="A crop of the clip enlarged the way a player would enlarge it: lashes and hair read soft.">
+            <figcaption>the clip, enlarged</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/an_onyx-vsr-after.webp" width="580" height="480" loading="lazy"
+                 alt="The same crop from the RTX VSR result: lashes, hair strands and armour edges resolve.">
+            <figcaption>RTX VSR 2×</figcaption>
+          </figure>
+        </div>
+
+        <div class="sc-rcpt">
+          <div class="receipt"><em>frame 11</em><span><b>Genesis</b> Krea 2</span>
+            <span>linear/euler</span><span>8 steps</span><span>cfg 1.0</span>
+            <span class="hi">→ PiD 4× · 4224×7552</span></div>
+          <div class="receipt"><em>motion</em><span><b>MiniMax H3</b> FL2VA</span>
+            <span>243f @ 24fps</span><span class="hi">synced audio · 465s</span></div>
+          <div class="receipt"><em>finish</em><span><b>RTX Video SR</b> High 2×</span>
+            <span class="hi">→ 1536×2688 · 43.5s</span></div>
+        </div>
+
+        <p class="lede rise" style="margin-top:14px;max-width:62ch">No motion prompt was written
+          either: Pixal read frame 11, described what it saw, and wrote MiniMax H3's brief in H3's
+          own three-field format — timed beats, a soundscape, one line of dialogue.
+          <b>The audio is generated with the picture</b>, in sync.</p>
+
+        <div class="sc-dl">
+          <span class="sc-t">Originals</span>
+          <a href="assets/dl/onyx-still-pid4x-4224x7552.png" download>still · PNG 4224×7552 <i>45 MB</i></a>
+          <a href="assets/dl/onyx-h3-768x1344-10s.mp4" download>clip · MP4 <i>16 MB</i></a>
+          <a href="assets/dl/onyx-h3-vsr2x-1536x2688-10s.mp4" download>clip 2× · MP4 <i>53 MB</i></a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- The punch. She reached up and took the whole thing — the same frame the
+     installer wizard wears, rendered by Pixal itself and directed in chat.
+     Full crop, hard edges, the chartreuse frame it hangs off. -->
+<section class="punch" id="punch">
+  <div class="shell">
+    <div>
+      <span class="eyebrow">The whole thing · one grab · <b>nothing missing</b></span>
+      <h2 class="rise">Get<br>Pixal<em>.</em></h2>
+      <p class="lede rise">Every piece lands where it belongs — models catalogued, graphs
+        already right, nothing broken on arrival. <b>Rendered by Pixal, directed in a
+        conversation</b>, start to finish.</p>
+      <div class="ctas rise">
+        <a class="btn btn-1" href="#get">Download <i aria-hidden="true">→</i></a>
+      </div>
+    </div>
+    <figure class="rise">
+      <img src="assets/get-cube.webp"
+           srcset="assets/get-cube-640.webp 640w, assets/get-cube.webp 1080w"
+           sizes="(max-width:860px) 90vw, 40vw"
+           width="1080" height="1920" loading="lazy"
+           alt="A girl in a chartreuse beanie reaches up to a green glass cube assembling itself from a cloud of glass pixels against a clear blue sky.">
+      <figcaption>krea 2 turbo · seed 35735140 · directed in chat</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="act" id="get" style="border-bottom:0">
+  <div class="shell">
+    <span class="eyebrow">Get it</span>
+    <h2 class="rise">Runs on your machine.<br>Costs <em>nothing</em> per picture.</h2>
+    <div class="close-grid">
+      <div>
+        <p class="lede">No account, no queue, no upload. Pixal installs <b>beside</b> ComfyUI,
+          never inside it — it reads the install you already have, names exactly what each recipe
+          is missing, and leaves your launcher alone. Remove it and nothing changed.</p>
+        <div class="ctas">
+          <button class="btn btn-1" type="button">Download for Windows <i aria-hidden="true">→</i></button>
+          <button class="btn btn-2" type="button">Source on GitHub</button>
+        </div>
+        <p class="note" style="margin-top:16px">Pre-release · both links go live at v0.1</p>
+      </div>
+      <div class="spec">
+        <h3>What it needs</h3>
+        <dl>
+          <dt>OS</dt><dd>Windows 11 · Windows first</dd>
+          <dt>GPU</dt><dd>NVIDIA · 16 GB and up</dd>
+          <dt>Quantized</dt><dd>GGUF · INT8 · NVFP4 · 8 GB</dd>
+          <dt>Video</dt><dd>24 GB for H3</dd>
+          <dt>Engine</dt><dd>the ComfyUI you already run</dd>
+          <dt>Weights</dt><dd>yours, on your disk</dd>
+          <dt>Phone</dt><dd>any browser on your network</dd>
+          <dt>Account</dt><dd>none, ever</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="foot">
+      <span>Pixal — chat in, images out</span>
+      <span>No gradients were harmed · radius: 0</span>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+/* NOTE for deploy: three is pulled from the app's vendor copy so there is one
+   source of truth while this page is in review. Shipping site/ on its own
+   needs that file copied to site/vendor/ (or a tree-shaken build — the full
+   module is 1.27 MB raw, ~330 KB over the wire). */
+import * as THREE from "../web/vendor/three.module.js";
+
+/* ── the flat lockup, inlined ────────────────────────────────────
+   Inlined rather than <img> so currentColor reaches the mark and the dot
+   keeps its own class — colour cannot cross an <img> boundary. */
+(async () => {
+  const svg = new DOMParser().parseFromString(
+    await (await fetch("../brand/pixal-lockup.svg")).text(), "image/svg+xml").documentElement;
+  svg.removeAttribute("width"); svg.removeAttribute("height");
+  document.getElementById("lockup").append(svg);
+})();
+
+/* ── reveal ──────────────────────────────────────────────────── */
+const io = new IntersectionObserver((es) => {
+  for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+}, { rootMargin: "0px 0px -8% 0px" });
+for (const el of document.querySelectorAll(".rise")) io.observe(el);
+
+/* ── the mark, in four plates ────────────────────────────────────
+   Four shapes rather than one extruded compound path: it is what lets them
+   sit at different depths, and in the flat path the bubble counter touches
+   the outer contour at four points, which tears any triangulation. */
+const SIGNAL = 0xd6f32f;
+const FLIP = (y) => 100 - y, HALF = Math.PI / 2, R = 5.5;
+
+function plate(x0, x1, yTopSvg, yBotSvg, [bl, br, tr, tl]) {
+  const yb = FLIP(yBotSvg), yt = FLIP(yTopSvg);
+  const s = new THREE.Shape();
+  s.moveTo(x0 + bl, yb);
+  s.lineTo(x1 - br, yb); if (br) s.absarc(x1 - br, yb + br, br, -HALF, 0, false);
+  s.lineTo(x1, yt - tr); if (tr) s.absarc(x1 - tr, yt - tr, tr, 0, HALF, false);
+  s.lineTo(x0 + tl, yt); if (tl) s.absarc(x0 + tl, yt - tl, tl, HALF, Math.PI, false);
+  s.lineTo(x0, yb + bl); if (bl) s.absarc(x0 + bl, yb + bl, bl, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+const tail = new THREE.Shape();          // bottom rail, drawn out into the tail
+tail.moveTo(22.3, FLIP(100));
+tail.lineTo(72.2, FLIP(100));
+tail.absarc(72.2, FLIP(100) + R, R, -HALF, 0, false);
+tail.lineTo(77.7, FLIP(77.7));
+tail.lineTo(41.0, FLIP(77.7));
+
+const PLATES = [
+  { shape: plate(22.3, 77.7, 0.0, 22.3, [0, 0, R, R]), z: -22 },
+  { shape: plate(77.7, 100.0, 22.3, 77.7, [0, R, R, 0]), z: -22 },
+  { shape: plate(0.0, 22.3, 22.3, 100.0, [R, 0, 0, R]), z: 0 },
+  { shape: tail, z: 0 },
+];
+
+const stage = document.getElementById("stage");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+// 1.75, not 2: the top of the DPR range quadruples fill cost for a difference
+// nobody can see on a 460px square.
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.98;
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 30);
+camera.position.set(0, 0.2, 6.1);
+camera.lookAt(0, 0, 0);
+
+// A three-panel lightbox baked once to an env map — what puts a cool edge on
+// black plastic. The chartreuse panel stays DIM: pushed up it turns the
+// housing olive, because metal reflects the environment it sits in.
+const env = new THREE.Scene();
+env.background = new THREE.Color(0x05070a);
+const panel = (rgb, w, h, pos, rot) => {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(...rgb), side: THREE.DoubleSide }));
+  m.position.set(...pos); m.rotation.set(...rot); env.add(m);
+};
+panel([3.4, 3.6, 4.0], 8, 3, [0, 4.5, 1], [Math.PI / 2, 0, 0]);
+panel([0.5, 0.58, 0.12], 3, 6, [5, 0, 1], [0, -Math.PI / 2.4, 0]);
+panel([0.3, 0.38, 0.6], 3, 6, [-5, 0, 1], [0, Math.PI / 2.4, 0]);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(env, 0.05).texture;
+env.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+pmrem.dispose();
+
+// Three lights, not six: physical shading cost scales with light count across
+// every mesh, and the env map already does most of the modelling.
+scene.add(new THREE.AmbientLight(0x252c36, 0.6));
+const key = new THREE.DirectionalLight(0xc8d9ec, 2.1);
+key.position.set(-4, 4.5, 6);
+scene.add(key);
+
+// Standard, not physical: clearcoat is an extra BRDF lobe per light per
+// fragment, buying almost nothing on a matte housing.
+const inkMat = new THREE.MeshStandardMaterial({
+  color: 0x131318, roughness: 0.34, metalness: 0.12, envMapIntensity: 0.95 });
+// The one material that must skip tone mapping. Any emissive bright enough to
+// read as a lamp gets desaturated toward white by ACES — which is how the chip
+// stopped being chartreuse at all. Unlit + toneMapped:false is the literal
+// brand value, and the PointLight beside it does the work of looking bright.
+const lampMat = new THREE.MeshBasicMaterial({ color: SIGNAL, toneMapped: false });
+
+const SCALE = 0.02;
+const mark = new THREE.Group(), inner = new THREE.Group();
+mark.add(inner); mark.scale.setScalar(SCALE); scene.add(mark);
+
+const extrude = (shape, depth, bevel) => new THREE.ExtrudeGeometry(shape, {
+  depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+  bevelSegments: 2, curveSegments: 10 });
+
+for (const p of PLATES) {
+  const m = new THREE.Mesh(extrude(p.shape, 20, 1.4), inkMat);
+  m.position.z = p.z;
+  inner.add(m);
+}
+const chip = new THREE.Mesh(
+  extrude(plate(36.4, 63.6, 37.3, 62.7, [3.5, 3.5, 3.5, 3.5]), 9, 0.9), lampMat);
+chip.position.z = 14;
+inner.add(chip);
+// The light lives inside the group, so the spill swings with the object.
+// (Object3D.position is a read-only accessor — it must be .set(), never
+// reassigned.)
+const lamp = new THREE.PointLight(SIGNAL, 4.5, 2.6, 2);
+lamp.position.set(50, 50, 26);
+inner.add(lamp);
+inner.position.set(-50, -50, 0);
+
+/* ── motion ──────────────────────────────────────────────────────
+   Two rules carried over from the app's WebGL, both load-bearing: a stopped
+   loop is a CANCELLED rAF (an early-returning callback still wakes the page
+   60 times a second and pins the compositor), and a frame identical to the
+   last one is not drawn at all. Between them the hero costs nothing while
+   you read the page. */
+const OPEN_MS = 1300, SETTLE_MS = 6000, FRAME_MS = 33;
+const REST = { x: -0.13, y: 0.38 };
+
+let rotY = 0, tiltX = 0, velY = 0;
+let targetY = REST.y, targetX = REST.x;
+let dragging = false, lastX = 0, lastY = 0;
+let raf = 0, running = false, last = 0, awake = 0, t0 = 0;
+let opened = reduced, seen = false, drawnY = NaN, drawnX = NaN;
+
+const size = () => {
+  const w = stage.clientWidth || 1;
+  renderer.setSize(w, w, false);
+  drawnY = NaN;                        // force one redraw at the new size
+  sync();
+};
+new ResizeObserver(size).observe(stage);
+
+// Scrolled past the hero, the mark stops rendering entirely.
+new IntersectionObserver(([e]) => { seen = e.isIntersecting; sync(); },
+  { threshold: 0.05 }).observe(stage);
+
+const wanted = (now) => {
+  if (dragging) return true;
+  if (reduced || !seen) return false;
+  if (document.hidden || !document.hasFocus()) return false;
+  return now - awake < SETTLE_MS || now - t0 < OPEN_MS + 200;
+};
+const ease = (p) => 1 - Math.pow(1 - p, 3);
+
+const draw = (now) => {
+  const busy = dragging || Math.abs(velY) > 0.0006;
+  if (!busy && now - last < FRAME_MS) return;
+  last = now;
+
+  if (!opened) {
+    // Opens on the flat mark, then turns — the first painted frame is the logo.
+    const p = Math.min(1, (now - t0) / OPEN_MS);
+    rotY = REST.y * ease(p);
+    tiltX = REST.x * ease(p);
+    if (p >= 1) opened = true;
+  } else {
+    if (!dragging) velY *= 0.94;
+    rotY += velY;
+    if (!dragging && Math.abs(velY) < 0.0006) rotY += (targetY - rotY) * 0.12;
+    tiltX += (targetX - tiltX) * 0.09;
+  }
+
+  if (Math.abs(rotY - drawnY) < 2e-4 && Math.abs(tiltX - drawnX) < 2e-4) return;
+  drawnY = rotY; drawnX = tiltX;
+  mark.rotation.set(tiltX, rotY, 0);
+  renderer.render(scene, camera);
+};
+
+const frame = (now) => {
+  if (!wanted(now)) { running = false; raf = 0; return; }
+  raf = requestAnimationFrame(frame);
+  draw(now);
+};
+function sync() {
+  const now = performance.now();
+  if (wanted(now)) {
+    if (!running) { running = true; last = 0; raf = requestAnimationFrame(frame); }
+  } else if (running) { cancelAnimationFrame(raf); running = false; raf = 0; }
+}
+
+// Proximity is measured against the canvas, not the window, so reading the
+// copy beside it does not keep nudging the mark.
+const PROX = 300;
+addEventListener("pointermove", (e) => {
+  awake = performance.now();
+  if (!reduced && opened && !dragging) {
+    const r = renderer.domElement.getBoundingClientRect();
+    const dx = (e.clientX - (r.left + r.width / 2)) / PROX;
+    const dy = (e.clientY - (r.top + r.height / 2)) / PROX;
+    const near = Math.max(0, 1 - Math.hypot(dx, dy) / 2.4);
+    targetY = REST.y + dx * 0.42 * near;
+    targetX = REST.x - dy * 0.34 * near;
+  }
+  if (dragging) {
+    velY = (e.clientX - lastX) * 0.007;
+    targetX += (e.clientY - lastY) * 0.003;
+    lastX = e.clientX; lastY = e.clientY;
+  }
+  sync();
+}, { passive: true });
+
+stage.addEventListener("pointerdown", (e) => {
+  dragging = true; opened = true; lastX = e.clientX; lastY = e.clientY;
+  awake = performance.now(); stage.classList.add("dragging");
+  stage.setPointerCapture(e.pointerId); sync();
+});
+addEventListener("pointerup", (e) => {
+  dragging = false; awake = performance.now(); stage.classList.remove("dragging");
+  try { stage.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+  sync();
+});
+stage.addEventListener("dblclick", () => {
+  velY = 0; targetY = 0; targetX = 0; awake = performance.now(); sync();
+});
+document.addEventListener("visibilitychange", sync);
+addEventListener("focus", sync);
+addEventListener("blur", sync);
+
+t0 = performance.now();
+awake = t0;
+if (reduced) { rotY = REST.y; tiltX = REST.x; }
+size();
+</script>
+</body>
+</html>

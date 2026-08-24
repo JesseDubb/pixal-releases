@@ -314,6 +314,34 @@ class SavedStyleRoutingTests(unittest.TestCase):
             server._apply_opts(args, {"style": "realism"})
         self.assertNotIn("_style", args)
 
+    def test_a_direction_on_the_photo_graph_names_itself(self):
+        """Krea 2 has no anime graph, so picking Anime runs the realism recipe
+        with the craft register spliced in - and the card said "Realism" over
+        a cel-shaded picture. The direction is a choice too, so it tags."""
+        args = {}
+        with catalog(KREA):
+            server._apply_opts(args, {"style": "anime", "model": KREA["rel"]})
+        self.assertEqual(args["_style"], {"id": "", "name": "Anime",
+                                          "base": "realism", "direction": True})
+
+    def test_a_graph_that_draws_the_style_itself_keeps_its_own_name(self):
+        """On a recipe style_directive does not fire for, the recipe name IS
+        the true one - a second tag would only ever restate it."""
+        args = {}
+        with catalog(KREA):
+            server._apply_opts(args, {"style": "anime"})
+        self.assertEqual(server.effective_recipe({"style": "anime"}), "anime")
+        self.assertNotIn("_style", args)
+
+    def test_a_saved_style_still_outranks_a_direction(self):
+        """The preset is the more specific name for what ran."""
+        record = server.validate_saved_style(style())
+        args = {}
+        with patch.dict(server.SAVED_STYLES, {record["id"]: record}), catalog(KREA):
+            server._apply_opts(args, {"saved_style": record["id"],
+                                      "style": "anime", "model": KREA["rel"]})
+        self.assertEqual(args["_style"]["name"], record["name"])
+
     def test_the_style_tag_never_reaches_a_builder_signature(self):
         """It rides in args only as far as submit(), which pops it the way it
         pops seed. If it ever matched a builder parameter it would be passed

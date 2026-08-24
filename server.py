@@ -371,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.6b"
+PIXAL_VERSION = "1.0.7b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -9826,6 +9826,45 @@ def brain_badge():
             "vision": bool(d.get("vision")), "nsfw": bool(d.get("nsfw"))}
 
 
+def brain_vision():
+    """Can the brain that will answer the next review actually SEE? Three
+    different facts get called "vision" in this codebase and the UI had been
+    showing the weakest one:
+
+      1. the filename says VL (_pretty_name's regex - the VISION chip in the
+         brain picker, which is why a chip can sit on a brain with no
+         projector on disk at all),
+      2. an mmproj really sits beside the gguf (_local_llm_mmproj),
+      3. that projector answered this session's red-square smoke test
+         (state["mmproj"] set; demoted-blind records it as blind_mmproj).
+
+    Settings' Vision section claims a reviewer, so it has to read 2 and 3 -
+    saying "the brain reviews directly" off fact 1 would lie in exactly the
+    blind case where the ComfyUI fallback is the thing that matters.
+
+    "sighted" is the honest present tense: a projector on disk that has not
+    been demoted. Not-yet-spawned counts - the smoke test runs at spawn and
+    demotes then, so a cold brain with a projector is sighted until proven
+    otherwise, which is what the routing itself assumes.
+    """
+    cfg = load_config()["llm"]
+    if (cfg.get("model") or "") != "local":
+        # A cloud brain's eyes are the preset's business (direct_motion
+        # attaches images itself); Pixal cannot probe them from here.
+        return {"local": False, "sighted": False, "title": "", "why": ""}
+    path = (cfg.get("local_model") or "").strip()
+    title = _pretty_name(Path(path).stem).get("title") if path else ""
+    mmproj = _local_llm_mmproj(path) if path else None
+    if not mmproj:
+        return {"local": True, "sighted": False, "title": title or "",
+                "why": "no projector beside the model file"}
+    st = _llm_state()
+    if st.get("blind_mmproj") == mmproj and not st.get("mmproj"):
+        return {"local": True, "sighted": False, "title": title or "",
+                "why": "its projector failed this session's smoke test"}
+    return {"local": True, "sighted": True, "title": title or "", "why": ""}
+
+
 def local_llm_models():
     """Chat-capable GGUFs under every model root (LLM + text_encoders trees).
     mmproj files are vision adapters, not chat models."""
@@ -9857,6 +9896,22 @@ async def local_llm_up():
                 return r.status == 200
     except Exception:
         return False
+
+async def _local_llm_serving_model():
+    """The model path the server on the brain port actually loaded (the
+    /v1/models id), or None when it won't say. With no pidfile this is the
+    only way to tell our orphaned spawn from a stranger's server holding the
+    port - the served gguf path is the one fact both sides can see."""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(LOCAL_LLM_URL + "/models",
+                             timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+        return (data.get("data") or [{}])[0].get("id") or None
+    except Exception:
+        return None
 
 async def local_llm_port_open():
     """Liveness. A generating llama server holds its global lock and stops
@@ -10067,9 +10122,36 @@ async def _ensure_local_llm(cid=None):
         return "pick a local chat model in settings first"
     if not Path(want).is_file():
         return f"local model file is gone: {Path(want).name}"
-    if up and not st:
-        return None                  # truly external (run_llm.bat) - use as-is, never kill
     mmproj = _local_llm_mmproj(want)
+    if up and not st:
+        # Port held, no pidfile: a stranger's server (run_llm.bat) - or OUR
+        # brain whose state was lost (free_brain_vram's docstring tells how a
+        # pidfile used to come off a live brain). Adopting it as "external"
+        # blinded it permanently: every vision gate reads state["mmproj"], an
+        # unregistered server has no state, so chat flattened attached images
+        # and brain_vl_read rejected sighted answers as "no live projector" -
+        # the look fell to the 8B critic on a brain whose projector was loaded
+        # and answering (Jesse, 2026-08-24: the 4B heretic answered the red
+        # probe "Red" while every look routed to the critic). Re-register when
+        # the served model IS the configured one: same smoke test a fresh
+        # spawn gets, then the gates have their fact. pid stays None - the
+        # pidfile is what licenses reaper/release/free_brain_vram to kill,
+        # and we cannot prove we spawned this one.
+        serving = await _local_llm_serving_model()
+        if not serving or os.path.normcase(str(serving)) != os.path.normcase(want):
+            return None              # a stranger's server - use as-is, never kill
+        adopted = {"pid": None, "model": want, "gpu_layers": gpu_layers,
+                   "adopted": True}
+        if mmproj and not await _vision_smoke_test():
+            adopted.update(mmproj=None, blind_mmproj=mmproj)
+            print("[pixal] adopted brain failed the vision probe - registered "
+                  "blind for this session", flush=True)
+        else:
+            adopted["mmproj"] = mmproj
+            print(f"[pixal] re-registered the running brain - "
+                  f"{brain_display_name(want, mmproj)}", flush=True)
+        LLM_STATE.write_text(json.dumps(adopted), encoding="utf-8")
+        return None
     # A demoted-blind server keeps "mmproj": None on purpose (every vision
     # gate reads it) and records the projector it lost as blind_mmproj - the
     # reuse check has to accept that fact too, or None never matches the path
@@ -10085,6 +10167,13 @@ async def _ensure_local_llm(cid=None):
         return python_error
 
     if up:
+        if st and not st.get("pid"):
+            # An adopted server we cannot prove we own: killing is off-limits,
+            # and spawning into its held port just crashes the new load into
+            # the bind. Say so plainly instead of "the local brain crashed".
+            return (f"the brain port is held by an adopted server running "
+                    f"{Path(st.get('model') or '?').name} - stop it once and "
+                    "the new settings take over")
         _llm_kill(st.get("pid"))     # ours, wrong model - replace
         for _ in range(20):          # wait for the PORT to actually free
             if not await local_llm_port_open():
@@ -11163,9 +11252,10 @@ async def brain_vl_read(staged, question, cid=None, timeout=120):
                         "brain can see")
     state = _llm_state()
     mmproj = _local_llm_mmproj(cfg.get("local_model") or "")
-    if state.get("pid") and not state.get("mmproj") and mmproj:
-        # Running and demoted-blind (its projector failed the smoke test this
-        # session): a respawn changes nothing, so don't ask.
+    if mmproj and not state.get("mmproj") and state.get("blind_mmproj") == mmproj:
+        # Demoted-blind (its projector failed the smoke test this session - at
+        # spawn, or at an adoption that re-registered it pidless): a respawn
+        # changes nothing, so don't ask.
         return _vl_miss("the brain is running blind - its projector failed "
                         "this session's smoke test")
     if not mmproj:
@@ -11833,6 +11923,25 @@ def _apply_opts(args, opts):
                                          style.get("tuning"))
             if overrides:
                 args["overrides"] = overrides
+
+    if not style:
+        # No saved preset - but a style DIRECTION is still something the user
+        # picked, and it was the only thing the receipt threw away. Krea 2 has
+        # no anime or fantasy graph, so choosing either runs the PHOTO recipe
+        # with style_directive's craft register spliced in (store.js's
+        # activeRecipeId says the same on its side). The card then named the
+        # graph - "Realism" over a cel-shaded girl the composer was labelling
+        # Anime (Jesse, 2026-08-24: "Anime it should say instead of realism").
+        # Same answer the saved-style tag got four lines up: name what was
+        # CHOSEN, leave the graph in the tooltip. Gated on style_directive
+        # rather than on opts["style"] alone, so the tag can only appear when
+        # the direction really reached the writer - on a graph that draws the
+        # style natively, style_directive returns "" and the recipe name is
+        # already the true one.
+        direction = (opts.get("style") or "").strip()
+        if direction and style_directive(opts):
+            args["_style"] = {"id": "", "name": direction.title(),
+                              "base": recipe, "direction": True}
 
     # The composer's stack wins over the style's file. Selecting a style mirrors
     # its plan into the composer, so this IS the style's plan until the user
@@ -13017,7 +13126,10 @@ def style_directive(opts):
             f"that register - {craft} - and drop the photo-caption rules that "
             f"assume a camera in a real room: no film grain, no skin defects, "
             f"no lens language. Name the medium in the first clause so the "
-            f"model commits to it.]")
+            f"model commits to it. When you SPEAK to the user about this "
+            f"render, call it {'an' if style[0] in 'aeiou' else 'a'} {style} "
+            f"shot - the recipe name is plumbing, and \"a realism shot\" for "
+            f"an anime ask reads as the wrong thing having run.]")
 
 
 def build_directive(opts, local=False):
@@ -13328,6 +13440,9 @@ async def settings_get(_req):
                     "local_idle_minutes", LLM_IDLE_EVICT_S // 60),
                 "local_llms": local_llm_models()},
         "critic": {"model": cfg["critic"]["model"],
+                   # The Vision section names whoever ACTUALLY reviews, and
+                   # brain_vl_read gets first refusal - see brain_vision.
+                   "brain": brain_vision(),
                    "installed": [{"name": n, "nsfw": _pretty_name(n)["nsfw"]}
                                  for n in installed_vl_models()]},
         "upscale": {**cfg["upscale"],
@@ -15262,6 +15377,83 @@ async def input_ref_type_post(req):
             {"ok": False, "error": f"reference type could not be saved: {exc}"}, status=500)
     return web.json_response({"ok": True, "name": name, "kind": kind})
 
+_PWA_SCAN = {"at": 0.0, "id": ""}
+_PWA_SCAN_TTL = 20.0          # status() polls once a second; the disk does not
+PWA_APP_NAME = "Pixal"        # the manifest "name", which Chrome writes as <name>.ico
+
+
+def _crx_dir(app_id):
+    base = os.environ.get("LOCALAPPDATA") or ""
+    return (Path(base) / "Google" / "Chrome" / "User Data" / "Default"
+            / "Web Applications" / ("_crx_" + app_id)) if base else Path("")
+
+
+def discover_chrome_app_id():
+    """Chrome's id for an installed Pixal PWA, found on disk.
+
+    Nothing ever WROTE chrome_app_id. Both readers - pixal.vbs's ChromeAppId
+    and pwa_installed - took it from config.json, and the only way it ever got
+    there was by hand. So installing the PWA connected it to nothing: the
+    launcher kept falling through to `chrome --app=`, and THAT window belongs
+    to Chrome on the taskbar. Hence a pinned Pixal wearing Chrome's icon, and
+    a second, blurry button beside it on every open (Jesse, 2026-08-24).
+    Fixing the install nudge could not have fixed this by itself - the nudge
+    installs the PWA, and then nobody learns the id.
+
+    Chrome keeps one _crx_<id> folder per installed app and drops
+    "<App name>.ico" inside it. That filename is the app's manifest name, and
+    it is the only place the name survives on disk without parsing Chrome's
+    preferences - so it is what we match on. Default profile only, because
+    --profile-directory=Default is what pixal.vbs launches with: an id found
+    under another profile names an app that launch cannot open.
+    """
+    base = os.environ.get("LOCALAPPDATA") or ""
+    if not base:
+        return ""
+    root = (Path(base) / "Google" / "Chrome" / "User Data" / "Default"
+            / "Web Applications")
+    want = PWA_APP_NAME.lower() + ".ico"
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return ""                        # no Chrome, or no profile yet
+    for d in entries:
+        if not d.name.startswith("_crx_"):
+            continue
+        try:
+            if any(f.name.lower() == want for f in d.iterdir()):
+                return d.name[len("_crx_"):]
+        except OSError:
+            continue                     # a folder we cannot read is not ours
+    return ""
+
+
+def adopt_chrome_app_id(now=None):
+    """The app id in force - finding and recording one when config has none.
+
+    Writes config only when the answer CHANGES: status() asks this once a
+    second and it must not rewrite the file at that rate. The empty answer is
+    cached too, so a machine with no PWA installed is not walking the folder
+    on every poll forever."""
+    now = time.time() if now is None else now
+    cfg = load_config()
+    app_id = str(cfg.get("chrome_app_id") or "").strip()
+    if app_id and _crx_dir(app_id).is_dir():
+        return app_id                    # configured, and really installed
+    if now - _PWA_SCAN["at"] < _PWA_SCAN_TTL:
+        return _PWA_SCAN["id"]
+    found = discover_chrome_app_id()
+    _PWA_SCAN.update(at=now, id=found)
+    if found and found != app_id:
+        cfg["chrome_app_id"] = found
+        try:
+            save_config(cfg)
+            print("[pixal] found the installed Pixal app - " + found, flush=True)
+        except OSError as exc:
+            print("[pixal] could not record the Chrome app id: %s" % exc, flush=True)
+    return found
+
+
 def pwa_installed():
     """Whether the window can carry Pixal's own taskbar identity.
 
@@ -15272,13 +15464,10 @@ def pwa_installed():
     Windows says True: the nudge is a Windows-taskbar story."""
     if not _nt():
         return True
-    app_id = str(load_config().get("chrome_app_id") or "").strip()
-    if not app_id:
-        return False
-    base = os.environ.get("LOCALAPPDATA") or ""
-    return bool(base) and (Path(base) / "Google" / "Chrome" / "User Data"
-                           / "Default" / "Web Applications"
-                           / f"_crx_{app_id}").is_dir()
+    # adopt_chrome_app_id answers the same question the inline check used to -
+    # config names an app that is really installed - and additionally FINDS
+    # one config has never heard of, which is the state of every fresh install.
+    return bool(adopt_chrome_app_id())
 
 
 async def status(_req):

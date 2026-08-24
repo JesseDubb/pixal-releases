@@ -321,3 +321,38 @@ class WatchdogTests(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesktopShortcutIsPinnable(unittest.TestCase):
+    """Windows refuses to pin a shortcut whose target is a script, so the
+    .lnk has to name Pixal.exe - which is the whole reason that exe exists.
+    Inno's own [Icons] entry already did; this ran after it and undid it."""
+
+    def _vbs(self, tmp, make_exe):
+        root = Path(tmp)
+        (root / "web" / "icons").mkdir(parents=True)
+        (root / "web" / "icons" / "pixal-block.ico").write_bytes(b"\0")
+        (root / "pixal.vbs").write_text("'boot", encoding="utf-8")
+        if make_exe:
+            (root / "Pixal.exe").write_bytes(b"MZ")
+        with mock.patch.object(pi, "PIXAL", root):
+            return pi._shortcut_vbs(), root
+
+    def test_an_installed_tree_points_at_the_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vbs, root = self._vbs(tmp, make_exe=True)
+            self.assertIn(f'l.TargetPath = "{root / "Pixal.exe"}"', vbs)
+            self.assertNotIn("pixal.vbs\"", vbs.split("TargetPath")[1].split("\n")[0])
+
+    def test_a_source_tree_with_no_launcher_falls_back_to_the_script(self):
+        # Unpinnable, but it still opens Pixal - better than no icon at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            vbs, root = self._vbs(tmp, make_exe=False)
+            self.assertIn(f'l.TargetPath = "{root / "pixal.vbs"}"', vbs)
+
+    def test_the_icon_and_working_directory_survive_either_way(self):
+        for make_exe in (True, False):
+            with tempfile.TemporaryDirectory() as tmp:
+                vbs, root = self._vbs(tmp, make_exe=make_exe)
+                self.assertIn(f'l.WorkingDirectory = "{root}"', vbs)
+                self.assertIn("pixal-block.ico", vbs)

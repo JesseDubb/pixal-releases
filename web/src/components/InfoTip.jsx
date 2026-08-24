@@ -59,7 +59,21 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
       tabIndex={0}
       role="img"
       aria-label={text}
-      style={{ display: "inline-flex", alignItems: "center", marginLeft: SPACE[4] }}
+      // An inline-flex box takes its baseline from its first flex item, and a
+      // replaced element's baseline is its BOTTOM edge - so by default the
+      // icon stands on the text baseline with its whole body above it. At the
+      // sizes this is used (a 14px icon beside 13px Geist, whose cap height is
+      // 0.7em = 9.1px) that put the icon's centre ~2.4px above the text's, and
+      // every tip in the app read as floating (Jesse, 2026-08-24: "the info
+      // bubbles aren't vertically centered with the text beside it").
+      //
+      // vertical-align takes a LENGTH, which shifts this box's baseline - so
+      // ask for the offset that lands the icon's centre on the cap centre:
+      // bottom = capHeight/2 - size/2, with 0.35em being half of Geist's cap.
+      // In em, so it stays right at every font size the tip is dropped into -
+      // the uppercase Field labels are 11px and the section titles 13px.
+      style={{ display: "inline-flex", alignItems: "center", marginLeft: SPACE[4],
+               verticalAlign: `calc(0.35em - ${size / 2}px)` }}
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => { setShow(false); setPos(null); }}
       onFocus={() => setShow(true)}

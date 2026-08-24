@@ -166,12 +166,12 @@ class SettingsLoading(unittest.TestCase):
             # videoCfg / upscale / pidCfg
             "Default video engine", "Video upscale engine",
             "RTX Super Resolution quality", "Image upscale mode",
-            "Identity Edit finish",
+            "VAE decode",
         }
         expected_placeholders = {
             "choose a reviewer model…",          # criticInstalled arrives with cfg
             "first available",                   # videoCfg's model picker
-            "choose an upscale model…",          # upscale, Image tab
+            "choose local upscale model…",       # upscale, Image tab
             "recipe default",                    # editCfg
             "stock Z-Image VAE (recommended)",   # vae
         }

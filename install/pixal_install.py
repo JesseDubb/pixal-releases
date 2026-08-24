@@ -1087,23 +1087,138 @@ def _shortcut_vbs():
     The Desktop path is resolved by the script itself, not by Python:
     OneDrive's Known-Folder-Move (the consumer Win11 default) redirects the
     real Desktop, and %USERPROFILE%\\Desktop is then a leftover folder nobody
-    sees. SpecialFolders follows the redirect."""
+    sees. SpecialFolders follows the redirect.
+
+    Targets Pixal.exe, not pixal.vbs. Windows will not PIN a shortcut whose
+    target is a script: the .lnk opens Pixal fine from the Desktop, and
+    dragging it to the taskbar silently does nothing (Jesse, 2026-08-24:
+    "it makes a desktop icon but I can't drag it to my task bar").
+    Pixal.exe exists for exactly this reason - see pixal_launch.py, which
+    is about owning the window identity - and with no arguments it hands
+    straight to pixal.vbs, so the boot discipline is untouched. This runs
+    AFTER Inno's own [Icons] entry, which already pointed at the exe, so
+    the setup engine had been replacing a pinnable shortcut with an
+    unpinnable one."""
     # New art gets a new filename: Windows caches shortcut icons by path, so
     # repainting pixal.ico in place leaves the old picture on the Desktop.
     icon = next((p for p in (PIXAL / "web" / "icons" / "pixal-block.ico",
                              PIXAL / "web" / "icons" / "pixal-p.ico",
                              PIXAL / "web" / "icons" / "pixal.ico") if p.is_file()), None)
+    # The .vbs is the fallback for a from-source tree that never built the
+    # launcher - unpinnable, but it still opens Pixal, which beats no icon.
+    target = PIXAL / "Pixal.exe"
+    if not target.is_file():
+        target = PIXAL / "pixal.vbs"
     return (
         'Set s = CreateObject("WScript.Shell")\n'
         'desk = s.SpecialFolders("Desktop")\n'
         'If desk = "" Then WScript.Quit 1\n'
         'Set l = s.CreateShortcut(desk & "\\Pixal.lnk")\n'
-        f'l.TargetPath = "{PIXAL / "pixal.vbs"}"\n'
+        f'l.TargetPath = "{target}"\n'
         f'l.WorkingDirectory = "{PIXAL}"\n'
         + (f'l.IconLocation = "{icon}"\n' if icon else "") +
         'l.Description = "Pixal"\n'
         'l.Save\n'
         'WScript.Echo desk & "\\Pixal.lnk"\n')
+
+
+# The AppUserModelID every Pixal shortcut must carry. pixal.vbs opens the
+# studio as `chrome --app=http://127.0.0.1:8190`, and Chrome stamps that
+# window with the AUMID "Chrome.127.0.0.1_/" (host + "_" + path, no port).
+# The taskbar folds a running window into a pinned shortcut only when the
+# two ids match - this string is the whole contract, and it is machine-
+# independent by construction. It is deliberately NOT "Chrome._crx_<id>":
+# that is an installed PWA's window identity, and a shortcut pinned to it
+# matches nothing on a machine without the PWA - i.e. every fresh install
+# (the two-button bug Jesse hit four times on 2026-08-24).
+SHORTCUT_AUMID = "Chrome.127.0.0.1_/"
+# Kept in sync with pixal.iss's [Icons] AppUserModelID - Inno stamps its own
+# shortcuts, this stamps the desktop shortcut the engine writes over them.
+
+
+def _stamp_ps1():
+    """The PowerShell that writes SHORTCUT_AUMID into a .lnk's property store.
+
+    WScript.Shell can create a shortcut but cannot reach
+    System.AppUserModel.ID - that lives in the link's IPropertyStore, which
+    only COM sees. Same shape as mklink.vbs: a generated script run once,
+    from WORK, with the path passed in so no quoting is ever interpolated.
+    """
+    return r'''
+param([Parameter(Mandatory=$true)][string]$LnkPath, [Parameter(Mandatory=$true)][string]$Aumid)
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class LnkStamp {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046"), ClassInterface(ClassInterfaceType.None)]
+    public class CShellLink {}
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {
+        int GetCount(out uint c);
+        int GetAt(uint i, out PROPERTYKEY k);
+        int GetValue(ref PROPERTYKEY k, out PROPVARIANT v);
+        int SetValue(ref PROPERTYKEY k, ref PROPVARIANT v);
+        int Commit();
+    }
+    [StructLayout(LayoutKind.Sequential, Pack=4)]
+    public struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+    [StructLayout(LayoutKind.Sequential, Size=24)]
+    public struct PROPVARIANT {
+        public ushort vt;
+        public ushort w1; public ushort w2; public ushort w3;
+        public IntPtr p;
+        public IntPtr p2;
+    }
+    [ComImport, Guid("0000010B-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPersistFile {
+        int GetClassID(out Guid g);
+        int IsDirty();
+        int Load([MarshalAs(UnmanagedType.LPWStr)] string f, uint m);
+        int Save([MarshalAs(UnmanagedType.LPWStr)] string f, bool remember);
+        int SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string f);
+        int GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string f);
+    }
+    [DllImport("ole32.dll")] public static extern void CoTaskMemFree(IntPtr p);
+    public static int Stamp(string path, string aumid) {
+        var pf = (IPersistFile)new CShellLink();
+        int hr = pf.Load(path, 2);   // STGM_READWRITE: the Save below rewrites the file
+        if (hr != 0) return hr;
+        var ps = (IPropertyStore)pf;
+        var k = new PROPERTYKEY { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = 5 };
+        var v = new PROPVARIANT();
+        v.vt = 31;
+        v.p = Marshal.StringToCoTaskMemUni(aumid);
+        try {
+            hr = ps.SetValue(ref k, ref v);
+            if (hr != 0) return hr;
+            hr = ps.Commit();
+            if (hr != 0) return hr;
+        } finally {
+            CoTaskMemFree(v.p);
+        }
+        return pf.Save(path, true);
+    }
+}
+"@
+$hr = [LnkStamp]::Stamp($LnkPath, $Aumid)
+if ($hr -ne 0) { Write-Error "stamp hr=$hr"; exit 1 }
+'''
+
+
+def _stamp_shortcut_aumid(lnk):
+    """Pin the shortcut and the future window to the same AppUserModelID.
+
+    Best effort: a shortcut without the stamp still opens Pixal, it just
+    cannot fold into its pinned taskbar button - so a failure is logged,
+    never fatal."""
+    ps1 = WORK / "stamp-aumid.ps1"
+    ps1.write_text(_stamp_ps1(), encoding="utf-16")
+    rc, out = run_out(["powershell", "-NoProfile", "-ExecutionPolicy",
+                       "Bypass", "-File", str(ps1),
+                       "-LnkPath", lnk, "-Aumid", SHORTCUT_AUMID],
+                      timeout=60)
+    if rc != 0:
+        print(f"WARNING: AppUserModelID stamp failed for {lnk}: {out}")
 
 
 def desktop_shortcut():
@@ -1126,6 +1241,7 @@ def desktop_shortcut():
     if (line.lower().endswith(".lnk") and "?" not in line
             and "\ufffd" not in line
             and not any(ord(c) < 32 for c in line)):
+        _stamp_shortcut_aumid(line)
         return line
     return "Desktop"
 

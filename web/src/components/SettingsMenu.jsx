@@ -221,7 +221,7 @@ const Chip = ({ children }) => (
 // styles were what made these panels read as a wall.
 const Field = ({ label, hint, children, sub, className }) => (
   // `sub` is for a control that only exists because of the one above it - the
-  // RTX quality tiers, the model list under "Enlarge". Left at the section's
+  // RTX quality tiers, the model list under "Upscale". Left at the section's
   // 16 the two segment rows read as unrelated peers, which is the exact
   // confusion the old five-option row had. 12 is the whole usable band: it
   // has to beat a field's internal 6 (or the sub-label looks like it belongs
@@ -407,6 +407,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const scrolledSel = useRef(false);   // scroll the saved pick into view once per open
   const [criticModel, setCriticModel] = useState("");
   const [criticInstalled, setCriticInstalled] = useState([]);
+  const [criticBrain, setCriticBrain] = useState(null);
   const [upscale, setUpscale] = useState(null);
   // The clip upscaler stores ONE string ("VSR High" / "LTX 2.5 2x"), but it
   // is really an engine plus, for RTX only, a quality. Splitting it in the UI
@@ -460,6 +461,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       setLocalGpu(Number.isInteger(d.llm.local_gpu_layers) ? d.llm.local_gpu_layers : -1);
       setCriticModel(d.critic.model);
       setCriticInstalled(d.critic.installed || []);
+      setCriticBrain(d.critic.brain || null);
       setUpscale(d.upscale || null);
       // Seed the remembered RTX tier, so opening Settings on a clip set to
       // LTX and switching to RTX lands on the tier you last chose rather
@@ -874,7 +876,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             {!vidLtx && upscale.video_available && (
               <Field className="px-ghost-in" sub label="quality"
                      hint={upscale.video_scale > 1
-                       ? `Enlarged ${upscale.video_scale}× with audio kept.`
+                       ? `Upscaled ${upscale.video_scale}× with audio kept.`
                        : "Same size, cleaned up. Audio kept."}>
                 <SegmentedControl ariaLabel="RTX Super Resolution quality"
                   value={upscale.video_mode || lastVsr.current}
@@ -944,11 +946,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Section>
         <GroupLabel>finishing</GroupLabel>
-        <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model mode enlarges the frame it already made; PiD mode repaints it tile by tile with NVIDIA's pixel-diffusion decoder. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
+        <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model mode upscales the frame it already made; PiD mode repaints it tile by tile with NVIDIA's pixel-diffusion decoder. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
                  gloss={upscale ? (
-                   <span className="px-ghost-in">{`Model enlarges; PiD repaints. ${(upscale.installed || []).length} installed.`}</span>
+                   <span className="px-ghost-in">{`Model upscales; PiD repaints. ${(upscale.installed || []).length} installed.`}</span>
                  ) : (
-                   <>Model enlarges; PiD repaints. <ValueGhost w={56} /></>
+                   <>Model upscales; PiD repaints. <ValueGhost w={56} /></>
                  )}>
           {upscale ? (
             <>
@@ -967,7 +969,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                           m === "pid" ? "PiD upscaler applied" : "model upscaler applied");
                   }}
                   options={[
-                    { v: "model", label: "Enlarge" },
+                    { v: "model", label: "Upscale" },
                     { v: "pid", label: "PiD 4×", Icon: NvidiaAccent,
                       disabled: upscale.pid_available === false,
                       title: upscale.pid_available === false
@@ -978,10 +980,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   before it does - so offering an ESRGAN pick in PiD mode is
                   a control that does nothing. */}
               {(upscale.image_mode || "model") !== "pid" && (
-              <Field className="px-ghost-in" sub label="enlarge with">
+              <Field className="px-ghost-in" sub label="upscale model">
               <ScrollPicker
                 value={upscale.image_model || ""}
-                placeholder="choose an upscale model…"
+                placeholder="choose local upscale model…"
                 emptyLabel="no upscaler"
                 options={(upscale.installed || []).map((item) => ({
                   name: item.name, label: item.short || item.name,
@@ -1005,22 +1007,32 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <Field label="still frames">
                 <SegGhost segments={2} />
               </Field>
-              <Field sub label="enlarge with">
+              <Field sub label="upscale model">
                 <PickerGhost />
               </Field>
             </>
           )}
         </Section>
 
-        <Section title={<>PiD finish <InfoTip text="Identity Edit renders decode through NVIDIA PiD instead of the Wan VAE — the finished latent is repainted at 4× in a 4-step diffusion pass. A 2:3 canvas comes back 2688×4032." /></>}>
-          <Field hint="Experimental: canvas snaps to 1024-class presets and returns 4×.">
+        {/* Titled for the CHOICE, and in the term the thing actually has.
+            "PiD finish" over a control reading "Wan VAE" said the section was
+            PiD while the setting said it was off, and "finish" was a word
+            invented for a step the pipeline calls a VAE decode (Jesse,
+            2026-08-24: "Vae decode instead of finish - cmon use proper
+            terms"). The hint had the mirror fault: it described the 4x snap
+            whichever way the control was set, so the state that needed
+            explaining and the state that did not got the same sentence. */}
+        <Section title={<>VAE decode <InfoTip maxWidth={300} text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}>
+          <Field hint={pidCfg?.identity_finish
+            ? "Experimental: canvas snaps to 1024-class presets and returns 4×."
+            : "Wan VAE decode at the canvas you chose."}>
             {pidCfg ? (
-              <SegmentedControl className="px-ghost-in" ariaLabel="Identity Edit finish"
+              <SegmentedControl className="px-ghost-in" ariaLabel="VAE decode"
                 value={!!pidCfg.identity_finish}
                 onChange={(on) => {
                   setPidCfg({ ...pidCfg, identity_finish: on });
                   apply({ pid: { identity_finish: on } },
-                        on ? "PiD finish on" : "stock decode restored");
+                        on ? "PiD decode applied" : "Wan VAE decode restored");
                 }}
                 options={[
                   { v: false, label: "Wan VAE" },
@@ -1235,8 +1247,23 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
 
         <GroupLabel>vision</GroupLabel>
-        <Section title={<>Image reviewer <InfoTip text="When the chat brain has vision it reviews directly — this ComfyUI model is the fallback for brains without eyes. Bigger models read hands and text better; first use takes ~30s to warm up." /></>}
-                 gloss="Suggests fixes for what you made.">
+        {/* This section used to read "Image reviewer" over the ComfyUI picker
+            with no mention of the brain, so it looked like the picked model
+            was doing the reviewing. It is not: brain_vl_read gets first
+            refusal on BOTH the review button and the motion director's look,
+            and this picker is only reached when the brain cannot see (Jesse,
+            2026-08-24: "how come it doesn't actually have the heretic listed
+            for vision"). The heretic can never appear IN this list - the list
+            is ComfyUI VLM checkpoints, the brain is a llama.cpp gguf - so the
+            title and gloss have to carry the fact instead. They read from
+            critic.brain, which is the projector-on-disk-and-not-demoted
+            truth, NOT the filename-regex VISION chip in the brain picker. */}
+        <Section title={<>{criticBrain?.sighted ? "Fallback reviewer" : "Image reviewer"} <InfoTip text="The chat brain reviews directly whenever it has working eyes; this ComfyUI model only runs when it does not. Bigger models read hands and text better; first use takes ~30s to warm up." /></>}
+                 gloss={!criticBrain?.local
+                   ? "Suggests fixes for what you made."
+                   : criticBrain.sighted
+                     ? "Only when the chat brain can’t see."
+                     : `The chat brain can’t see — ${criticBrain.why}.`}>
           {cfg ? (
             <ScrollPicker className="px-ghost-in" required
               value={criticModel}

@@ -412,6 +412,19 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // by the server, which also reports whether each one's LoRA is actually on
   // disk; a missing file greys the segment instead of rendering 4 steps raw.
   const [speed, setSpeed] = useState("");
+  // Sparse attention. ON wherever the pack is installed - measured 1.34x on
+  // this machine's canvas (7.24 -> 5.40 s/step, four full alternating runs)
+  // - so the control exists to turn it OFF for a like-for-like quality
+  // reference, not to opt in. The row hides entirely when the server says
+  // the node is absent.
+  const [sparse, setSparse] = useState(true);
+  // 2x upscale. OFF by default - it ~triples the render's time (measured
+  // 140s -> 464s on a 928x1120, 124-frame take, peaking at 30.9 of 32.6 GB)
+  // - and it rides INSIDE the render job, re-sampling the latent the sampler
+  // just produced: Pixal does not store latents, so it can never be an
+  // action on a finished clip. The row hides unless the server sees both
+  // the pack and its 659 MB upscaler weights.
+  const [upscale, setUpscale] = useState(false);
   const speedModes = activeEngine?.speed_modes || [];
   const defaultSpeed = activeEngine?.speed_default || "quality";
   const speedMode = speedModes.find((m) => m.id === speed && m.available !== false)
@@ -586,7 +599,9 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
       showVideoLoraChain ? activeVideoPlan : null,
       fpsChoices.length ? fps : null, activeShots,
       isScript ? note.trim() : null, speedMode ? speedMode.id : null,
-      bridgeEligible && endId ? endId : null);
+      bridgeEligible && endId ? endId : null,
+      activeEngine.sparse ? sparse : undefined,
+      activeEngine.upscale_2x ? upscale : undefined);
     onClose();
   };
 
@@ -605,6 +620,8 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   else if (activeShots > 1) tweaks.push(`${activeShots} shots`);
   if (bridgeEligible && endId) tweaks.push("end frame set");
   if (speedMode && speedMode.id !== defaultSpeed) tweaks.push(speedMode.label.toLowerCase());
+  if (activeEngine?.sparse && !sparse) tweaks.push("dense attention");
+  if (activeEngine?.upscale_2x && upscale) tweaks.push("2x upscale");
   if (fpsChoices.length > 1 && fps !== (activeEngine?.fps_default || 30))
     tweaks.push(`${fps}fps`);
   if (showVideoLoraChain && activeLoraCount > 0)
@@ -908,6 +925,46 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                         ? `${m.label}: its LoRA is not in the loras folder, so this recipe can't run`
                         : `${m.label} — ${m.gloss}, ${m.sampler}`,
                     }))} />
+                </Row>
+              )}
+
+              {activeEngine?.sparse && (
+                <Row label="attention"
+                  hint={sparse
+                    ? "sparse \u00b7 ~1.3x faster on this size"
+                    : "dense on every step \u00b7 the quality reference"}>
+                  <SegmentedControl ariaLabel="attention" size="sm"
+                    value={sparse ? "sparse" : "dense"}
+                    onChange={(v) => setSparse(v === "sparse")}
+                    options={[
+                      { v: "sparse", label: "sparse",
+                        title: "Sparse attention \u2014 measured 1.34x on a 1MP, "
+                               + "124-frame take. It falls back to dense by itself on "
+                               + "short or low-resolution clips, so it costs nothing there." },
+                      { v: "dense", label: "dense",
+                        title: "Every step attends densely \u2014 slower, and the "
+                               + "reference to judge sparse against." },
+                    ]} />
+                </Row>
+              )}
+
+              {activeEngine?.upscale_2x && (
+                <Row label="2x upscale"
+                  hint={upscale
+                    ? "~3x longer \u00b7 runs inside this render, not after"
+                    : "the render's native size"}>
+                  <SegmentedControl ariaLabel="2x upscale" size="sm"
+                    value={upscale ? "2x" : "off"}
+                    onChange={(v) => setUpscale(v === "2x")}
+                    options={[
+                      { v: "off", label: "off",
+                        title: "The render's native canvas \u2014 the fast path." },
+                      { v: "2x", label: "2x",
+                        title: "Re-samples the fresh latent at twice the size, inside the "
+                               + "same job \u2014 ~3x the render time, close to the card's "
+                               + "ceiling. Not a post action: it needs the render's "
+                               + "latent, so it can only run as part of the render." },
+                    ]} />
                 </Row>
               )}
 

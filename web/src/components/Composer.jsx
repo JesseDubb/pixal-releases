@@ -458,12 +458,13 @@ const FamilyCard = ({ family, selected, onClick }) => (
 // placeholder: `icon` pins a glyph inside the field's left edge and the
 // input's padding steps aside for it. No icon = the plain full-width input
 // it always was.
-const FilterInput = ({ value, onChange, placeholder, icon }) => {
+const FilterInput = ({ value, onChange, autoFocus, placeholder, icon }) => {
   const field = (
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      autoFocus={autoFocus}
       style={{
         width: "100%", height: 32, background: "var(--bg2)",
         border: "1px solid var(--border)", borderRadius: RADIUS.input,
@@ -537,11 +538,13 @@ const LoraThumb = ({ src, size = 44, fill = false, Glyph = Stack }) => {
 // no clamp, no ellipsis; the distinguishing tail of a community LoRA name is
 // exactly what this mode is for. Same thumb, same badges, same filtered set -
 // a view is a density, not a different screen.
-const LoraRow = ({ lora, onClick }) => (
+const LoraRow = ({ lora, onClick, reason }) => (
   <button
     type="button"
     onClick={onClick}
-    title={[lora.vectors ? `${lora.vectors} Vector` : null,
+    disabled={!!reason}
+    title={[reason || null,
+            lora.vectors ? `${lora.vectors} Vector` : null,
             (lora.words || []).join(", ") || lora.name]
              .filter(Boolean).join(" — ")}
     style={{
@@ -549,16 +552,22 @@ const LoraRow = ({ lora, onClick }) => (
       width: "100%", minWidth: 0,
       border: "1px solid var(--border)", borderRadius: RADIUS.input,
       background: "var(--bg2)", color: "var(--textSec)", fontFamily: FONT,
-      fontSize: 10, textAlign: "left", cursor: "pointer",
+      fontSize: 10, textAlign: "left",
+      cursor: reason ? "default" : "pointer",
+      opacity: reason ? 0.5 : 1,
       transition: `border-color ${MOTION.hover}`,
     }}
-    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+    onMouseEnter={(e) => { if (!reason) e.currentTarget.style.borderColor = "var(--accent)"; }}
     onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
   >
     <LoraThumb src={lora.thumb} size={36} />
     <span style={{ flex: 1, minWidth: 0, lineHeight: 1.3,
                    overflowWrap: "anywhere" }}>
       {lora.title || lora.short || lora.name}
+      {reason && (
+        <span style={{ display: "block", fontFamily: "ui-monospace, Consolas, monospace",
+                       fontSize: 9, color: "var(--textMut)" }}>{reason}</span>
+      )}
     </span>
     {lora.is_new && <NewChip />}
     {lora.vectors ? (
@@ -574,22 +583,26 @@ const LoraRow = ({ lora, onClick }) => (
 // thumbnail for nearly all of them. A grid of those shows ~15 at a glance where
 // the old text rows showed 6, which is the whole difference between browsing a
 // collection and scrolling one.
-const LoraTile = ({ lora, onClick }) => (
+const LoraTile = ({ lora, onClick, reason }) => (
   <button
     type="button"
     onClick={onClick}
-    title={[lora.vectors ? `${lora.vectors} Vector` : null,
+    disabled={!!reason}
+    title={[reason || null,
+            lora.vectors ? `${lora.vectors} Vector` : null,
             (lora.words || []).join(", ") || lora.name]
              .filter(Boolean).join(" — ")}
     style={{
       display: "flex", flexDirection: "column", gap: 4, padding: 4, minWidth: 0,
       border: "1px solid var(--border)", borderRadius: RADIUS.input,
       background: "var(--bg2)", color: "var(--textSec)", fontFamily: FONT,
-      fontSize: 10, textAlign: "left", cursor: "pointer",
+      fontSize: 10, textAlign: "left",
+      cursor: reason ? "default" : "pointer",
+      opacity: reason ? 0.5 : 1,
       contentVisibility: "auto", containIntrinsicSize: "120px 150px",
       transition: `border-color ${MOTION.hover}`,
     }}
-    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+    onMouseEnter={(e) => { if (!reason) e.currentTarget.style.borderColor = "var(--accent)"; }}
     onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
   >
     {/* The badge rides the cover, not the name line: the name's two-line
@@ -613,7 +626,15 @@ const LoraTile = ({ lora, onClick }) => (
                    WebkitLineClamp: 2, overflowWrap: "anywhere" }}>
       {lora.title || lora.short || lora.name}
     </span>
-    {lora.vectors ? (
+    {/* The one micro line under the name goes to the reason when there is one -
+        why this file is greyed outranks how many vectors it carries. */}
+    {reason ? (
+      <span style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                     color: "var(--textMut)", overflow: "hidden",
+                     textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {reason}
+      </span>
+    ) : lora.vectors ? (
       <span style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
                      color: "var(--textMut)", overflow: "hidden",
                      textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -830,10 +851,23 @@ const planProfile = (opts, options, recipe) => {
   };
 };
 
-const loraMatchesProfile = (lora, profile) => !!lora?.supported &&
-  lora.family === profile.family &&
-  (profile.family !== "zimage" || !["base", "turbo"].includes(profile.variant) ||
-    lora.variant === "any" || lora.variant === profile.variant);
+const loraMatchesProfile = (lora, profile) => !loraIncompatible(lora, profile);
+
+// The compatibility verdict is the SERVER's: options() ships each LoRA a sparse
+// "family:variant" -> reason-code map computed by lora_compatible, the one
+// callable lora_stack enforces at build time. This used to be a JS restatement
+// of the rule (family match + a hardcoded Z-Image base/turbo gate); the day
+// 9.19a made the rule table-driven in families.json, the copy became a lie
+// waiting for a new row. An absent key means compatible; the "family:any"
+// fallback covers a variant the family does not gate on.
+const loraIncompatible = (lora, profile) => {
+  const code = (lora.incompatible || {})[`${profile.family}:${profile.variant}`] ??
+               (lora.incompatible || {})[`${profile.family}:any`];
+  return code === "unknown" ? "not identified yet"
+    : code === "variant" ? `made for ${familyName(lora.family)} ${variantName(lora.variant)}`.trim()
+    : code === "family" ? `made for ${familyName(lora.family)}`
+    : code || "";
+};
 
 const recipeStageLabel = (stage, meta) => stage?.title || meta?.title ||
   (stage?.slot ? stage.slot.replaceAll("_", " ") : short(stage?.name));
@@ -898,11 +932,16 @@ const LORA_RAIL_COLLAPSED_KEY = "pixal.loraRail.collapsed.v1";
 // read, an effect write - not a second mechanism.
 const LORA_PICKER_VIEW_KEY = "pixal.loraPicker.view.v1";
 const LORA_PICKER_VIEWS = ["grid", "list"];
+// Per-family collapsed state for the grouped popup (filter off / searching):
+// {family: bool}. A family with no entry follows the default - the active
+// profile's family open, the rest collapsed.
+const LORA_PICKER_GROUPS_KEY = "pixal.loraPicker.groups.v1";
 
 export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan,
                             setCoreEnabled, setCoreStrength, onDial, rail = false }) => {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
   const [strength, setStrength] = useState("1.0");
   // Collapsing is NOT a rail concern - it was gated to `rail` until 2026-08-16,
   // which is exactly backwards. The rail is the roomy desktop column; the place
@@ -941,6 +980,22 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
       window.localStorage.setItem(LORA_PICKER_VIEW_KEY, pickerView);
     } catch { /* private mode / storage disabled */ }
   }, [pickerView]);
+  // Group collapse persists the same way the view does: one key, a lazy read,
+  // an effect write. A corrupt saved value restores to the defaults rather
+  // than trapping every group shut (or open) forever.
+  const [groupsCollapsed, setGroupsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const saved = window.localStorage.getItem(LORA_PICKER_GROUPS_KEY);
+      if (saved) return JSON.parse(saved) || {};
+    } catch { /* private mode / storage disabled / corrupt value */ }
+    return {};
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LORA_PICKER_GROUPS_KEY, JSON.stringify(groupsCollapsed));
+    } catch { /* private mode / storage disabled */ }
+  }, [groupsCollapsed]);
   const shrunk = collapsed;
   // Pointer-driven reorder. This was HTML5 drag-and-drop until 2026-08-18,
   // which meant the browser's own ghost image, no indication of where the row
@@ -1051,15 +1106,50 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
       };
     }),
   ];
-  const installedAll = (options?.loras || []).filter((lora) =>
-    !activeNames.has(lora.name) && !recipeNames.has(lora.name) &&
-    loraMatchesProfile(lora, profile) &&
-    (!filter || `${lora.title || ""} ${lora.short || ""} ${lora.name}`
-      .toLowerCase().includes(filter.toLowerCase())));
+  // Everything pickable: the catalog minus what already rides the chain.
+  const available = (options?.loras || []).filter((lora) =>
+    !activeNames.has(lora.name) && !recipeNames.has(lora.name));
+  // The flat list (filter on, not searching) is the compatible set.
+  const installedAll = available.filter((lora) => loraMatchesProfile(lora, profile));
   // Cap what is rendered, but say so - a silent truncation reads as "that is
   // everything you have installed", which it is not.
   const installedTotal = installedAll.length;
   const installed = installedAll.slice(0, 120);
+  // Searching hunts the WHOLE catalog - name, filename and declared base -
+  // regardless of the compatibility filter: finding a file you own is not the
+  // filter's decision to make. The verdict still shows, as the dimmed reason.
+  const searching = !!filter.trim();
+  const textMatch = (lora) =>
+    (!filter || `${lora.title || ""} ${lora.short || ""} ${lora.name}`
+      .toLowerCase().includes(filter.toLowerCase())) ||
+    (lora.base_model || "").toLowerCase().includes(filter.toLowerCase());
+  const pool = searching ? available.filter(textMatch) : available;
+  // Filter off (or any search): everything, grouped by family. The active
+  // profile's family leads and starts open; the rest follow by size, collapsed.
+  const familyGroups = (() => {
+    if (!searching && !showAll) return [];
+    const by = new Map();
+    for (const lora of pool) {
+      const fam = lora.family || "unknown";
+      if (!by.has(fam)) by.set(fam, []);
+      by.get(fam).push(lora);
+    }
+    return [...by.entries()].map(([fam, items]) => ({ fam, items }))
+      .sort((a, b) => a.fam === profile.family ? -1
+        : b.fam === profile.family ? 1 : b.items.length - a.items.length);
+  })();
+  const groupLabel = (fam) => fam === "unknown" ? "not identified yet" : familyName(fam);
+  const searchSummary = searching
+    ? familyGroups.map((g) => g.fam === "unknown"
+        ? `${g.items.length} not identified yet`
+        : `${g.items.length} in ${groupLabel(g.fam)}`).join(" · ")
+    : "";
+  // Collapsed is a preference, never a hiding place: a search ignores it,
+  // because a search result behind a fold is the junk-drawer bug again.
+  const groupCollapsed = (group) =>
+    groupsCollapsed[group.fam] ?? (group.fam !== profile.family);
+  const toggleGroup = (group) =>
+    setGroupsCollapsed((current) => ({ ...current, [group.fam]: !groupCollapsed(group) }));
 
   const entryLocked = (entry) => !!detailFor(entry).stage?.order_locked;
   const moveEntry = (from, to) => {
@@ -1221,18 +1311,35 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   const addSearch = (
     <div>
       {/* One line of state where two prose lines used to float: the family,
-          then how many of it the filter currently offers. The 120-cap caveat
-          folds into the same line - a silent truncation reads as "that is
-          everything you have installed", which it is not. */}
-      <div style={{ padding: `0 ${SPACE[4]}px ${SPACE[4]}px`,
-                    color: "var(--textTer)", fontSize: TYPE.label }}>
-        {profileLabel} · {installed.length < installedTotal
-          ? `${installed.length} of ${installedTotal}`
-          : installedTotal}
+          then how many of it the filter currently offers - or, while searching
+          or showing all, where the matches are. The 120-cap caveat folds into
+          the same line - a silent truncation reads as "that is everything you
+          have installed", which it is not. */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: SPACE[6],
+                    justifyContent: "space-between" }}>
+        <div style={{ padding: `0 ${SPACE[4]}px ${SPACE[4]}px`,
+                      color: "var(--textTer)", fontSize: TYPE.label }}>
+          {searching ? (searchSummary || "no matches")
+            : showAll ? `everything · ${available.length}`
+            : <>{profileLabel} · {installed.length < installedTotal
+                ? `${installed.length} of ${installedTotal}`
+                : installedTotal}</>}
+        </div>
+        {/* The compatibility filter, made escapable. The verdict itself is the
+            server's (lora.incompatible, one callable with lora_stack) - this
+            only chooses whether it hides, never what it says. */}
+        <button type="button" onClick={() => setShowAll(!showAll)}
+          title={showAll ? "only LoRAs this profile can run"
+                         : "every installed LoRA, grouped by family"}
+          style={{ background: "none", border: "none", padding: `0 ${SPACE[4]}px`,
+                   color: "var(--accent)", fontFamily: FONT, fontSize: TYPE.label,
+                   cursor: "pointer", whiteSpace: "nowrap" }}>
+          {showAll ? `${profileLabel} only` : "show all"}
+        </button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 58px",
-                    gap: SPACE[6], alignItems: "start" }}>
-        <FilterInput value={filter} onChange={setFilter}
+                    gap: SPACE[6], alignItems: "start", marginTop: SPACE[6] }}>
+        <FilterInput value={filter} onChange={setFilter} autoFocus
                      icon={<MagnifyingGlass size={13} weight="duotone" />}
                      placeholder="Search" />
         <input value={strength} onChange={(e) => setStrength(e.target.value)}
@@ -1291,6 +1398,60 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
             <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[6]}px 0` }} />
           )}
           {!rail && addSearch}
+          {(searching || showAll) ? (
+            familyGroups.length ? familyGroups.map((group) => {
+              const collapsed = !searching && groupCollapsed(group);
+              return (
+                <div key={group.fam}>
+                  <button type="button" onClick={() => toggleGroup(group)}
+                    aria-expanded={!collapsed}
+                    style={{ display: "flex", alignItems: "center", gap: SPACE[4],
+                             width: "100%", padding: `${SPACE[6]}px ${SPACE[4]}px`,
+                             background: "none", border: "none", cursor: "pointer",
+                             color: "var(--textTer)", fontFamily: FONT,
+                             fontSize: TYPE.label, textAlign: "left" }}>
+                    <CaretRight size={10} weight="bold"
+                      style={{ flexShrink: 0, transform: collapsed ? "none" : "rotate(90deg)",
+                               transition: `transform ${MOTION.hover}` }} />
+                    {groupLabel(group.fam)} · {group.items.length}
+                  </button>
+                  {group.fam === "unknown" && !collapsed && (
+                    <div style={{ padding: `0 ${SPACE[4]}px ${SPACE[6]}px 22px`,
+                                  color: "var(--textMut)", fontSize: TYPE.micro,
+                                  lineHeight: 1.5 }}>
+                      These will not render - the stack drops every LoRA whose family
+                      it cannot identify before the sampler. Run a rescan (settings →
+                      rescan folders) to identify one by hash, or drop a .metadata.json
+                      sidecar beside the file.
+                    </div>
+                  )}
+                  {!collapsed && (pickerView === "list" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+                      {group.items.map((lora) => (
+                        <LoraRow key={lora.name} lora={lora}
+                                 reason={loraIncompatible(lora, profile)}
+                                 onClick={() => addInstalled(lora)} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: SPACE[6],
+                                  gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))" }}>
+                      {group.items.map((lora) => (
+                        <LoraTile key={lora.name} lora={lora}
+                                  reason={loraIncompatible(lora, profile)}
+                                  onClick={() => addInstalled(lora)} />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+            }) : (
+              <Row disabled>{searching
+                ? `no installed LoRA matches “${filter.trim()}”`
+                : "every installed LoRA already rides the chain"}</Row>
+            )
+          ) : (
+            <>
           {/* Both densities map the same filtered, capped set - the search and
               the profile filter live upstream in installedAll, so they hold
               here without either view re-implementing them. */}
@@ -1312,6 +1473,8 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
           )}
           {!inactiveStages.length && !installed.length && (
             <Row disabled>no installed {profileLabel} LoRAs match this profile</Row>
+          )}
+            </>
           )}
         </Pop>
       )}

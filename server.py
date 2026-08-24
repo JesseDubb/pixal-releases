@@ -371,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.5b"
+PIXAL_VERSION = "1.0.6b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -2380,6 +2380,44 @@ def set_unet_loader(graph, node_id, entry):
         graph[node_id] = {"class_type": "UNETLoader",
                           "inputs": {"unet_name": rel, "weight_dtype": "default"}}
 
+def lora_compatible(rel, family=None, variant=None, lp=None):
+    """The ONE LoRA-vs-profile compatibility rule, shared by lora_stack (build
+    time) and the add-LoRA popup (pick time). The picker used to restate it in
+    JS, and once the rule became table-driven (9.19a) the two copies were one
+    families.json row from drifting apart - the picker promising what the
+    sampler then drops. Returns None when compatible, else a short reason code
+    the picker turns into words: "unknown" (family never identified - it will
+    not render), "family" (made for another family), "variant" (right family,
+    wrong build - Z-Image's base/turbo gate)."""
+    lp = lp or lora_profile(rel)
+    # Unknown architecture is not neutral. A stale localStorage choice or
+    # hallucinated cloud tool argument must never reach an arbitrary graph.
+    if family and lp["family"] != family:
+        return "unknown" if lp["family"] == "unknown" else "family"
+    # The variant gate is the family row's own data: Z-Image's row declares
+    # base/turbo, and a turbo LoRA never reaches a base graph.
+    row = family_row(family)
+    gated = {rule["id"] for rule in (row or {}).get("variants", ())}
+    if variant in gated and lp["variant"] not in ("any", variant):
+        return "variant"
+    return None
+
+# Every profile the add-LoRA popup can take, as "family:variant" keys: "any"
+# plus the variants each family actually distinguishes. options() ships the
+# predicate's verdict for every one of them per LoRA, so the popup looks its
+# verdict up instead of restating the rule in JS (9.19d).
+_LORA_PROFILE_VARIANTS = {"unknown": ("any",)}
+for _row in FAMILY_TABLE:
+    _vs = {"any"} | {rule["id"] for rule in _row.get("variants", ())}
+    _fixed = _row.get("variant")
+    _vs.update(_fixed.values() if isinstance(_fixed, dict)
+               else [_fixed] if _fixed else [])
+    _LORA_PROFILE_VARIANTS[_row["id"]] = tuple(sorted(_vs))
+_LORA_PROFILE_KEYS = tuple(f"{fam}:{v}" for fam, vs in _LORA_PROFILE_VARIANTS.items()
+                           for v in vs)
+del _row, _vs, _fixed
+
+
 def lora_stack(loras, baked=(), family=None, variant=None):
     """Parse ['name:strength', ...] into [(real_rel, strength)], dropped names aside.
     Dedupes: the same lora twice keeps the LAST strength, and anything already baked
@@ -2394,17 +2432,10 @@ def lora_stack(loras, baked=(), family=None, variant=None):
         if not real:
             dropped.append(base(nm))
             continue
-        lp = lora_profile(real)
-        # Unknown architecture is not neutral. A stale localStorage choice or
-        # hallucinated cloud tool argument must never reach an arbitrary graph.
-        incompatible = bool(family and lp["family"] != family)
-        # The variant gate is the family row's own data now: Z-Image's row
-        # declares base/turbo, and a turbo LoRA never reaches a base graph.
-        row = family_row(family)
-        gated = {rule["id"] for rule in (row or {}).get("variants", ())}
-        if variant in gated and lp["variant"] not in ("any", variant):
-            incompatible = True
-        if incompatible:
+        # The compatibility call is lora_compatible's alone - the same callable
+        # the add-LoRA popup reads its verdicts from, so the picker can never
+        # promise what the graph would drop (9.19d).
+        if lora_compatible(real, family, variant):
             dropped.append(f"incompatible {base(real)}")
         elif real.lower() not in baked_l:
             key = real.lower()
@@ -4123,6 +4154,28 @@ H3_ASPECT_TOLERANCE = 0.005
 # Multishot rides ComfyUI-H3-Multishot, whose sampler runs the same stack the
 # single-shot builder wires by hand; what it adds is the chain between shots.
 H3_MULTISHOT_NODE = "H3MultishotSampler"
+# Sparse attention for the H3 transformer (ComfyUI-PlagueKind-Nodes).
+# Optional: absent, every H3 graph is built exactly as before.
+H3_SLA_NODE = "H3SLAAttention"
+# The node's own default, and the ratio its author validated. 0.85 is what
+# lightx2v distilled the SLA turbo LoRA against; 0.95 is faster and visibly
+# softer. Not exposed as a dial until there is a reason to move it.
+H3_SLA_SPARSITY = 0.9
+# 2x latent upscale of the finished render, re-sampled inside the SAME job by
+# Comfyui-MMH3-UltimateUpscale: it needs the sampler's latent and Pixal does
+# not store latents, so this is an option on the render, never an action on a
+# finished clip. Opt-in - measured 140s -> 464s on a 928x1120 x 124-frame
+# take (~3x), peaking at 30.9 GB of 32.6. The model-free
+# MMH3LatentUpscaleParams path is deliberately NOT offered: it smears hair
+# across the face in wet streaks ("v5 is broken", Jesse 2026-08-23), and both
+# metrics had ranked that clip first, which is why this is written down as
+# forbidden rather than left as an option.
+H3_UPSCALE_NODE = "MMH3UltimateUpscale"
+H3_LATENT_UPSCALER = "minimax_h3_latent_upscaler_3d_bf16.safetensors"
+H3_UPSCALE_STEPS = 6
+H3_UPSCALE_DENOISE = 0.22
+H3_UPSCALE_TILE = 896
+H3_UPSCALE_OVERLAP = 224
 # The memory variant is a superset: it splits the KEYFRAME (the previous shot's
 # last frame, which is all the plain sampler chains on) from MEMORY - a
 # persistent anchor taken from the start of the chain plus the last N shot-end
@@ -4213,6 +4266,105 @@ def h3_turbo_available():
     """Whether any distillation the speed ladder offers is on disk."""
     return any(o["available"] for o in h3_speed_mode_options()
                if o["id"] != H3_SPEED_DEFAULT)
+
+
+def h3_sla_available():
+    """Whether the sparse-attention pack is installed.
+
+    Same contract as h3_multishot_available(): before the first successful
+    probe the answer is yes, so a cold start never hides the control, and a
+    genuinely missing pack fails at queue time naming the node.
+    """
+    names = _COMFY_NODES["names"]
+    return names is None or H3_SLA_NODE in names
+
+
+def h3_sparse_active(sparse=True):
+    """Sparse attention is on by default wherever the pack exists (Jesse,
+    2026-08-23: "on by default, if its installed")."""
+    return sparse is not False and h3_sla_available()
+
+
+def apply_h3_sparse(graph, model_tail, sparse=True):
+    """Sparse attention on the H3 transformer, AFTER the LoRA chain - the node
+    requires that ordering, and a LoRA stacked on top of the patch would be
+    applied to a model that no longer attends densely.
+
+    Measured on this machine, 5090, 928x1120 x 124 frames, 20 steps
+    res_multistep, everything else in the graph identical - four FULL runs
+    alternating dense/sparse/dense/sparse on distinct seeds, warm process:
+
+        Sage attention (before)   7.25, 7.23 s/step   (155.7s, 146.9s sampler)
+        + sparse attention 0.9    5.42, 5.37 s/step   (110.0s, 109.1s)
+                                                      1.34x, +/-0.3%
+
+    An earlier figure of 1.51x (20.28 -> 13.47 s/step) was wrong in both the
+    ratio and the absolute numbers: that harness interrupted each run after
+    four progress ticks, which is the window where the weights are still
+    streaming in over PCIe. It timed the load, not the loop.
+
+    It engages only past the node's min_seq_len (8192 tokens), so short or
+    low-resolution clips fall back to dense attention on their own. That is
+    why the low-res reports see no change - and Pixal's canvases, 2MP over
+    124 frames, are far past the threshold.
+
+    Comfy Kitchen attention was measured on the same rig at 2.17 it/s against
+    Sage's 2.15 and is deliberately NOT wired: it is a wash on Blackwell.
+    """
+    if not h3_sparse_active(sparse):
+        return model_tail
+    graph["h3:sla"] = {"class_type": H3_SLA_NODE, "inputs": {
+        "model": [model_tail, 0],
+        "sparsity_ratio": H3_SLA_SPARSITY,
+        "block_size": "64"}}
+    return "h3:sla"
+
+
+def h3_upscale_available():
+    """The pack AND the 3D latent upscaler weights. Unlike sparse attention
+    this needs a 659 MB file on disk, so a cold probe is not enough on its
+    own - the node list may be unprobed while the weights are simply absent."""
+    names = _COMFY_NODES["names"]
+    if names is not None and H3_UPSCALE_NODE not in names:
+        return False
+    return _video_asset("latent_upscale_models", H3_LATENT_UPSCALER) is not None
+
+
+def h3_upscale_active(upscale=False):
+    """2x is opt-in - the OPPOSITE of sparse attention's default, because it
+    triples the cost of a render. Asking for it where it cannot run builds
+    the plain graph rather than queueing a prompt that fails validation."""
+    return bool(upscale) and h3_upscale_available()
+
+
+def h3_tile_axis(size_px, target_tile=H3_UPSCALE_TILE,
+                 target_overlap=H3_UPSCALE_OVERLAP):
+    """(tile_px, overlap_px) for one axis of the 2x canvas, dividing EXACTLY.
+
+    The pack tiles in latent units (pixels / 16) and its _grid_1d walks
+    stride = tile - overlap from 0, clamping the last origin - so a grid that
+    does not divide exactly leaves a SLIVER tile at the right and bottom
+    edges, re-sampled semi-independently. That is what put coloured noise
+    blocks in the corner of take 1. Pick n tiles and an overlap with
+    n*tile - (n-1)*overlap == size exactly, in 32px units (the node's own
+    step), closest to the measured 896/224 targets. Per axis, independently -
+    the pack computes rows and columns separately.
+    """
+    s = size_px // 32
+    best = None
+    for n in range(2, 7):
+        for v in range(4, 15):
+            if (s + (n - 1) * v) % n:
+                continue                     # would not divide exactly
+            t = (s + (n - 1) * v) // n
+            if t <= v:
+                continue                     # overlap must be < tile
+            score = abs(t * 32 - target_tile) + abs(v * 32 - target_overlap)
+            if best is None or score < best[0]:
+                best = (score, t, v)
+    if best is None:
+        raise ValueError(f"MiniMax H3 2x upscale cannot tile a {size_px}px axis")
+    return best[1] * 32, best[2] * 32
 
 
 def h3_speed_settings(turbo):
@@ -4727,6 +4879,16 @@ def video_engine_options():
          "turbo": h3_turbo_available(),
          "speed_modes": h3_speed_mode_options(),
          "speed_default": H3_SPEED_DEFAULT,
+         # Sparse attention: 1.51x measured here, and ON wherever the pack is
+         # installed. The row hides entirely when it is not, rather than
+         # offering a toggle that cannot do anything.
+         "sparse": h3_sla_available(),
+         "sparse_default": True,
+         # 2x upscale: opt-in (~3x the render's time), offered only when the
+         # pack AND its 659 MB 3D upscaler weights are both installed. It
+         # rides inside the render job - Pixal does not store latents, so it
+         # can never be an action on a finished clip.
+         "upscale_2x": h3_upscale_available(),
          # One chip per FL2VA or REF2VA build on disk (stock first) - drop a
          # finetune beside the stock weights and it appears here after a rescan.
          "models": [{"id": opt["id"], "label": opt["label"],
@@ -6007,7 +6169,7 @@ def _h3_prepared_canvas(image, width=None, height=None):
 
 def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
                   overrides=(), model=None, lora_plan=None, turbo=False,
-                  last_image=None):
+                  last_image=None, sparse=True, upscale=False):
     """MiniMax H3 FL2VA I2V, based on the locally proven native ComfyUI graph.
 
     The first frame must already be prepared to the exact adaptive canvas by
@@ -6018,6 +6180,13 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     ``last_image`` engages true FL2VA: the node pins it to the final frame
     (cover-cropping it to canvas itself - the "follower" path in
     nodes_minimax_h3.py), and the brief's alignment header names it Picture 2.
+
+    ``upscale`` re-samples the latent the sampler just produced at 2x through
+    Comfyui-MMH3-UltimateUpscale, INSIDE this job - the pass needs node 11's
+    latent and Pixal does not store latents, so it can only ever be an option
+    on the render, not an action on a finished clip. Opt-in (it ~triples the
+    render's cost), and only honoured where the pack and its 3D upscaler
+    weights are both installed; anywhere else the plain graph is built.
     """
     model_id = str(model or H3_MODEL_ID).strip().lower()
     model_rel = h3_model_rel(model_id)
@@ -6107,10 +6276,84 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
             raise ValueError(f"invalid MiniMax H3 override: {node_id}.{input_name}")
         graph[node_id]["inputs"][input_name] = override.get("value")
     model_tail = apply_lora_nodes(graph, "1", video_loras, "h3:lora")
+    # The 2x refine samples through the model WITH the LoRA chain but WITHOUT
+    # the sparse-attention patch, so the dense tail is captured before
+    # apply_h3_sparse overwrites it. Measured: at 6 steps dense scored 14.87
+    # flicker against sparse's 14.16 - the number preferred sparse, and Jesse
+    # looked at both clips and picked dense ("the artifact is gone in this
+    # one - best so far"). Sparse also buys almost nothing on a tile (4.49 vs
+    # 4.81 s/tile-step, ~3%), because a tile is a much shorter sequence than
+    # a whole frame.
+    refine_tail = model_tail
+    model_tail = apply_h3_sparse(graph, model_tail, sparse)
     # Both consumers must see the identical literal chain. Row zero is the
     # first physical loader after UNETLoader; the final row feeds the sampler.
     graph["8"]["inputs"]["model"] = [model_tail, 0]
     graph["9"]["inputs"]["model"] = [model_tail, 0]
+    upscale_on = h3_upscale_active(upscale)
+    if upscale_on:
+        w2, h2 = width * 2, height * 2
+        tile_w, ol_w = h3_tile_axis(w2)
+        tile_h, ol_h = h3_tile_axis(h2)
+        # The 2x conditioning's first frame goes through the user's configured
+        # IMAGE upscaler. Take 1 fed the 1x conditioning and the node's
+        # reanchor bilinear-resized the frozen frame-0 keyframe - the clip
+        # opened on a blur and only sharpened as the model took over.
+        # ...through the user's configured IMAGE upscaler when there IS one.
+        # The shipped default is image_model="" and a fresh install may carry
+        # no ESRGAN weights at all, so an unresolvable one falls back to a
+        # plain lanczos resize instead of raising "choose an upscale model in
+        # Settings first" and killing the render. What take 1 got wrong was
+        # the conditioning's SIZE, not its sharpness, and the size is right
+        # either way; the model only buys a crisper anchor.
+        try:
+            image_model = resolve_upscale_model(
+                load_config()["upscale"].get("image_model"))
+        except ValueError:
+            image_model = None
+        anchor = ["5", 0]
+        if image_model:
+            graph["h3:up:imgloader"] = {"class_type": "UpscaleModelLoader",
+                                        "inputs": {"model_name": image_model}}
+            graph["h3:up:imgup"] = {"class_type": "ImageUpscaleWithModel", "inputs": {
+                "upscale_model": ["h3:up:imgloader", 0], "image": ["5", 0]}}
+            anchor = ["h3:up:imgup", 0]
+        graph["h3:up:imgfit"] = {"class_type": "ImageScale", "inputs": {
+            "image": anchor, "upscale_method": "lanczos",
+            "width": w2, "height": h2, "crop": "disabled"}}
+        # Conditioning rebuilt AT the 2x canvas: same brief, same length,
+        # every other input identical to the render's own node 6.
+        graph["h3:up:cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
+            **graph["6"]["inputs"], "width": w2, "height": h2,
+            "first_frame": ["h3:up:imgfit", 0]}}
+        graph["h3:up:param"] = {"class_type": "MMH3LatentUpscaleWithModelParams",
+                                "inputs": {
+            "model_name": H3_LATENT_UPSCALER, "width": w2, "height": h2,
+            "device": "cuda", "precision": "bf16"}}
+        graph["h3:up:tiles"] = {"class_type": "MMH3SpatialSplitParams", "inputs": {
+            "tile_width": tile_w, "tile_height": tile_h,
+            "spatial_w_overlap": ol_w, "spatial_h_overlap": ol_h,
+            "fade_width": max(32, ol_w - 32),
+            "fade_height": max(32, ol_h - 32),
+            "min_tile_size": 256,
+            "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
+        graph["h3:up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
+            "model": [refine_tail, 0], "scheduler": scheduler,
+            "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
+        graph["h3:up:noise"] = {"class_type": "RandomNoise", "inputs": {
+            "noise_seed": int(seed) + 1}}
+        graph["h3:up:sample"] = {"class_type": H3_UPSCALE_NODE, "inputs": {
+            "model": [refine_tail, 0], "conditioning": ["h3:up:cond", 0],
+            "latent": ["11", 0], "noise": ["h3:up:noise", 0],
+            "sampler": ["7", 0], "sigmas": ["h3:up:sigmas", 0], "cfg": 1.0,
+            "latent_upscale_param": ["h3:up:param", 0],
+            "spatial_split_param": ["h3:up:tiles", 0]}}
+        graph["h3:up:decode"] = {"class_type": "VAEDecode", "inputs": {
+            "samples": ["h3:up:sample", 0], "vae": ["3", 0]}}
+        # One video output, the 2x. Audio stays the render's own decode - the
+        # pack carries the 32-channel audio latent through untouched and never
+        # re-samples it.
+        graph["14"]["inputs"]["images"] = ["h3:up:decode", 0]
     lora_info = lora_job_info(video_loras)
     for row, entry in zip(lora_info["lora_stack"], video_loras):
         row.update(title=entry["title"], trigger=entry.get("trigger"))
@@ -6134,11 +6377,20 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
         # should say "quality" in that case rather than the mode that failed
         "speed_mode": ((h3_speed_mode(turbo) or {}).get("id", H3_SPEED_DEFAULT)
                        if turbo_rows else H3_SPEED_DEFAULT),
+        "sparse_attention": h3_sparse_active(sparse),
+        # Only ever present when the 2x pass was actually wired in - and when
+        # it was, size/canvas_mp below report the canvas the delivered clip
+        # actually has, the 2x one. canvas_mp is also what the VRAM butler
+        # prices on, and the job's peak (30.9 GB of 32.6, measured) sits in
+        # the tiled pass, so the bigger number is the true one in both
+        # places - same convention as LTX 2.5's clip upscale.
+        **({"upscale": "2x"} if upscale_on else {}),
         "h3_warnings": h3_brief_lint(brief, frames / 24),
         **lora_info,
         "lora_triggers": lora_triggers,
-        "size": f"{width}x{height}",
-        "canvas_mp": (width * height) / 1e6,
+        "size": (f"{width * 2}x{height * 2}" if upscale_on
+                 else f"{width}x{height}"),
+        "canvas_mp": (width * height * (4 if upscale_on else 1)) / 1e6,
         "frames": frames,
         "duration": f"{frames / 24:.2f}s @ 24fps",
     }
@@ -6147,7 +6399,7 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
 
 def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
                        height=None, overrides=(), model=None, lora_plan=None,
-                       anchor=None, memory=None, turbo=False):
+                       anchor=None, memory=None, turbo=False, sparse=True):
     """MiniMax H3 FL2VA multishot: one chained take per script prompt.
 
     ComfyUI-H3-Multishot's sampler runs the same stack build_h3_i2v wires by
@@ -6248,6 +6500,7 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
             raise ValueError(f"invalid MiniMax H3 override: {node_id}.{input_name}")
         graph[node_id]["inputs"][input_name] = override.get("value")
     model_tail = apply_lora_nodes(graph, "1", video_loras, "h3:lora")
+    model_tail = apply_h3_sparse(graph, model_tail, sparse)
     graph["6"]["inputs"]["model"] = [model_tail, 0]
     lora_info = lora_job_info(video_loras)
     for row, entry in zip(lora_info["lora_stack"], video_loras):
@@ -6269,6 +6522,7 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
         "audio": "native synchronized audio",
         # per shot, not per take: the budget is what one 5s beat can hold, so
         # a chained multishot is linted a shot at a time
+        "sparse_attention": h3_sparse_active(sparse),
         "h3_warnings": [w for shot in script[:count]
                         for w in h3_brief_lint(shot, frames / 24)],
         **lora_info,
@@ -6294,7 +6548,8 @@ _H3_REF2V_REF_NODES = ("5", "5b", "5c", "5d", "5e", "5f", "5g", "5h", "5i")
 
 
 def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
-                   overrides=(), model=None, lora_plan=None, turbo=False):
+                   overrides=(), model=None, lora_plan=None, turbo=False,
+                   sparse=True):
     """MiniMax H3 REF2VA: put THIS subject in a new scene. Sibling of
     build_h3_i2v; the model chip is the lane switch, per render.
 
@@ -6434,6 +6689,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
             raise ValueError(f"invalid MiniMax H3 override: {node_id}.{input_name}")
         graph[node_id]["inputs"][input_name] = override.get("value")
     model_tail = apply_lora_nodes(graph, "1", video_loras, "h3:lora")
+    model_tail = apply_h3_sparse(graph, model_tail, sparse)
     # Both consumers must see the identical literal chain, as in build_h3_i2v.
     graph["8"]["inputs"]["model"] = [model_tail, 0]
     graph["9"]["inputs"]["model"] = [model_tail, 0]
@@ -6455,6 +6711,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
         "speed_mode": ((h3_speed_mode(turbo) or {}).get("id", H3_SPEED_DEFAULT)
                        if turbo_rows else H3_SPEED_DEFAULT),
         "references": len(refs),
+        "sparse_attention": h3_sparse_active(sparse),
         "h3_warnings": (tag_warnings
                         + h3_ref2v_unnamed_lint(brief, len(refs))
                         + h3_brief_lint(brief, frames / 24)),
@@ -6892,14 +7149,23 @@ LOOK_Q = ("Inventory this photograph for a film crew in 80-120 words of plain "
 
 
 def build_look(scene, seed, image, overrides=()):
-    """The motion director's eyes: the critic's proven QwenVL graph pointed at
-    the exact start frame, asking for an inventory instead of a critique.
+    """The motion director's eyes, as the FALLBACK: the critic's proven QwenVL
+    graph pointed at the exact start frame, asking for an inventory instead of
+    a critique. Directing from the scene caption alone made the brief describe
+    somebody else's sentence about the picture; the look gives the director
+    ground truth to direct from.
 
-    Exists because the managed llama.cpp brain has no mmproj wired - on the
-    local preset the chat brain is BLIND, and the [attached image] it was sent
-    flattened to a placeholder. Directing from the scene caption alone made the
-    brief describe somebody else's sentence about the picture; this look gives
-    the director ground truth to direct from."""
+    This is no longer the primary path. brain_vl_read asks the chat brain's
+    own eyes first (Jesse, 2026-08-18: "I want it using the chats vision
+    model!") and only reaches here when the brain cannot see or answers
+    empty - and only when the critic's weights are already on disk.
+
+    The paragraph that used to sit here said the managed brain "has no mmproj
+    wired - on the local preset the chat brain is BLIND". That stopped being
+    true when the projector was wired and _vision_smoke_test started proving
+    it, and leaving it here cost real work: on 2026-08-23 it was read as
+    current and a brief was written to build routing that already existed.
+    A stale reason is worse than no reason."""
     m = re.search(r"#(\w+)", scene)
     out_file = f"pixal_dm/look_{m.group(1) if m else 'x'}.txt"
     g = {
@@ -8051,7 +8317,13 @@ class Hub:
                                       "krea2": lp["family"] == "krea2", **lp,
                                       **({"vectors": vectors} if vectors else {}),
                                       **({"is_new": True} if is_new_model(e, now) else {}),
-                                      "compatible_recipes": compatible_recipes(lp)}
+                                      "compatible_recipes": compatible_recipes(lp),
+                                      # The popup's verdicts, from the same callable
+                                      # lora_stack enforces (9.19d): sparse
+                                      # "family:variant" -> reason code; absent = ok.
+                                      "incompatible": {k: why for k in _LORA_PROFILE_KEYS
+                                                       if (why := lora_compatible(
+                                                           e["rel"], *k.split(":"), lp=lp))}}
         titles = _lora_title_map(loras_by_rel)
         loras = []
         for rel, entry in loras_by_rel.items():
@@ -9481,11 +9753,13 @@ def _llm_kill(pid):
     the same semantics with signals: ESRCH (nothing there) is False, and so is
     EPERM - there, but not ours to kill, which taskkill answers ACCESS DENIED.
     """
+    if not pid:
+        return False              # no pid is "nothing to kill", on both OSes -
+                                  # taskkill /PID None /F only spawned a process
+                                  # to be told the same thing
     if _nt():
         done = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
         return done.returncode == 0
-    if not pid:
-        return False
     try:
         os.kill(pid, signal.SIGTERM)
         return True
@@ -9920,12 +10194,22 @@ async def brain_idle_reaper():
 
 def release_local_llm():
     """local_keep off = hand the VRAM back at the end of every turn. Only ever
-    touches a server WE spawned (pidfile) - external ones are left alone."""
+    touches a server WE spawned (pidfile) - external ones are left alone.
+
+    Drops the pidfile only when the kill actually landed, for the reason
+    free_brain_vram documents at length: a pidfile deleted off a brain that
+    is still alive DISOWNS it, and _ensure_local_llm then reads the still
+    listening server as externally started and never respawns it - which
+    turns the vision gate off permanently. This path runs at the END OF
+    EVERY TURN when keep is off, so it strands one far sooner than the
+    butler does. It is synchronous, so the kill's own answer is the arbiter
+    here rather than a port probe; a genuinely stale pidfile that survives
+    costs nothing, because the next call finds the port shut and respawns.
+    """
     if load_config()["llm"].get("local_keep", True):
         return
     st = _llm_state()
-    if st.get("pid"):
-        _llm_kill(st["pid"])
+    if st.get("pid") and _llm_kill(st["pid"]):
         LLM_STATE.unlink(missing_ok=True)
 
 _TOOLCALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
@@ -9939,13 +10223,41 @@ _HISTORY_DIRECTIVE_RE = re.compile(
     # [a:0.8, b:1.0] list left ", aspect='1:1']" behind in stored history.
     # COMPOSER comes in two punctuations - the local writer's "[COMPOSER: "
     # and the big brain's "[COMPOSER HARD CONSTRAINTS - " - and the second is
-    # the one that actually carries the loras list. CHARACTER and PRIOR RENDER
-    # keep the cross-line match: they embed free text (look/notes, a verbatim
-    # scene) that can itself span lines.
+    # the one that actually carries the loras list. CHARACTER keeps the
+    # cross-line match: its look/notes text really can span lines.
+    #
+    # PRIOR RENDER left that group on 2026-08-23. It embeds a verbatim scene,
+    # but BOTH emitters collapse it first (" ".join(scene.split()) in
+    # prior_render_directive and last_render_directive), so the block is
+    # always one line - and .*? was losing to the same "stops at the FIRST ]"
+    # trap the COMPOSER branch above already documents. A scene containing a
+    # bracket cut the match short and left the whole tail of the block behind
+    # ('..." If this message asks to CHANGE that image, call generate() ...]'),
+    # which then reads to the brain as if the user had typed it. Demonstrated
+    # against the real thing: entry 079b9083's scene WAS a bracketed block.
+    # ATTACHED IMAGES joined 2026-08-23: it was added with the local brain's
+    # vision refs and never added here, so it was the ONE block that survived
+    # an echo - it reached the lane as prose and the sampler as the prompt
+    # ("[ATTACHED IMAGES: the FIRST is the person..." rendered as a scene).
+    # Single-line server template with no internal ], so the same rule holds.
     r"(?:\n\s*)?\[COMPOSER(?: HARD CONSTRAINTS)?(?::| - )[^\n]*\]"
-    r"|(?:\n\s*)?\[(?:CINEMATIC|STYLE):[^\n]*\]"
+    r"|(?:\n\s*)?\[(?:CINEMATIC|STYLE|ATTACHED IMAGES):[^\n]*\]"
+    # PERSON REFERENCE is the API brain's half of ATTACHED IMAGES - same job,
+    # same turn, emitted by the non-local arm of build_directive - and it was
+    # missing here for the same reason. It punctuates with " - ", not ":".
+    r"|(?:\n\s*)?\[PERSON REFERENCE -[^\n]*\]"
+    # CHARACTER cannot use the single-line rule - look/notes carry a newline
+    # by construction - so it keeps .*?, and .*? stops at the FIRST ]. A look
+    # of "wet-street neon [teal and magenta]" therefore stranded the server's
+    # own closing sentence in history, where it reads as the user's words and
+    # contradicts them ("Never describe her face..." attributed to Jesse).
+    # First branch: stop only at a ] that ENDS the block - one followed by the
+    # next bracket block or by end of turn. Second branch is the old behaviour,
+    # kept as the fallback for a block echoed back mid-sentence, where no
+    # terminator satisfies the lookahead and a partial strip still beats none.
+    r"|(?:\n\s*)?\[CHARACTER(?: ANCHOR)?:.*?\](?=\s*(?:\n\s*\[|$))"
     r"|(?:\n\s*)?\[CHARACTER(?: ANCHOR)?:.*?\]"
-    r"|(?:\n\s*)?\[PRIOR RENDER #[0-9a-f]+ -.*?\]",
+    r"|(?:\n\s*)?\[PRIOR RENDER #[0-9a-f]+ -[^\n]*\]",
     re.S,
 )
 _LOCAL_ITERATION_RE = re.compile(
@@ -10109,8 +10421,15 @@ PROSE_TEMPLATES = frozenset({
 # Server-side machinery that must never reach a text encoder. The brackets are
 # blocks this server itself appends to user turns; the rest is a model printing
 # its tool call as prose instead of calling it.
+# ATTACHED IMAGES, PERSON REFERENCE and bare CHARACTER were missing until
+# 2026-08-23, which is how a leaked brief reached the sampler as a whole
+# prompt (ledger 079b9083): the scrubber above did not know the block and
+# this gate - the one that exists to catch exactly that - did not either.
+# Two hand-kept lists, both a step behind the emitters. "CHARACTER" also
+# covers "CHARACTER ANCHOR" by prefix, so the longer name is redundant now.
 _MACHINERY_RE = re.compile(
-    r"\[(?:COMPOSER|CHARACTER ANCHOR|PRIOR RENDER|SYSTEM|NOTE\s*-\s*THIS TURN|CINEMATIC|STYLE)"
+    r"\[(?:COMPOSER|CHARACTER|PRIOR RENDER|SYSTEM|NOTE\s*-\s*THIS TURN|CINEMATIC"
+    r"|STYLE|ATTACHED IMAGES|PERSON REFERENCE)"
     r"|</?tool_call>|\"name\"\s*:\s*\"(?:generate|animate|upscale|review)\"", re.I)
 # A label a small model prints in front of the scene because the recipe brief
 # told it to "write EDIT instructions" - it reads that as a heading.
@@ -12266,6 +12585,28 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                     HUB.broadcast(type="thinkingdone", cid=cid)
                     return
                 HUB.broadcast(type="thinkingdone", cid=cid)
+                # Two different failures land here and they used to share one
+                # reply. scene_is_command("") is True on purpose - scene_gate
+                # needs "empty is not renderable" - so a turn the scrubbers
+                # emptied looked exactly like a model printing "generate".
+                #
+                # It is not the same thing. The local writer sometimes answers
+                # with NOTHING BUT its own brief echoed back: [COMPOSER ...],
+                # [CHARACTER ... Look: <the scene it actually wrote>], and
+                # [ATTACHED IMAGES ...]. Every one of those is machinery, the
+                # scrubbers correctly take all of it, and the turn goes empty -
+                # so Pixal answered "tell me what you'd like to see" one line
+                # after Jesse had said exactly what he wanted, twice in a row,
+                # and rendered nothing either time (2026-08-23, chat log).
+                # Blaming the user for the writer's failure is the bug.
+                echoed_brief = bool((msg.get("content") or "").strip()) \
+                    and not scene_text
+                if echoed_brief:
+                    HUB.broadcast(type="text", cid=cid, text=(
+                        "*the writer answered with its own brief instead of a "
+                        "scene, so there was nothing to render \u2014 say that "
+                        "again and I'll retry*"))
+                    return
                 # A model that wanted a tool it could not reach prints the tool's
                 # NAME as prose - six times in one chat before the local lane
                 # stopped having generate withheld. It is never Pixal's reply.
@@ -13612,6 +13953,17 @@ async def animate(req):
                 args["turbo"] = str(speed)
             elif body.get("turbo"):
                 args["turbo"] = True
+            # Sparse attention is ON wherever the pack is installed, so the
+            # client only ever sends this to turn it OFF. Measured 1.51x on
+            # this machine's canvas; see apply_h3_sparse.
+            if body.get("sparse") is False:
+                args["sparse"] = False
+            # 2x upscale is the opposite default: opt-in, because it triples
+            # the cost of a render, so the only thing worth sending is the
+            # ask. Where the pack or its weights are absent the builder just
+            # builds the plain graph rather than queueing a failing prompt.
+            if body.get("upscale"):
+                args["upscale"] = True
         else:
             dst = f"pixal_anim_{entry['id']}.png"
             (CDIR / "input").mkdir(parents=True, exist_ok=True)
@@ -14556,6 +14908,23 @@ async def chat(req):
     asyncio.create_task(kimi_reply(cid, user_msg, convo, body.get("opts")))
     return web.json_response({"ok": True, "cid": cid})
 
+def display_scene(scene):
+    """What a stored scene is allowed to look like on its way OUT to the client.
+
+    scene_gate now refuses server machinery on the way IN, but everything that
+    got past it before is still sitting in history.jsonl and in persisted lane
+    lines, and both are replayed to the browser on every tab open. Ledger entry
+    079b9083 is a real render whose whole prompt is an [ATTACHED IMAGES: ...]
+    block - it shows that wall of machinery in the gallery and the chat every
+    time, and a fix that only guards new writes would leave it there forever.
+
+    Scrubbing on the way out repairs every stored chat and card at once and
+    touches none of the user's data. An entry whose scene was ENTIRELY
+    machinery correctly comes back blank: it never was a prompt.
+    """
+    return _strip_history_directives(str(scene or ""))
+
+
 async def lane_get(_req):
     """Replay transcript for a fresh tab: lane lines with job entries hydrated
     from the ledger (images/info/error) or the live job table if still in flight."""
@@ -14573,12 +14942,21 @@ async def lane_get(_req):
             # both a ledger entry and a still-running job.
             out.append({"role": "job", "ts": e.get("ts"), "job": {
                 "job_id": e["job_id"], "template": src.get("template"),
-                "scene": src.get("scene"), "seed": src.get("seed"),
+                "scene": display_scene(src.get("scene")), "seed": src.get("seed"),
                 "count": src.get("count"), "images": _existing_media(src),
                 "info": src.get("info"), "error": src.get("error"),
                 "elapsed": src.get("elapsed"),
                 "done": src.get("elapsed") is not None or bool(src.get("error"))}})
         else:
+            # A lane line that is nothing BUT machinery is not a message and
+            # never was - drop it rather than replay an empty bubble. Copied,
+            # never mutated: HUB.lane is the record.
+            text = e.get("text")
+            if isinstance(text, str):
+                clean = display_scene(text)
+                if not clean.strip():
+                    continue
+                e = {**e, "text": clean}
             out.append(e)
     return web.json_response({"lane": out})
 
@@ -14700,7 +15078,8 @@ async def history(_req):
     for e in HUB.ledger_read():
         imgs = _existing_media(e)
         if imgs:                     # every file gone -> the card would be
-            entries.append({**e, "images": imgs})     # nothing but broken
+            entries.append({**e, "images": imgs,      # nothing but broken
+                            "scene": display_scene(e.get("scene"))})
     return web.json_response({"entries": entries})
 
 async def options(_req):
@@ -15509,9 +15888,22 @@ async def free_brain_vram():
     if not pid:
         return False
     killed = _llm_kill(pid)
-    LLM_STATE.unlink(missing_ok=True)     # stale either way - do not leave it
     if killed:
         await asyncio.sleep(1.5)          # the driver reclaims after the exit
+    # Disown it ONLY when it is really gone. The pidfile used to come off
+    # either way ("stale either way"), and it is not stale when the kill did
+    # not land - taskkill answers ACCESS DENIED, or the process is still
+    # inside a CUDA call. That left a LIVE brain Pixal no longer owned:
+    # _llm_state() read empty from then on, _ensure_local_llm's "up and not
+    # st" adopted it as an externally-started server and never respawned it,
+    # and llm_call's vision gate (bool(state["mmproj"])) went permanently
+    # False - so _delocalize flattened every attached image to the literal
+    # text "[attached image]". Chat still looked fine; every LOOK went blind,
+    # and an H3 first-frame read died with "the brain that answered has no
+    # live projector" on a brain whose projector was loaded and working
+    # (Jesse, 2026-08-23 - 5000 log lines of "Media count: 0").
+    if not await local_llm_port_open():
+        LLM_STATE.unlink(missing_ok=True)
     return killed
 
 

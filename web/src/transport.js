@@ -111,7 +111,7 @@ export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials) =>
                         ...(dials || {}) });
 export const stop = (jobId) => post("/api/stop", { job_id: jobId });
 export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
-                        shots, script, speed, lastId) =>
+                        shots, script, speed, lastId, sparse, upscale) =>
   post("/api/animate", { id, cid, hint, seconds, engine, model,
     ...(loraPlan ? { lora_plan: loraPlan } : {}),
     ...(fps ? { fps } : {}),
@@ -121,7 +121,14 @@ export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
     // still honours the old boolean `turbo`, which now means the 8-step one
     ...(speed ? { speed } : {}),
     // FL2VA bridge: a second render pinned as the clip's exact final frame
-    ...(lastId ? { last_id: lastId } : {}) });
+    ...(lastId ? { last_id: lastId } : {}),
+    // Sparse attention is the server's default wherever the pack is on disk,
+    // so the only thing worth sending is a refusal of it.
+    ...(sparse === false ? { sparse: false } : {}),
+    // 2x upscale is the opposite default: opt-in, because it ~triples the
+    // render's time. It rides INSIDE the render job (it re-samples the
+    // latent the sampler just produced), never an action on a finished clip.
+    ...(upscale ? { upscale: true } : {}) });
 export const review = (id, cid) => post("/api/review", { id, cid });
 
 // Saved styles — user-authored recipes in recipes/*.json.

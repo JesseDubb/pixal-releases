@@ -1451,8 +1451,14 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
     """
 
     async def test_it_reports_how_much_came_back(self):
+        # port_open is pinned in both of these: free_brain_vram now asks the
+        # port whether the brain really died, and an unpinned probe would ask
+        # the DEV BOX - a real brain listening on 8191 made this suite's
+        # answer depend on whether Pixal happened to be running.
         with patch.object(server, "_llm_state", return_value={"pid": 4242}), \
              patch.object(server, "_llm_kill", return_value=True), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=False)), \
              patch.object(server, "gpu_free_bytes",
                           side_effect=[10 * 2**30, 17 * 2**30]), \
              patch.object(server, "LLM_STATE", Mock()):
@@ -1463,15 +1469,31 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_stale_pidfile_does_not_claim_a_win(self):
         """The process can die outside Pixal; saying "freed" then would be a
-        lie, and the pidfile still has to go."""
+        lie, and the pidfile still has to go - nothing is listening, so there
+        is no live brain the file could still be the deed to."""
         with patch.object(server, "_llm_state", return_value={"pid": 4242}), \
              patch.object(server, "_llm_kill", return_value=False), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=False)), \
              patch.object(server, "LLM_STATE", Mock()) as state:
             resp = await server.free_chat_model(None)
         body = json.loads(resp.text)
         self.assertFalse(body["freed"])
         self.assertIn("already gone", body["note"])
         state.unlink.assert_called_once()
+
+    async def test_a_survivor_keeps_its_pidfile_and_is_not_called_freed(self):
+        """Kill refused and the port still answering: the brain is alive and
+        still ours. Deleting the pidfile here is what blinded the looks -
+        see EvictionKeepsOwnership in test_brain_reaper."""
+        with patch.object(server, "_llm_state", return_value={"pid": 4242}), \
+             patch.object(server, "_llm_kill", return_value=False), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=True)), \
+             patch.object(server, "LLM_STATE", Mock()) as state:
+            resp = await server.free_chat_model(None)
+        self.assertFalse(json.loads(resp.text)["freed"])
+        state.unlink.assert_not_called()
 
     async def test_nothing_to_free_is_not_an_error(self):
         with patch.object(server, "_llm_state", return_value={}):

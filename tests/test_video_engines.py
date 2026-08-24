@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import os
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -184,9 +185,13 @@ class MiniMaxH3Tests(unittest.TestCase):
             (root / "input" / "prepared.png").write_bytes(b"prepared")
             with patch.object(server, "CDIR", root), \
                  patch.object(server, "_video_asset", side_effect=all_video_assets):
+                # sparse=False: this is the official FL2VA graph, node for
+                # node. The optional accelerator that rides on top of it has
+                # its own contract in MiniMaxH3SparseAttentionTests.
                 graph, brief, info = server.build_h3_i2v(
                     "She turns toward the window.", 987, "prepared.png",
-                    seconds=10, width=768, height=1344, model="fl2va")
+                    seconds=10, width=768, height=1344, model="fl2va",
+                    sparse=False)
 
         self.assertEqual(graph["1"]["inputs"]["unet_name"], server.H3_MODEL)
         self.assertEqual(graph["2"]["inputs"], {
@@ -434,7 +439,8 @@ class MiniMaxH3Tests(unittest.TestCase):
                  patch.object(server, "_video_asset", side_effect=all_video_assets):
                 graph, brief, info = server.build_h3_i2v(
                     "hmmotion, she crosses the room.", 123, "prepared.png",
-                    seconds=5, width=768, height=768, model="fl2va", lora_plan=plan)
+                    seconds=5, width=768, height=768, model="fl2va",
+                    lora_plan=plan, sparse=False)
 
         self.assertEqual(graph["h3:lora0"]["inputs"], {
             "lora_name": first["name"], "strength_model": 0.75, "model": ["1", 0]})
@@ -515,7 +521,8 @@ class MiniMaxH3Tests(unittest.TestCase):
                  patch.object(server, "_video_asset", side_effect=all_video_assets):
                 graph, brief, info = server.build_h3_i2v(
                     "She crosses the room.", 123, "prepared.png", seconds=5,
-                    width=768, height=768, model="fl2va", lora_plan=plan)
+                    width=768, height=768, model="fl2va", lora_plan=plan,
+                    sparse=False)
         self.assertFalse(any(node.startswith("h3:lora") for node in graph))
         self.assertEqual(graph["8"]["inputs"]["model"], ["1", 0])
         self.assertEqual(graph["9"]["inputs"]["model"], ["1", 0])
@@ -796,8 +803,10 @@ class MiniMaxH3TurboTests(unittest.TestCase):
             (root / "input" / "prepared.png").write_bytes(b"prepared")
             with patch.object(server, "CDIR", root), \
                  patch.object(server, "_video_asset", side_effect=all_video_assets):
-                return server.build_h3_i2v("a brief", 7, "prepared.png", seconds=5,
-                                           width=768, height=1152, turbo=turbo, **kw)
+                kw.setdefault("sparse", False)   # the speed LADDER is what
+                return server.build_h3_i2v("a brief", 7, "prepared.png",  # is under
+                                           seconds=5, width=768,          # test here
+                                           height=1152, turbo=turbo, **kw)
 
     def test_turbo_changes_steps_sampler_and_scheduler_together(self):
         # The bare boolean is no longer its own recipe: it names one rung of
@@ -908,6 +917,450 @@ class MiniMaxH3TurboTests(unittest.TestCase):
         self.assertEqual(graph["7"]["inputs"]["sampler_name"], "res_multistep")
         self.assertEqual([n for n in graph.values()
                           if n["class_type"] == "LoraLoaderModelOnly"], [])
+
+
+class MiniMaxH3SparseAttentionTests(unittest.TestCase):
+    """Sparse attention (ComfyUI-PlagueKind-Nodes, H3SLAAttention).
+
+    Measured on this machine - 5090, 928x1120 x 124 frames, 20 steps
+    res_multistep, four full runs alternating dense/sparse on distinct seeds:
+
+        Sage attention            7.25, 7.23 s/step
+        + sparse attention 0.9    5.42, 5.37 s/step     1.34x
+
+    So it is ON wherever the pack is installed, and the control exists to
+    turn it OFF for a like-for-like quality reference. It engages only past
+    the node's min_seq_len, which is why the low-resolution reports see
+    nothing; every canvas Pixal renders at is far past that.
+    """
+
+    def build(self, **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "_video_asset", side_effect=all_video_assets):
+                kw.setdefault("width", 768)
+                kw.setdefault("height", 1344)
+                kw.setdefault("model", "fl2va")
+                return server.build_h3_i2v("She turns.", 987, "prepared.png",
+                                           seconds=5, **kw)
+
+    def build_multishot(self, motion, **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "_video_asset", side_effect=all_video_assets):
+                kw.setdefault("width", 768)
+                kw.setdefault("height", 1344)
+                kw.setdefault("model", "fl2va")
+                return server.build_h3_multishot(motion, 987, "prepared.png", **kw)
+
+    def test_it_is_on_by_default_and_only_off_when_asked(self):
+        # Jesse, 2026-08-23: "on by default" / "if its installed".
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            self.assertTrue(server.h3_sparse_active())
+            self.assertTrue(server.h3_sparse_active(True))
+            self.assertFalse(server.h3_sparse_active(False))
+
+    def test_the_patch_rides_after_the_lora_chain(self):
+        """A LoRA stacked ON TOP of the patch would be applied to a model
+        that no longer attends densely; the node's contract is that it goes
+        last."""
+        first = {"name": "Minimax H3\\HmMotion.safetensors", "title": "HM",
+                 "family": "minimax_h3", "variants": ("fl2va",),
+                 "default_strength": 0.8, "trigger": "hmmotion",
+                 "description": "test motion LoRA", "active_by_default": False}
+        plan = {"version": 1, "mode": "replace", "engine": "h3",
+                "model": "fl2va",
+                "entries": [{"name": first["name"], "strength": 0.75,
+                             "enabled": True}]}
+        with patch.object(server, "H3_VIDEO_LORAS", (first,)), \
+             patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            graph, _brief, info = self.build(lora_plan=plan)
+        self.assertEqual(graph["h3:sla"]["class_type"], server.H3_SLA_NODE)
+        self.assertEqual(graph["h3:sla"]["inputs"]["model"], ["h3:lora0", 0])
+        # and the sampler and the guider both read the patched model, never
+        # the raw loader - a guider left on the unpatched model renders at the
+        # old speed and silently disagrees with the sampler about the weights
+        self.assertEqual(graph["8"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertEqual(graph["9"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertTrue(info["sparse_attention"])
+
+    def test_the_sparsity_is_the_ratio_its_author_validated(self):
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            graph, _b, _i = self.build()
+        self.assertEqual(server.H3_SLA_SPARSITY, 0.9)
+        self.assertEqual(graph["h3:sla"]["inputs"]["sparsity_ratio"], 0.9)
+        # block_size is a STRING enum on this node, not an int
+        self.assertEqual(graph["h3:sla"]["inputs"]["block_size"], "64")
+
+    def test_dense_builds_the_graph_exactly_as_before(self):
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            graph, _b, info = self.build(sparse=False)
+        self.assertNotIn("h3:sla", graph)
+        self.assertEqual(graph["8"]["inputs"]["model"], ["1", 0])
+        self.assertEqual(graph["9"]["inputs"]["model"], ["1", 0])
+        self.assertFalse(info["sparse_attention"])
+
+    def test_an_absent_pack_is_not_offered_and_not_wired(self):
+        """"if its installed" - the row hides rather than offering a toggle
+        that cannot do anything, and asking for it anyway builds the plain
+        graph instead of queueing a prompt that fails validation."""
+        with patch.dict(server._COMFY_NODES, {"names": frozenset({"KSampler"})}):
+            self.assertFalse(server.h3_sla_available())
+            self.assertFalse(server.h3_sparse_active(True))
+            graph, _b, info = self.build(sparse=True)
+            engine = [e for e in server.video_engine_options()
+                      if e["id"] == "h3"][0]
+        self.assertNotIn("h3:sla", graph)
+        self.assertFalse(info["sparse_attention"])
+        self.assertFalse(engine["sparse"])
+
+    def test_a_cold_probe_still_offers_it(self):
+        """Same contract as multishot: before the first successful
+        /object_info the answer is yes, so a cold start never hides a control
+        it would show a second later."""
+        with patch.dict(server._COMFY_NODES, {"names": None}):
+            self.assertTrue(server.h3_sla_available())
+            engine = [e for e in server.video_engine_options()
+                      if e["id"] == "h3"][0]
+        self.assertTrue(engine["sparse"])
+        self.assertTrue(engine["sparse_default"])
+
+    def test_every_h3_lane_carries_it_and_no_other_engine_does(self):
+        for recipe in ("h3_i2v", "h3_multishot", "h3_ref2v"):
+            with self.subTest(recipe=recipe):
+                self.assertIn("sparse", server.SIGS[recipe])
+        self.assertNotIn("sparse", server.SIGS["ltx_i2v"])
+
+    def test_the_request_can_only_ever_turn_it_off(self):
+        """The default lives in ONE place. A client that sends sparse:true
+        must not be able to force the node in where the pack is missing."""
+        src = (Path(server.__file__).resolve()).read_text(encoding="utf-8")
+        self.assertIn('if body.get("sparse") is False:', src)
+        self.assertNotIn('args["sparse"] = True', src)
+
+    def test_multishot_is_patched_too(self):
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE,
+                                             server.H3_MULTISHOT_NODE,
+                                             server.H3_MULTISHOT_MEMORY_NODE})}):
+            graph, _b, info = self.build_multishot("Shot one.\n---\nShot two.")
+        # the chained sampler is a single node here, and it is node 6
+        self.assertEqual(graph["h3:sla"]["inputs"]["model"], ["1", 0])
+        self.assertEqual(graph["6"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertTrue(info["sparse_attention"])
+
+
+class MiniMaxH3UpscaleTests(unittest.TestCase):
+    """The 2x upscale lane (Comfyui-MMH3-UltimateUpscale), riding INSIDE the
+    render job: it re-samples the latent the sampler just produced, and Pixal
+    does not store latents, so it is an option on the render, never an action
+    on a finished clip.
+
+    The recipe was settled by measurement on 2026-08-23 - five takes at
+    928x1120 -> 1856x2240 x 124 frames (docs/2026-08-23-h3-speed-and-upscale.md):
+    6 steps at denoise 0.22, DENSE attention on the refine (the flicker
+    number preferred sparse, Jesse's eye picked dense), a tile grid that
+    divides EXACTLY (3x768 - 2x224 = 1856, 3x896 - 2x224 = 2240), and the 3D
+    latent upscaler weights - never the model-free path, which smears hair
+    across the face in wet streaks ("v5 is broken").
+
+    Cost: ~3x the render (140s -> 464s), peaking at 30.9 GB of 32.6 - so it
+    is opt-in, the OPPOSITE default from sparse attention.
+    """
+
+    CFG = {"upscale": {"image_model": "4x\\4xPurePhoto-RealPLSKR.pth"}}
+    CATALOG = [{"kind": "upscale_models", "rel": "4x\\4xPurePhoto-RealPLSKR.pth",
+                "mtime": 0}]
+
+    def build(self, upscale=True, names=None, assets=all_video_assets,
+              cfg=None, **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config",
+                              return_value=cfg or self.CFG), \
+                 patch.object(server, "model_catalog",
+                              return_value=self.CATALOG), \
+                 patch.object(server, "_video_asset", side_effect=assets), \
+                 patch.dict(server._COMFY_NODES,
+                            {"names": names if names is not None
+                             else frozenset({server.H3_UPSCALE_NODE})}):
+                kw.setdefault("width", 928)
+                kw.setdefault("height", 1120)
+                kw.setdefault("model", "fl2va")
+                if upscale is not None:
+                    kw["upscale"] = upscale
+                return server.build_h3_i2v("She turns.", 987, "prepared.png",
+                                           seconds=5, **kw)
+
+    def test_a_fresh_install_with_no_image_upscaler_still_renders(self):
+        """The shipped config default is image_model="" and a fresh install
+        may carry no ESRGAN weights at all. resolve_upscale_model RAISES on
+        both, so calling it unguarded meant ticking 2x killed the render with
+        "choose an upscale model in Settings first". The anchor falls back to
+        a plain lanczos resize instead: take 1's defect was the conditioning's
+        SIZE, which is still right either way, not its sharpness."""
+        unset = {"upscale": {"image_model": ""}}
+        gone = {"upscale": {"image_model": "4x" + os.sep + "Uninstalled.pth"}}
+        for label, cfg in (("unset", unset), ("not installed", gone)):
+            with self.subTest(image_model=label):
+                graph, _b, info = self.build(cfg=cfg)
+                # the pass still runs, at the right size, off the raw frame
+                self.assertNotIn("h3:up:imgloader", graph)
+                self.assertNotIn("h3:up:imgup", graph)
+                self.assertEqual(graph["h3:up:imgfit"]["inputs"]["image"], ["5", 0])
+                self.assertEqual(graph["h3:up:imgfit"]["inputs"]["width"], 1856)
+                self.assertEqual(graph["h3:up:cond"]["inputs"]["first_frame"],
+                                 ["h3:up:imgfit", 0])
+                self.assertEqual(info["upscale"], "2x")
+
+    def test_a_configured_image_upscaler_sharpens_the_anchor(self):
+        graph, _b, _i = self.build()
+        self.assertEqual(graph["h3:up:imgloader"]["inputs"]["model_name"],
+                         self.CFG["upscale"]["image_model"])
+        self.assertEqual(graph["h3:up:imgup"]["inputs"]["image"], ["5", 0])
+        self.assertEqual(graph["h3:up:imgfit"]["inputs"]["image"],
+                         ["h3:up:imgup", 0])
+
+    def test_the_grid_divides_exactly(self):
+        # The pick Jesse made: 3x768 - 2x224 = 1856 and 3x896 - 2x224 = 2240.
+        self.assertEqual(server.h3_tile_axis(1856), (768, 224))
+        self.assertEqual(server.h3_tile_axis(2240), (896, 224))
+        # A grid that does not divide exactly leaves a sliver tile at the far
+        # edge, re-sampled semi-independently - the coloured noise blocks in
+        # the corner of take 1. For a spread of canvases the helper must hit
+        # n*tile - (n-1)*overlap == size EXACTLY, on the node's 32px step.
+        for size in (1024, 1280, 1344, 1536, 1856, 2048, 2240, 2560, 2688,
+                     3072, 3360, 4096):
+            with self.subTest(size=size):
+                tile, overlap = server.h3_tile_axis(size)
+                exact = [n for n in range(2, 7)
+                         if (size + (n - 1) * overlap) % n == 0
+                         and (size + (n - 1) * overlap) // n == tile]
+                self.assertTrue(
+                    exact, f"{size}px: {tile}/{overlap} leaves a sliver tile")
+                self.assertLess(overlap, tile)
+                self.assertEqual(tile % 32, 0)
+                self.assertEqual(overlap % 32, 0)
+
+    def test_the_upscale_branch_is_the_measured_graph(self):
+        graph, _b, _i = self.build()
+        # The 2x first frame goes through the user's configured IMAGE
+        # upscaler - take 1 fed the 1x conditioning and the node bilinear-
+        # resized the frozen frame-0 keyframe, so the clip opened on a blur.
+        self.assertEqual(graph["h3:up:imgloader"]["class_type"],
+                         "UpscaleModelLoader")
+        self.assertEqual(graph["h3:up:imgloader"]["inputs"]["model_name"],
+                         "4x\\4xPurePhoto-RealPLSKR.pth")
+        self.assertEqual(graph["h3:up:imgup"]["inputs"], {
+            "upscale_model": ["h3:up:imgloader", 0], "image": ["5", 0]})
+        self.assertEqual(graph["h3:up:imgfit"]["inputs"], {
+            "image": ["h3:up:imgup", 0], "upscale_method": "lanczos",
+            "width": 1856, "height": 2240, "crop": "disabled"})
+        # Conditioning rebuilt AT the 2x canvas, every other input identical
+        # to the render's own node 6.
+        cond = graph["h3:up:cond"]["inputs"]
+        self.assertEqual(graph["h3:up:cond"]["class_type"], "MiniMaxH3ImageToVideo")
+        self.assertEqual(cond["clip"], ["2", 0])
+        self.assertEqual(cond["vae"], ["3", 0])
+        self.assertEqual(cond["prompt"], graph["6"]["inputs"]["prompt"])
+        self.assertEqual(cond["length"], graph["6"]["inputs"]["length"])
+        self.assertEqual(cond["width"], 1856)
+        self.assertEqual(cond["height"], 2240)
+        self.assertEqual(cond["first_frame"], ["h3:up:imgfit", 0])
+        # ...while the render's own conditioning keeps the 1x canvas.
+        self.assertEqual(graph["6"]["inputs"]["first_frame"], ["5", 0])
+        self.assertEqual(graph["6"]["inputs"]["width"], 928)
+        self.assertEqual(graph["h3:up:param"]["inputs"], {
+            "model_name": server.H3_LATENT_UPSCALER, "width": 1856,
+            "height": 2240, "device": "cuda", "precision": "bf16"})
+        self.assertEqual(graph["h3:up:noise"]["inputs"], {"noise_seed": 988})
+        sample = graph["h3:up:sample"]["inputs"]
+        self.assertEqual(graph["h3:up:sample"]["class_type"],
+                         server.H3_UPSCALE_NODE)
+        self.assertEqual(sample["conditioning"], ["h3:up:cond", 0])
+        self.assertEqual(sample["latent"], ["11", 0])
+        self.assertEqual(sample["noise"], ["h3:up:noise", 0])
+        self.assertEqual(sample["sampler"], ["7", 0])
+        self.assertEqual(sample["sigmas"], ["h3:up:sigmas", 0])
+        self.assertEqual(sample["cfg"], 1.0)
+        self.assertEqual(sample["latent_upscale_param"], ["h3:up:param", 0])
+        self.assertEqual(sample["spatial_split_param"], ["h3:up:tiles", 0])
+        self.assertNotIn("negative", sample)
+        # The model-free path is forbidden, not an option: bilinear smears
+        # hair across the face in wet streaks ("v5 is broken"), and both
+        # metrics had ranked that clip first.
+        classes = {node["class_type"] for node in graph.values()}
+        self.assertNotIn("MMH3LatentUpscaleParams", classes)
+
+    def test_the_refine_samples_the_lora_tail_not_the_sparse_patch(self):
+        """THE case that can silently go wrong: a LoRA plan applied AND
+        sparse attention on. The render samples the patched chain; the
+        refine must sample the LoRA chain WITHOUT the patch - at 6 steps
+        dense scored 14.87 flicker against sparse's 14.16 and Jesse picked
+        dense anyway ("the artifact is gone in this one - best so far"), and
+        sparse buys ~3% on a tile."""
+        first = {"name": "Minimax H3\\HmMotion.safetensors", "title": "HM",
+                 "family": "minimax_h3", "variants": ("fl2va",),
+                 "default_strength": 0.8, "trigger": "hmmotion",
+                 "description": "test motion LoRA", "active_by_default": False}
+        plan = {"version": 1, "mode": "replace", "engine": "h3",
+                "model": "fl2va",
+                "entries": [{"name": first["name"], "strength": 0.75,
+                             "enabled": True}]}
+        with patch.object(server, "H3_VIDEO_LORAS", (first,)):
+            graph, _b, _i = self.build(
+                lora_plan=plan,
+                names=frozenset({server.H3_SLA_NODE, server.H3_UPSCALE_NODE}))
+        # the render itself IS sparse...
+        self.assertEqual(graph["h3:sla"]["inputs"]["model"], ["h3:lora0", 0])
+        self.assertEqual(graph["8"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertEqual(graph["9"]["inputs"]["model"], ["h3:sla", 0])
+        # ...and the refine is NOT: dense, but still through the LoRA chain
+        self.assertEqual(graph["h3:up:sample"]["inputs"]["model"],
+                         ["h3:lora0", 0])
+        self.assertEqual(graph["h3:up:sigmas"]["inputs"]["model"],
+                         ["h3:lora0", 0])
+        self.assertEqual(graph["h3:up:sample"]["inputs"]["latent"], ["11", 0])
+
+    def test_node_14_muxes_the_2x_decode_with_the_render_audio(self):
+        graph, _b, _i = self.build()
+        # One video output, the 2x - no second VHS_VideoCombine.
+        self.assertEqual([n for n in graph
+                          if graph[n]["class_type"] == "VHS_VideoCombine"],
+                         ["14"])
+        self.assertEqual(graph["14"]["inputs"]["images"], ["h3:up:decode", 0])
+        # Audio stays the render's own decode: the pack carries the
+        # 32-channel audio latent through untouched and never re-samples it.
+        self.assertEqual(graph["14"]["inputs"]["audio"], ["13", 0])
+        self.assertEqual(graph["h3:up:decode"]["inputs"], {
+            "samples": ["h3:up:sample", 0], "vae": ["3", 0]})
+
+    def test_the_refine_schedule_is_six_steps_at_the_measured_denoise(self):
+        # 20 steps at 0.35 ran 180 sampler steps of shimmer; 6 at 0.22 is
+        # the measured settle - the step count, not attention, was what
+        # moved warble.
+        self.assertEqual(server.H3_UPSCALE_STEPS, 6)
+        self.assertEqual(server.H3_UPSCALE_DENOISE, 0.22)
+        graph, _b, _i = self.build()
+        sigmas = graph["h3:up:sigmas"]["inputs"]
+        self.assertEqual(graph["h3:up:sigmas"]["class_type"], "BasicScheduler")
+        self.assertEqual(sigmas["steps"], 6)
+        self.assertEqual(sigmas["denoise"], 0.22)
+        # the run's own scheduler travels into the refine
+        self.assertEqual(sigmas["scheduler"], server.H3_SCHEDULER)
+
+    def test_the_tile_node_carries_the_measured_split(self):
+        graph, _b, _i = self.build()
+        tiles = graph["h3:up:tiles"]["inputs"]
+        self.assertEqual(graph["h3:up:tiles"]["class_type"],
+                         "MMH3SpatialSplitParams")
+        self.assertEqual((tiles["tile_width"], tiles["spatial_w_overlap"]),
+                         (768, 224))
+        self.assertEqual((tiles["tile_height"], tiles["spatial_h_overlap"]),
+                         (896, 224))
+        # fade = max(32, overlap - 32) per axis: 12 of the 14 latent cells
+        # ramp instead of 2 (take 1's failure)
+        self.assertEqual(tiles["fade_width"], 192)
+        self.assertEqual(tiles["fade_height"], 192)
+        self.assertEqual(tiles["min_tile_size"], 256)
+        self.assertEqual(tiles["overlap_mode"], "earlier")
+        self.assertEqual(tiles["overlap_blend"], "smoothstep")
+
+    def test_option_off_builds_the_old_graph_byte_for_byte(self):
+        asked, _b, info = self.build(upscale=False)
+        plain, _b2, info2 = self.build(upscale=None)   # the kwarg never sent
+        self.assertEqual(asked, plain)
+        self.assertEqual(info, info2)
+        self.assertFalse(any(str(n).startswith("h3:up") for n in asked))
+        self.assertEqual(asked["14"]["inputs"]["images"], ["12", 0])
+        self.assertEqual(asked["14"]["inputs"]["audio"], ["13", 0])
+        self.assertNotIn("upscale", info)
+        self.assertEqual(info["size"], "928x1120")
+
+    def test_pack_absent_builds_plain_and_hides_the_row(self):
+        """Asking for 2x where the pack is missing builds the plain graph
+        rather than queueing a prompt that fails validation - and the engine
+        options stop offering the row. (Simulation = patched _COMFY_NODES
+        and _video_asset; the real 659 MB file is never touched.)"""
+        with patch.dict(server._COMFY_NODES, {"names": frozenset({"KSampler"})}):
+            self.assertFalse(server.h3_upscale_available())
+            self.assertFalse(server.h3_upscale_active(True))
+            graph, _b, info = self.build(names=frozenset({"KSampler"}))
+            with patch.object(server, "_video_asset",
+                              side_effect=all_video_assets):
+                engine = [e for e in server.video_engine_options()
+                          if e["id"] == "h3"][0]
+        self.assertFalse(any(str(n).startswith("h3:up") for n in graph))
+        self.assertEqual(graph["14"]["inputs"]["images"], ["12", 0])
+        self.assertNotIn("upscale", info)
+        self.assertFalse(engine["upscale_2x"])
+
+    def test_weights_absent_builds_plain_and_hides_the_row(self):
+        """The cold-probe contract is NOT enough here: unlike sparse
+        attention this lane needs a 659 MB file on disk, so an unprobed
+        node list with the weights simply absent must still read
+        unavailable."""
+        def no_upscaler(kind, rel):
+            return None if rel == server.H3_LATENT_UPSCALER else rel
+        with patch.dict(server._COMFY_NODES, {"names": None}), \
+             patch.object(server, "_video_asset", side_effect=no_upscaler):
+            self.assertFalse(server.h3_upscale_available())
+            engine = [e for e in server.video_engine_options()
+                      if e["id"] == "h3"][0]
+        self.assertFalse(engine["upscale_2x"])
+        graph, _b, info = self.build(assets=no_upscaler)
+        self.assertFalse(any(str(n).startswith("h3:up") for n in graph))
+        self.assertNotIn("upscale", info)
+
+    def test_a_cold_probe_still_offers_it_when_the_weights_exist(self):
+        """Same contract as multishot and sparse: before the first
+        successful /object_info the node answer is yes, so a cold start
+        never hides a control it would show a second later."""
+        with patch.dict(server._COMFY_NODES, {"names": None}), \
+             patch.object(server, "_video_asset", side_effect=all_video_assets):
+            self.assertTrue(server.h3_upscale_available())
+            engine = [e for e in server.video_engine_options()
+                      if e["id"] == "h3"][0]
+        self.assertTrue(engine["upscale_2x"])
+
+    def test_the_lane_switch_is_i2v_only(self):
+        """One change per brief: the multishot latent is a chained thing
+        this graph has never been tested against, and ref2v's reference
+        conditioning is untested here too."""
+        self.assertIn("upscale", server.SIGS["h3_i2v"])
+        for recipe in ("h3_multishot", "h3_ref2v", "ltx_i2v"):
+            with self.subTest(recipe=recipe):
+                self.assertNotIn("upscale", server.SIGS[recipe])
+
+    def test_the_ledger_reports_the_canvas_the_clip_actually_has(self):
+        _g, _b, info = self.build()
+        self.assertEqual(info["upscale"], "2x")
+        self.assertEqual(info["size"], "1856x2240")
+        self.assertAlmostEqual(info["canvas_mp"], 1856 * 2240 / 1e6)
+        # the take itself is unchanged - same frames, same duration
+        self.assertEqual(info["frames"], 124)
+        self.assertEqual(info["duration"], "5.17s @ 24fps")
+
+    def test_the_request_can_only_opt_in(self):
+        """Opt-in only: the handler forwards an ask, and there is no path
+        that forces 2x on - it ~triples the cost of a render."""
+        src = (Path(server.__file__).resolve()).read_text(encoding="utf-8")
+        self.assertIn('if body.get("upscale"):\n                '
+                      'args["upscale"] = True', src)
+        self.assertNotIn('args["upscale"] = False', src)
 
 
 class MotionBeatBudgetTests(unittest.TestCase):

@@ -15,9 +15,11 @@ exits with it; unittest discovery runs the same checks once through
 ChatPipelineTests. Importing the module runs nothing.
 """
 import asyncio
+import json
 import re
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).absolute().parent.parent))
@@ -241,6 +243,154 @@ def main():
     if FAIL:
         print("failed:", ", ".join(FAIL))
     return 1 if FAIL else 0
+
+
+class EchoedBriefIsNotTheUsersFault(unittest.TestCase):
+    r"""The local writer sometimes answers with nothing but its own brief.
+
+    Real turn, 2026-08-23: Jesse asked "can you make her fully dressed but
+    wearing tight clothing" and the 4B replied with [COMPOSER ...],
+    [CHARACTER ... Look: <the scene it had actually written>] and
+    [ATTACHED IMAGES ...] - machinery all the way down. The scrubbers took
+    every block, correctly, and the turn went empty. scene_is_command("") is
+    True on purpose (scene_gate needs "empty is not renderable"), so an
+    emptied turn was indistinguishable from a model printing "generate", and
+    Pixal answered "Tell me what you'd like to see and I'll render it" one
+    line after he had said exactly what he wanted. Twice, and it rendered
+    nothing either time.
+
+    The user telling us what they want, and the writer failing to write it,
+    are opposite problems. They must not share a reply.
+    """
+
+    ECHOED = (
+        "[COMPOSER: writing for template=identity_edit. Model, loras, size and "
+        "reference are applied server-side - never mention file names.]\n\n"
+        "[CHARACTER: Mia. Look:\nShe sits in the dark - no other setting, no "
+        "background. Her posture is relaxed but still, facing slightly away from "
+        "the camera as if lost in thought, dimly lit by a single low-angle "
+        "spotlight from the left.]\n\n"
+        "[ATTACHED IMAGES: the FIRST is the person this render must depict - "
+        "never write a skin tone, hair colour, age or body type.]")
+
+    def _replay(self, brain_says, user_text="can you make her fully dressed"):
+        said, submitted = [], []
+
+        async def fake_submit(cid, src, template, scene, spec, count=1, parent=None,
+                              flags=None, verbatim=False):
+            submitted.append(scene)
+            return {"id": "test1234", "error": None}
+
+        async def fake_llm(messages, tools=None, cid=None):
+            return 200, {"choices": [{"message": {"role": "assistant",
+                                                  "content": brain_says}}]}
+
+        real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
+        server.HUB.submit, server.llm_call = fake_submit, fake_llm
+        server.HUB.broadcast = lambda **kw: (
+            said.append(kw.get("text")) if kw.get("type") == "text" else None)
+        try:
+            asyncio.run(server._kimi_reply(
+                "testcid", {"role": "user", "content": user_text}, [],
+                {"prompt_enhance": True}))
+        finally:
+            server.HUB.submit, server.llm_call, server.HUB.broadcast = real
+        return " ".join(t for t in said if t), submitted
+
+    def test_an_echoed_brief_does_not_blame_the_user(self):
+        reply, submitted = self._replay(self.ECHOED)
+        self.assertNotIn("Tell me what you'd like to see", reply)
+        self.assertIn("brief", reply.lower())
+        self.assertEqual(submitted, [])          # still nothing to render
+        # and not one bracket of the machinery reaches the lane
+        for block in ("[COMPOSER", "[CHARACTER", "[ATTACHED IMAGES"):
+            self.assertNotIn(block, reply)
+
+    def test_a_bare_command_still_gets_the_original_line(self):
+        """The control. This is the case that line was written for - a model
+        printing the tool's name as prose - and it must not change."""
+        reply, submitted = self._replay("generate")
+        self.assertIn("Tell me what you'd like to see", reply)
+        self.assertEqual(submitted, [])
+
+    def test_a_reply_that_is_only_whitespace_is_not_an_echoed_brief(self):
+        """Genuinely empty is not the same as emptied BY the scrubbers - there
+        was no brief to echo, so the original line is still the right answer."""
+        reply, _ = self._replay("   \n  ")
+        self.assertNotIn("brief", reply.lower())
+
+
+class StoredMachineryNeverReplays(unittest.TestCase):
+    r"""Guarding new writes was not enough - the old ones replay forever.
+
+    scene_gate refuses server machinery on the way IN now, but ledger entry
+    079b9083 is already written: a real render whose entire prompt is an
+    [ATTACHED IMAGES: ...] block. history.jsonl and the persisted lane are
+    both replayed to the browser on every tab open, so that wall of machinery
+    was still on screen in the gallery and the chat after the fix - which is
+    exactly what Jesse pasted at the start of the session.
+
+    Scrubbing on the way OUT repairs every stored chat and card at once and
+    rewrites none of his data.
+    """
+
+    POISON = ("[ATTACHED IMAGES: the FIRST is the person this render must depict "
+              "- never write a skin tone, hair colour, age or body type that "
+              "contradicts it, and do not describe the face in detail; describe "
+              "each style/clothing/object reference's salient traits faithfully "
+              "into the scene (garment cut/colour/texture, palette/light/medium, "
+              "form/material).]")
+
+    ENTRY = {"id": "079b9083", "template": "identity_edit", "seed": 8800912903777915,
+             "count": 1, "elapsed": 38.3, "scene": POISON,
+             "images": [{"filename": "attached_images_the_first_is_the_per_00001_.png",
+                         "subfolder": "pixal_dm", "type": "output"}]}
+
+    def _stub_media(self):
+        return patch.object(server, "_existing_media",
+                            return_value=self.ENTRY["images"])
+
+    def test_the_gallery_does_not_replay_it(self):
+        with patch.object(server.HUB, "ledger_read", return_value=[dict(self.ENTRY)]), \
+                self._stub_media():
+            resp = asyncio.run(server.history(None))
+        body = json.loads(resp.text)
+        self.assertEqual(body["entries"][0]["scene"], "")
+        self.assertNotIn("ATTACHED IMAGES", resp.text)
+
+    def test_the_chat_replay_drops_a_line_that_is_only_machinery(self):
+        lane = [{"role": "user", "text": "this girl sitting in the dark"},
+                {"role": "assistant", "text": self.POISON},
+                {"role": "job", "job_id": "079b9083", "ts": 1}]
+        with patch.object(server.HUB, "chats", {"c1": {"id": "c1", "lane": lane}}), \
+                patch.object(server.HUB, "active_chat", "c1"), \
+                patch.object(server.HUB, "ledger_read", return_value=[dict(self.ENTRY)]), \
+                self._stub_media():
+            resp = asyncio.run(server.lane_get(None))
+        body = json.loads(resp.text)
+        said = [e.get("text") for e in body["lane"] if e.get("role") != "job"]
+        self.assertEqual(said, ["this girl sitting in the dark"])   # the echo is gone
+        card = next(e for e in body["lane"] if e.get("role") == "job")
+        self.assertEqual(card["job"]["scene"], "")
+        self.assertNotIn("ATTACHED IMAGES", resp.text)
+        # the record itself is untouched - this is a display guard, not an edit
+        self.assertEqual(lane[1]["text"], self.POISON)
+
+    def test_a_real_scene_and_a_real_message_pass_through(self):
+        good = "She sits in the dark, one lamp burning behind her."
+        entry = {**self.ENTRY, "scene": good}
+        lane = [{"role": "user", "text": "make it colder"},
+                {"role": "job", "job_id": "079b9083", "ts": 1}]
+        with patch.object(server.HUB, "chats", {"c1": {"id": "c1", "lane": lane}}), \
+                patch.object(server.HUB, "active_chat", "c1"), \
+                patch.object(server.HUB, "ledger_read", return_value=[entry]), \
+                self._stub_media():
+            resp = asyncio.run(server.lane_get(None))
+        body = json.loads(resp.text)
+        self.assertEqual([e.get("text") for e in body["lane"]
+                          if e.get("role") != "job"], ["make it colder"])
+        card = next(e for e in body["lane"] if e.get("role") == "job")
+        self.assertEqual(card["job"]["scene"], good)
 
 
 class ChatPipelineTests(unittest.TestCase):

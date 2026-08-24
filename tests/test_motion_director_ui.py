@@ -154,5 +154,70 @@ class ShotsCaption(unittest.TestCase):
         self.assertIsNotNone(m, "no InfoTip carries the --- script guidance")
 
 
+class SparseAttentionRow(unittest.TestCase):
+    """The attention row: on by default, and only where the pack exists.
+
+    "can you do anything to make this a toggle in the minimax h3 section of
+    the app?" / "on by default" / "if its installed" (Jesse, 2026-08-23).
+    """
+
+    def test_the_row_only_exists_when_the_server_says_the_node_does(self):
+        self.assertIn("{activeEngine?.sparse && (", SRC)
+
+    def test_it_starts_on(self):
+        self.assertIn("useState(true)", _block("const [sparse", "const speedModes"))
+
+    def test_it_is_the_shared_segmented_control_not_a_new_switch(self):
+        row = _block("{activeEngine?.sparse && (", "showVideoLoraChain")
+        self.assertIn("<SegmentedControl", row)
+        self.assertIn('value={sparse ? "sparse" : "dense"}', row)
+
+    def test_turning_it_off_is_narrated_on_the_collapsed_fold(self):
+        # Every other non-default lands in `tweaks`; an accelerator the user
+        # switched off is exactly what a folded summary is for.
+        self.assertIn('tweaks.push("dense attention")', SRC)
+
+    def test_the_choice_reaches_the_render(self):
+        self.assertIn("activeEngine.sparse ? sparse : undefined", SRC)
+
+
+class Upscale2xRow(unittest.TestCase):
+    """The 2x upscale row: OFF by default, and only where the server says
+    the pack AND its 659 MB upscaler weights exist.
+
+    "OMG put the 2x upscale in this version!" (Jesse, 2026-08-23). Opt-in
+    because it ~triples the render's time - measured 140s -> 464s on a
+    928x1120, 124-frame take - and it rides inside the render job: Pixal
+    does not store latents, so it can never be an action on a finished clip.
+    """
+
+    def test_the_row_only_exists_when_the_server_says_it_can_run(self):
+        self.assertIn("{activeEngine?.upscale_2x && (", SRC)
+
+    def test_it_starts_off(self):
+        self.assertIn("useState(false)", _block("const [upscale", "const speedModes"))
+
+    def test_it_is_the_shared_segmented_control_not_a_new_switch(self):
+        # DESIGN.md: never hand-roll a control.
+        row = _block("{activeEngine?.upscale_2x && (", "showVideoLoraChain")
+        self.assertIn("<SegmentedControl", row)
+        self.assertIn('value={upscale ? "2x" : "off"}', row)
+
+    def test_the_hint_says_what_it_costs_and_where_it_runs(self):
+        # "~3x longer" is the honest number (measured 140s -> 464s), and the
+        # lane is an option on the render, not an action on a finished clip.
+        row = _block("{activeEngine?.upscale_2x && (", "showVideoLoraChain")
+        self.assertIn("~3x longer", row)
+        self.assertIn("inside this render", row)
+
+    def test_turning_it_on_is_narrated_on_the_collapsed_fold(self):
+        # Every other non-default lands in `tweaks`; an expensive option the
+        # user switched ON is exactly what a folded summary is for.
+        self.assertIn('tweaks.push("2x upscale")', SRC)
+
+    def test_the_choice_reaches_the_render(self):
+        self.assertIn("activeEngine.upscale_2x ? upscale : undefined", SRC)
+
+
 if __name__ == "__main__":
     unittest.main()

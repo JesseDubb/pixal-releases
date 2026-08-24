@@ -499,6 +499,24 @@ Inside, in order:
   @0.75"), "Turbo v4 (old)" ("8 steps, superseded"). A speed whose LoRA file
   is not on disk is greyed; hovering says why: "Turbo 8: its LoRA is not in
   the loras folder, so this recipe can't run".
+- **attention** — H3, and only when the sparse-attention pack is installed.
+  "sparse" (the default, hinted "sparse · ~1.3x faster on this size") or
+  "dense" ("dense on every step · the quality reference"). Sparse attention
+  skips most of the attention work on long, high-resolution clips: measured
+  here at 1.34x on a 1MP, 124-frame take. It switches itself off on short or
+  low-resolution clips where it would not help, so it costs nothing there.
+  The reason "dense" exists is so you can render the same shot both ways and
+  judge the difference yourself. If the pack is not installed the row is not
+  shown at all.
+- **2x upscale** — H3, and only when the upscale pack and its 659 MB
+  upscaler weights are installed. "off" (the default, hinted "the render's
+  native size") or "2x" ("~3x longer · runs inside this render, not after").
+  The clip is re-sampled at twice the size as part of the same render — the
+  pass needs the latent the sampler just produced, so it is an option on the
+  render, never an action on a finished clip. Measured here: a 928x1120,
+  124-frame take went from about 140s to 464s, peaking at 30.9 of 32.6 GB —
+  off by default because it roughly triples the wait. If the pack or the
+  weights are missing the row is not shown at all.
 - **video LoRA chain** — H3 with the FL2VA model. "top row loads first":
   **add LoRA** opens a searchable list ("find a LoRA…") of your installed
   video LoRAs with their trigger words; each chain row gets an enable switch,
@@ -1059,7 +1077,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.5b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.6b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

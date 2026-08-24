@@ -1574,10 +1574,10 @@ export const Chat = () => {
         <MotionDirector options={store.options} onClose={() => setAnimFor(null)}
           history={store.history} sourceId={animFor}
           onAction={(hint, secs, engine, model, loraPlan, fps, shots, script, speed,
-                     endId) => {
+                     endId, sparse, upscale) => {
             followLatest();
             store.animate(animFor, hint, secs, engine, model, loraPlan, fps,
-                          shots, script, speed, endId);
+                          shots, script, speed, endId, sparse, upscale);
           }} />
       )}
 

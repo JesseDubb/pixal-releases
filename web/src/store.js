@@ -1077,11 +1077,11 @@ export const api = {
   },
 
   async animate(entryId, hint, seconds, engine, model, loraPlan, fps, shots, script,
-                speed, lastId) {
+                speed, lastId, sparse, upscale) {
     try {
       const result = await transport.animate(
         entryId, cid(), hint, seconds, engine, model, loraPlan, fps, shots, script,
-        speed, lastId);
+        speed, lastId, sparse, upscale);
       if (!result?.ok)
         appendMsg({ id: cid(), role: "error",
                     text: result?.error || "animation could not be started",

@@ -8,8 +8,11 @@ fix: the reaper only ever reaps its own idle process, and changing where the
 brain runs evicts the one already running under the old answer.
 """
 import asyncio
+import json
 import time
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 import server
@@ -119,6 +122,105 @@ class PlacementChangeEvicts(unittest.IsolatedAsyncioTestCase):
                                 {"local_gpu_layers": -1})
         free.assert_not_awaited()
 
+
+class EvictionKeepsOwnership(unittest.IsolatedAsyncioTestCase):
+    """The butler evicts the brain before every render. What it must NOT do is
+    disown one that survived the kill.
+
+    Seen live 2026-08-23: taskkill did not land, the pidfile came off anyway,
+    and from then on _llm_state() read empty. _ensure_local_llm's "up and not
+    st" shortcut read the still-listening server as externally started and
+    never respawned it, so llm_call's vision gate - bool(state["mmproj"]) -
+    was False forever and _delocalize flattened every attached image to the
+    literal string "[attached image]". Chat looked healthy; every LOOK went
+    blind, and the H3 first-frame read reported "no live projector" against a
+    projector that was loaded, warmed and answering.
+    """
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.state = Path(self.tmp.name) / ".local_llm.json"
+        self.state.write_text(json.dumps(
+            {"pid": 4242, "model": "b.gguf", "mmproj": "b.mmproj-f16.gguf",
+             "gpu_layers": -1}), encoding="utf-8")
+        self.addCleanup(self.tmp.cleanup)
+
+    async def _evict(self, killed, port_open):
+        with patch.object(server, "LLM_STATE", self.state), \
+             patch.object(server, "_llm_kill", return_value=killed), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=port_open)), \
+             patch.object(server.asyncio, "sleep", AsyncMock()):
+            return await server.free_brain_vram()
+
+    async def test_a_kill_that_did_not_land_keeps_the_pidfile(self):
+        """The regression. Still listening = still ours = still sighted."""
+        self.assertFalse(await self._evict(killed=False, port_open=True))
+        self.assertTrue(self.state.exists())
+        kept = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertEqual(kept["mmproj"], "b.mmproj-f16.gguf")   # still sighted
+
+    async def test_a_brain_that_actually_died_is_disowned(self):
+        self.assertTrue(await self._evict(killed=True, port_open=False))
+        self.assertFalse(self.state.exists())
+
+    async def test_a_stale_pidfile_is_still_cleaned_up(self):
+        """Nothing there to kill AND nothing listening - the file is junk."""
+        self.assertFalse(await self._evict(killed=False, port_open=False))
+        self.assertFalse(self.state.exists())
+
+    async def test_a_slow_exit_is_not_disowned_either(self):
+        """Killed, but the socket has not closed yet. Keeping the pidfile is
+        the safe side: if it really is dying, the next call finds the port
+        shut, falls past the reuse check and respawns anyway."""
+        self.assertTrue(await self._evict(killed=True, port_open=True))
+        self.assertTrue(self.state.exists())
+
+    async def test_no_pid_never_shells_out(self):
+        self.state.write_text("{}", encoding="utf-8")
+        with patch.object(server, "LLM_STATE", self.state), \
+             patch.object(server, "_llm_kill") as kill:
+            self.assertFalse(await server.free_brain_vram())
+        kill.assert_not_called()
+
+class ReleaseKeepsOwnership(unittest.TestCase):
+    """The same ownership rule on the per-turn path.
+
+    release_local_llm runs at the END OF EVERY TURN when local_keep is off,
+    so a kill that does not land strands the brain here far sooner than the
+    butler ever would - and a disowned brain is a brain whose vision gate is
+    off for good (see EvictionKeepsOwnership above)."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.state = Path(self.tmp.name) / ".local_llm.json"
+        self.state.write_text(json.dumps(
+            {"pid": 4242, "model": "b.gguf", "mmproj": "b.mmproj-f16.gguf"}),
+            encoding="utf-8")
+        self.addCleanup(self.tmp.cleanup)
+
+    def _release(self, keep, killed=True):
+        with patch.object(server, "LLM_STATE", self.state), \
+             patch.object(server, "load_config", return_value=_cfg(local_keep=keep)), \
+             patch.object(server, "_llm_kill", return_value=killed) as kill:
+            server.release_local_llm()
+        return kill
+
+    def test_a_released_brain_that_died_is_disowned(self):
+        self._release(keep=False, killed=True)
+        self.assertFalse(self.state.exists())
+
+    def test_a_release_that_did_not_land_keeps_the_pidfile(self):
+        """The regression: still alive, so still ours, so still sighted."""
+        self._release(keep=False, killed=False)
+        self.assertTrue(self.state.exists())
+        kept = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertEqual(kept["mmproj"], "b.mmproj-f16.gguf")
+
+    def test_keep_on_never_touches_the_brain(self):
+        kill = self._release(keep=True)
+        kill.assert_not_called()
+        self.assertTrue(self.state.exists())
 
 if __name__ == "__main__":
     unittest.main()

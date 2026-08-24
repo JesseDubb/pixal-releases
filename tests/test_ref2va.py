@@ -808,5 +808,26 @@ class AnimateRoutingTests(unittest.TestCase):
         self.assertIn(server.H3_MOTION_SYSTEM, call.await_args.args[0][0]["content"])
 
 
+class Ref2vSparseAttention(unittest.TestCase):
+    """The reference lane gets the same 1.51x - it is the same transformer."""
+
+    def test_sparse_rides_on_the_model_the_sampler_reads(self):
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            graph, _b, info = build_ref2v(director_brief())
+        self.assertEqual(graph["h3:sla"]["inputs"]["model"], ["1", 0])
+        self.assertEqual(graph["8"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertEqual(graph["9"]["inputs"]["model"], ["h3:sla", 0])
+        self.assertTrue(info["sparse_attention"])
+
+    def test_dense_is_the_old_graph(self):
+        with patch.dict(server._COMFY_NODES,
+                        {"names": frozenset({server.H3_SLA_NODE})}):
+            graph, _b, info = build_ref2v(director_brief(), sparse=False)
+        self.assertNotIn("h3:sla", graph)
+        self.assertEqual(graph["8"]["inputs"]["model"], ["1", 0])
+        self.assertFalse(info["sparse_attention"])
+
+
 if __name__ == "__main__":
     unittest.main()

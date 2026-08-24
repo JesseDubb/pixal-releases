@@ -166,11 +166,11 @@ class OneOptionKey(unittest.TestCase):
                               "%s still passes options keyed on `value`" % name)
 
     def test_all_call_sites_use_the_one_component(self):
-        # 12 in SettingsMenu, 5 in MotionDirector, 2 in the Composer - the
-        # full census from the 9.23b migration.
+        # 12 in SettingsMenu, 7 in MotionDirector, 2 in the Composer - the
+        # 9.23b census plus H3's attention row (9.28) and 2x upscale row (9.28).
         total = sum(text.count("<SegmentedControl")
                     for text in CALLSITES.values())
-        self.assertEqual(total, 19,
+        self.assertEqual(total, 21,
                          "call sites drifted from the 9.23b census")
 
 

@@ -1089,6 +1089,105 @@ class RecipeTests(unittest.TestCase):
         clean = "A woman standing in a park."
         self.assertEqual(server._strip_history_directives(clean), clean)
 
+    def test_a_bracket_in_a_characters_look_does_not_strand_the_block(self):
+        """CHARACTER is the one block that genuinely spans lines, so it keeps
+        .*? - and .*? stops at the FIRST ]. A look like "wet-street neon [teal
+        and magenta]" left the server's own closing sentence sitting in
+        history, where the brain reads it as the user's words and it flatly
+        contradicts them: "Never describe her face..." attributed to Jesse.
+
+        The look field is his to write, so a bracket in it is ordinary."""
+        user = "she waits at the curb"
+        tail = ("\nNever describe her face, age, skin, ethnicity or build - the "
+                "reference photo carries them. Place her EXACTLY where the user "
+                "asked - no other locations, nothing the user didn't say.]")
+        block = "\n[CHARACTER: Mia. Look: wet-street neon [teal and magenta]" + tail
+        anchor = ("\n[CHARACTER ANCHOR: Mia. She keeps a [chipped] mug.\nHonor "
+                  "this canon in the scene; do not restate their face.]")
+        after = "\n[ATTACHED IMAGES: the FIRST is the person to depict.]"
+        for label, d in (("look", block), ("anchor", anchor),
+                         ("followed by another block", block + after),
+                         ("both", anchor + block + after)):
+            with self.subTest(shape=label):
+                self.assertEqual(server._strip_history_directives(user + d), user)
+        # Echoed mid-sentence with no boundary after it, there is no way to
+        # know where the block ends. The fallback branch does what it always
+        # did - strips to the first ] and leaves the tail - and this change
+        # does not make that shape worse. Pinned so a future edit to the
+        # fallback is visible rather than silent.
+        residue = server._strip_history_directives(user + block + " and then")
+        self.assertNotIn("[CHARACTER", residue)
+        self.assertIn("Never describe her face", residue)   # still unsolved
+
+    def test_no_server_block_survives_the_scrubber_or_the_render_gate(self):
+        """Two hand-kept lists guard this and BOTH were a step behind
+        build_directive on 2026-08-23: _HISTORY_DIRECTIVE_RE (history hygiene)
+        and _MACHINERY_RE (the render chokepoint, which exists to catch
+        exactly this). A leaked brief went through both and rendered as a
+        whole prompt - ledger 079b9083.
+
+        Built from the real emitters, both arms, so adding a block without
+        teaching the scrubbers fails here rather than in a render."""
+        user = "she is sitting in the dark"
+        opts = {"refs": [{"kind": "identity", "file": "her.png"},
+                         {"kind": "clothing", "file": "jacket.png"}],
+                "style": "anime", "cinematic": True, "aspect": "9:16", "mp": 2}
+        with patch.object(server, "load_config",
+                          return_value={"llm": {"local_model": "g.gguf"}}), \
+                patch.object(server, "_local_llm_mmproj",
+                             return_value="mmproj.gguf"):
+            local, _ = server.build_directive(dict(opts), local=True)
+        api, _ = server.build_directive(dict(opts))
+        # the two arms really do carry the blocks this is about
+        self.assertIn("[ATTACHED IMAGES:", local)
+        self.assertIn("[PERSON REFERENCE -", api)
+        for arm, d in (("local", local), ("api", api)):
+            with self.subTest(arm=arm):
+                self.assertEqual(server._strip_history_directives(user + d), user)
+                # verbatim=True skips every scrubber, so _MACHINERY_RE alone
+                # has to refuse it - that is the backstop being pinned
+                _scene, err = server.scene_gate("realism", d.strip(), verbatim=True)
+                self.assertIsNotNone(err, f"{arm} directive reached the encoder")
+
+    def test_every_block_name_trips_the_render_gate(self):
+        """The blocks whose emitters need a character on disk, pinned by name
+        so the gate's list cannot quietly lose one."""
+        for block in ("[COMPOSER: writing for template=realism.]",
+                      "[COMPOSER HARD CONSTRAINTS - pass these EXACTLY]",
+                      "[CHARACTER: Mia. Look: nothing]",
+                      "[CHARACTER ANCHOR: Mia. Canon.]",
+                      "[PERSON REFERENCE - the FIRST attached image]",
+                      "[ATTACHED IMAGES: the FIRST is the person]",
+                      "[PRIOR RENDER #079b9083 - its scene was]",
+                      "[STYLE: anime.]", "[CINEMATIC: ON.]",
+                      "[NOTE - THIS TURN ONLY: generate is not offered]",
+                      "[SYSTEM: the server queued that scene]"):
+            with self.subTest(block=block):
+                _scene, err = server.scene_gate("realism", block, verbatim=True)
+                self.assertIsNotNone(err, f"{block} would reach the encoder")
+
+    def test_attached_images_brief_never_survives_into_a_scene(self):
+        """The local writer's vision brief was the one bracket the scrubber never
+        learned. Every other block came off, so "[ATTACHED IMAGES: the FIRST is
+        the person this render must depict..." was what reached the lane as prose
+        AND the sampler as the prompt - seen live on a Mia identity_edit shot
+        (Jesse, 2026-08-23). Built from build_directive so this cannot drift from
+        the template it is meant to catch."""
+        opts = {"refs": [{"kind": "identity", "file": "her.png"},
+                         {"kind": "clothing", "file": "jacket.png"}]}
+        with patch.object(server, "load_config",
+                          return_value={"llm": {"local_model": "g.gguf"}}), \
+                patch.object(server, "_local_llm_mmproj",
+                             return_value="mmproj.gguf"):
+            d, _ = server.build_directive(opts, local=True)
+        self.assertIn("[ATTACHED IMAGES:", d)
+        scene = "A woman sitting in the dark, one lamp burning behind her."
+        self.assertEqual(server._strip_history_directives(d + "\n\n" + scene), scene)
+        self.assertEqual(server._strip_history_directives(scene + d), scene)
+        # the render chokepoint is the one that actually shipped it
+        self.assertEqual(server.scene_gate("realism", d + "\n\n" + scene),
+                         (scene, None))
+
     def test_job_reference_carries_the_prior_scene_into_the_turn(self):
         """"iterate on #abc: apply the review fix - relax the hands" must reach the
         brain with the scene that job rendered attached. Without it the only
@@ -1107,6 +1206,29 @@ class RecipeTests(unittest.TestCase):
         # and it must not survive into the replayed history the local brain sees
         self.assertEqual(server._strip_history_directives("do the thing" + d),
                          "do the thing")
+
+    def test_a_bracket_in_a_stored_scene_does_not_strand_the_block(self):
+        """PRIOR RENDER embeds a verbatim scene, and .*? stopped at the FIRST
+        ']'. A scene containing a bracket therefore cut the strip short and
+        left the whole tail of the server's own block sitting in history,
+        reading to the brain as if the user had typed it. Not hypothetical:
+        ledger entry 079b9083's entire scene was a bracketed directive
+        (2026-08-23). Both emitters are covered because the fix rests on both
+        collapsing the scene to a single line."""
+        scene = "A woman in a doorway [the light behind her] holding a cup."
+        entry = {"id": "079b9083", "template": "identity_edit",
+                 "seed": 8800912903777915, "scene": scene, "info": {}}
+        with patch.object(server.HUB, "ledger_read", return_value=[entry]):
+            by_id = server.prior_render_directive("iterate on #079b9083: colder")
+            with patch.object(server, "last_chat_render_id",
+                              return_value="079b9083"):
+                by_ref = server.last_render_directive([], "make the last one colder")
+        for d in (by_id, by_ref):
+            self.assertIn("[the light behind her]", d)   # the block really nests
+            self.assertEqual(d.strip().count("\n"), 0)   # single line - the premise
+            self.assertEqual(
+                server._strip_history_directives("make it colder" + d),
+                "make it colder")
 
     def test_character_reference_wins_over_manual_identity_ref(self):
         entry = model("Krea 2\\krea2_turbo_mxfp8.safetensors", "krea2")

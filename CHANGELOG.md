@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.0.6b — 2026-08-23
+
+MiniMax H3 renders about a third faster, and you can prove it yourself.
+
+**Sparse attention.** If the H3 sparse-attention pack is installed, Pixal now
+uses it on every H3 render — first frame, multi-shot and reference lanes alike.
+On this machine the same clip, same seed, one node different, goes from 7.24 to
+5.40 seconds a step: **1.34x**, or about forty seconds off a five-second take.
+It is on by default, because a speed-up you have to go and find is a speed-up
+most people never get.
+
+The Animate dialog gains an **attention** row, sparse or dense, so you can
+render the same shot both ways and judge for yourself — that is what the dense
+setting is for. The row only appears if the pack is actually installed; Pixal
+does not offer a switch that cannot do anything. Sparse attention turns itself
+off on short or low-resolution clips, where it would not help, so it costs
+nothing there.
+
+Which one ran is recorded with the render, alongside the sampler and the seed.
+
+**And H3 clips can now finish at twice the size.** A new **2x upscale** row in
+the Animate dialog re-samples the clip you just rendered at double the canvas —
+928x1120 becomes 1856x2240, four times the pixels — with the audio carried
+through untouched. It is not a resize: the model re-renders the detail, tile by
+tile, so peak memory stays where a single tile puts it and a 4 megapixel clip
+fits on a card that could never render one in a single pass.
+
+It is off by default, and the row tells you why: it takes about three times as
+long as the render alone. It also runs *inside* the render rather than as a
+button on a finished clip, because the upscale needs the raw latent the sampler
+produced and that is gone once the video is written.
+
+The first frame gets sharpened by your own configured image upscaler before the
+2x pass anchors to it. If you have not set one, it still works — the anchor is
+just softer.
+
+---
+
 ## 1.0.5b — 2026-08-23
 
 LTX 2.5 stops running out of memory, 28 LoRAs that were being silently thrown

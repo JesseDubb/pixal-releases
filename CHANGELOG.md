@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.0.8b — 2026-08-24
+
+Pixal stops keeping models to itself, and stops talking in code.
+
+**Both edit lanes name their model.** Editing has always had two lanes — an
+instruction edit that rewrites the whole frame, and a masked edit that redraws
+only what you painted — but Settings offered a picker for one of them. The
+masked lane was pinned to a single build while other compatible ones sat
+installed and unreachable. Settings now names both, "whole frame" and "masked
+area", and every option says what it weighs on disk; a build heavier than your
+card says so in its tooltip rather than being hidden or blocked.
+
+**An anime shot is called an anime shot — this time in the chat too.** 1.0.7b
+fixed the render card and told the writer to say it. The writer kept saying
+"realism" anyway, because the render tool's own receipt hands it the graph's
+name in the last thing it reads before speaking. The correction now travels
+with the receipt, and a repair behind it makes sure: on a directed render, the
+look you asked for is the word you get.
+
+**Pixal does not speak in ids.** "identity_edit" is not English, and neither is
+"rendering klein_inpaint - this takes a moment", which is what the waiting line
+said for any recipe without hand-written wording. Every internal name is spoken
+as its label now, everywhere the app talks.
+
+**Info bubbles stay on screen.** A tip on a low row ran off the bottom of a
+windowed Pixal — the position was clamped sideways and not at all vertically.
+Tips now flip to whichever side has room, and never leave the window.
+
 ## 1.0.7b — 2026-08-24
 
 The chat brain stops going blind, and Settings stops describing itself wrong.

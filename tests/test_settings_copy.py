@@ -272,6 +272,25 @@ class SettingsCopy(unittest.TestCase):
                                  "a field has both a tip and a hint - pick one")
             self.assertNotIn("<InfoTip", props.get("gloss", ""),
                              "a tip is hiding inside the visible gloss")
+    def test_edit_section_names_both_lanes(self):
+        """9.29: the masked lane was invisible in Settings while the job card
+        named Klein 9B. Both lanes get a named row in the one section."""
+        for props, block in _sections():
+            if "Edit model" in props.get("title", ""):
+                labels = [fp.get("label") for fp in _field_props(block)]
+                self.assertIn('"whole frame"', labels)
+                self.assertIn('"masked area"', labels)
+                break
+        else:
+            self.fail("the Edit model section is gone")
+
+    def test_the_edit_tip_says_what_a_mask_does(self):
+        """The fact nobody could discover tonight: a painted mask routes the
+        edit to the masked lane; no mask runs the whole-frame lane."""
+        self.assertTrue(
+            any(tip and "painted mask routes the edit to the masked lane" in tip
+                for tip in _tip_texts()),
+            "the mask-routing fact is missing from the edit lane's tip")
 
     def test_tips_stay_keyboard_reachable(self):
         # the ported component carries the focus + label; this guards the port
@@ -300,11 +319,40 @@ class SettingsCopy(unittest.TestCase):
                       "Model enlarges; PiD repaints.",
                       "Suggests fixes for what you made.",
                       "auto reads your words; never keeps subjects dressed.",
+                      "The popup still decides per clip — this sets the default.",
                       "Only your provider sees the key",
                       "Runs entirely on this PC"]:
             self.assertIn(quote, s6, "HELP.md §6 lost the shipped copy: %r" % quote)
         self.assertNotIn("How the app looks", s6)
         self.assertNotIn("what happens local stays local", s6)
+
+
+class H3Upscale2xSection(unittest.TestCase):
+    """9.31: the H3 2× default lives where the other clip upscalers do - its
+    own Section in the Video tab's finishing group, immediately after the
+    Upscaler Section. The InfoTip is required: it carries the two facts a
+    user cannot discover - the pass runs INSIDE the render (it needs the
+    render's own latent, so it can never be a button on a finished clip)
+    and it costs roughly 3× the render time."""
+
+    def test_the_section_sits_in_finishing_right_after_the_upscaler(self):
+        video = SRC[SRC.index('{tab === "video" &&'):]
+        fin = video.index("<GroupLabel>finishing</GroupLabel>")
+        upscaler = video.index('<Section title="Upscaler"', fin)
+        nxt = video.index("<Section ", upscaler + 1)
+        self.assertIn("H3 2× upscale", video[nxt:nxt + 300],
+                      "the section right after Upscaler is not the H3 2× one")
+
+    def test_the_infotip_names_both_undiscoverable_facts(self):
+        tips = [t for t in _tip_texts() if t and "finished clip" in t]
+        self.assertTrue(tips, "no tip says why 2× can never be a clip action")
+        self.assertIn("inside the render", tips[0])
+        self.assertIn("3×", tips[0])
+
+    def test_the_row_disables_with_a_truthful_hint(self):
+        self.assertIn("upscale_2x_available", SRC)
+        self.assertIn("Needs the MMH3 Ultimate Upscale pack and 659 MB weights.",
+                      SRC)
 
 
 if __name__ == "__main__":

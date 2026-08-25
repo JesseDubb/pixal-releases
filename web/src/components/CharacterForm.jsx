@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // Dashed user-circle = a DRAFT anchor (the character icon family's empty state).
 import { Crop, ImageSquare, PencilSimple, UserCircleDashed, X }
   from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS } from "../lib/design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, OVERLAY } from "../lib/design-tokens.js";
 import { Disclosure } from "../lib/Disclosure.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
 import { characterPreview, characterRecord, inputFullUrl, inputImages,
@@ -180,7 +180,7 @@ const CropDialog = ({ imageUrl, busy, onClose, onUse }) => {
   };
 
   return (
-    <ModalShell onClose={onClose} z={38}
+    <ModalShell onClose={onClose} z={OVERLAY.form}
       boxProps={{ role: "dialog", "aria-label": "Crop the reference" }}
       boxStyle={{
         width: 560, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto",

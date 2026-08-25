@@ -5,7 +5,7 @@
 // landing (transparent, dot in flight over the mounted app).
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight } from "@phosphor-icons/react";
-import { CURVE, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS } from "../lib/design-tokens.js";
+import { CURVE, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, OVERLAY } from "../lib/design-tokens.js";
 import { BlockLogo } from "../lib/BlockLogo.jsx";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -96,7 +96,7 @@ export const Setup = ({ onLanding, onDone }) => {
 
   return (
     <div className="px-root" style={{
-      position: "fixed", inset: 0, zIndex: 60,
+      position: "fixed", inset: 0, zIndex: OVERLAY.setup,
       display: "flex", alignItems: "center", justifyContent: "center",
       background: landing ? "transparent" : "var(--bg0)",
       transition: "background 500ms ease",
@@ -109,7 +109,7 @@ export const Setup = ({ onLanding, onDone }) => {
       {(phase === "success" || landing) && (
         <span aria-hidden="true" style={{
           position: "fixed", top: 0, left: 0, width: 7, height: 7,
-          borderRadius: 999, background: dotColor, zIndex: 62,
+          borderRadius: 999, background: dotColor, zIndex: OVERLAY.setup + 2,
           boxShadow: flown ? "none" : `0 0 14px 2px ${dotColor}66`,
           transform: flown
             ? `translate(${home.x}px, ${home.y}px) scale(1)`
@@ -121,7 +121,7 @@ export const Setup = ({ onLanding, onDone }) => {
       )}
 
       {!landing && (
-        <div style={{ position: "relative", zIndex: 61, width: "min(460px, 88vw)",
+        <div style={{ position: "relative", zIndex: OVERLAY.setup + 1, width: "min(460px, 88vw)",
                       display: "flex", flexDirection: "column", alignItems: "center",
                       textAlign: "center", gap: SPACE[16],
                       transform: "translateY(-4vh)" }}>

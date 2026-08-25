@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BlockLogo } from "../lib/BlockLogo.jsx";
 import { PhotonField } from "../lib/PhotonField.jsx";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "../lib/design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, MOTION, OVERLAY } from "../lib/design-tokens.js";
 import { status } from "../transport.js";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -111,7 +111,7 @@ export const ComfyBoot = ({ onReady }) => {
     // nothing, so the copy fell back to inherited black on a transparent
     // backdrop and the progress bar had no colour to draw itself in.
     <div className="px-root" style={{
-      position: "fixed", inset: 0, zIndex: 90, display: "flex",
+      position: "fixed", inset: 0, zIndex: OVERLAY.boot, display: "flex",
       alignItems: "center", justifyContent: "center", padding: SPACE[20],
       background: "var(--bg0)", fontFamily: FONT,
       animation: "px-msg-in 400ms ease both",

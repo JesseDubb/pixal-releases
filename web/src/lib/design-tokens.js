@@ -279,6 +279,29 @@ export const Z = {
   dialog:   11000,  // confirmation modals — above lightboxes (a third-party 9999 was the bar)
 };
 
+// Pixal's OWN fixed overlays sit in their own low band, ordered by what can
+// open on top of what. They predate `Z` and do not use it: `Z.modal` is 1000
+// and the boot screen is 90, so migrating them piecemeal would silently drop
+// "Starting ComfyUI" behind every modal. The band is the honest record of the
+// order the app actually has, and the place to add the next overlay.
+//
+// The rule the band exists to enforce: **a viewer is below the dialogs that
+// open from it.** The still/clip lightbox sat at 40 while ModalShell defaulted
+// to 36/37, so pressing "animate" on an open render mounted the whole Direct
+// the clip dialog underneath the photo (Jesse, 2026-08-24: "you cant fix
+// that?" — yes).
+export const OVERLAY = {
+  card:    30,   // a fixed history card lifted out of the grid
+  viewer:  32,   // full-screen still / clip lightbox — BELOW every dialog
+  panel:   34,   // Settings and its scrim
+  scrim:   36,   // ModalShell's default scrim...
+  modal:   37,   // ...and the box it carries (scrim + 1)
+  form:    38,   // CharacterForm, which opens over another modal
+  meter:   45,   // the render progress hairline — decorative, always visible
+  setup:   60,   // first-run setup, which owns the whole window
+  boot:    90,   // "Starting ComfyUI" — nothing outranks it
+};
+
 // Line-height scale — four values cover everything. Audit found
 // 22 distinct values; most were within 0.05 of these.
 export const LH = {

@@ -166,8 +166,10 @@ class OneOptionKey(unittest.TestCase):
                               "%s still passes options keyed on `value`" % name)
 
     def test_all_call_sites_use_the_one_component(self):
-        # 12 in SettingsMenu, 7 in MotionDirector, 2 in the Composer - the
-        # 9.23b census plus H3's attention row (9.28) and 2x upscale row (9.28).
+        # 13 in SettingsMenu, 6 in MotionDirector, 2 in the Composer - the
+        # 9.23b census plus H3's attention row (9.28) and 2x upscale row
+        # (9.28), the H3 2× default in Settings (9.31), minus the Animate
+        # model-family track (9.32 - the dropdown names that choice now).
         total = sum(text.count("<SegmentedControl")
                     for text in CALLSITES.values())
         self.assertEqual(total, 21,

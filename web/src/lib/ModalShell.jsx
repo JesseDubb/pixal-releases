@@ -1,4 +1,4 @@
-import { MOTION } from "./design-tokens.js";
+import { MOTION, OVERLAY } from "./design-tokens.js";
 
 // ModalShell.jsx — the ONE overlay entrance and the ONE modal shell (brief
 // 9.23d). Two classes of overlay used to mount bare — `{open && (…)}`, the
@@ -68,7 +68,7 @@ export const OverlayMotionStyle = () => <style>{OVERLAY_CSS}</style>;
 // agree); centred={false} is a positioned panel — SettingsMenu's phone sheet
 // or fallback card — which takes the popover entrance instead. Contents,
 // size and chrome stay in the caller's boxStyle/boxProps.
-export const ModalShell = ({ onClose, z = 36, scrim = "rgba(0,0,0,0.5)",
+export const ModalShell = ({ onClose, z = OVERLAY.scrim, scrim = "rgba(0,0,0,0.5)",
                              centred = true, boxStyle, boxProps = {}, children }) => (
   <>
     <OverlayMotionStyle />

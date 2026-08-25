@@ -21,6 +21,14 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
   const tipNodeRef = useRef(null);
   const [pos, setPos] = useState(null);
 
+  // The tip is CONTAINED, not merely nudged. The old version clamped one axis
+  // and left the other alone, so a tip on a row near the window's bottom edge
+  // simply ran off it - which is why Jesse saw this "mostly when the Pixal
+  // window is not fullscreen" (2026-08-24): fullscreen there is always room
+  // below, and windowed there often isn't. `side` is now a preference, not a
+  // promise: it flips when the requested side cannot hold the tip, takes the
+  // roomier side when neither can, and clamps last so the tip is on screen
+  // even then.
   const measure = useCallback(() => {
     const icon = iconRef.current;
     const tip = tipNodeRef.current;
@@ -28,11 +36,22 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
     const ir = icon.getBoundingClientRect();
     const tr = tip.getBoundingClientRect();
     const pad = 12;
-    const top = side === "top" ? ir.top - tr.height - 6 : ir.bottom + 6;
+    const gap = 6;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const roomAbove = ir.top - gap - pad;
+    const roomBelow = vh - ir.bottom - gap - pad;
+    const fits = (above) => tr.height <= (above ? roomAbove : roomBelow);
+    let above = side === "top";
+    if (!fits(above)) above = !above;                  // flip to the side that holds it
+    if (!fits(above)) above = roomAbove > roomBelow;   // neither: take the roomier one
+    let top = above ? ir.top - tr.height - gap : ir.bottom + gap;
+    top = Math.max(pad, Math.min(top, Math.max(pad, vh - pad - tr.height)));
+
     let left = ir.left + ir.width / 2 - tr.width / 2;
-    if (left + tr.width > window.innerWidth - pad) left = window.innerWidth - pad - tr.width;
-    if (left < pad) left = pad;
-    setPos({ left, top });
+    left = Math.max(pad, Math.min(left, Math.max(pad, vw - pad - tr.width)));
+    setPos({ left, top, above });
   }, [side]);
 
   // Callback ref fires synchronously when the portal node mounts/unmounts,
@@ -104,7 +123,11 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
           className="px-root px-ov-pop"
           style={{
             position: "fixed",
-            transformOrigin: side === "top" ? "bottom center" : "top center",
+            // The origin follows where the tip ACTUALLY landed, not where it
+            // was asked to go - a flipped tip that grows from the wrong edge
+            // reads as a glitch.
+            transformOrigin: (pos ? pos.above : side === "top")
+              ? "bottom center" : "top center",
             left: pos ? pos.left : -9999,
             top: pos ? pos.top : -9999,
             background: "var(--bg3)",
@@ -114,7 +137,12 @@ export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) =>
             fontSize: TYPE.ui,
             fontFamily: FONT,
             color: "var(--textSec)",
-            maxWidth: `${maxWidth}px`,
+            // Capped to the window as well as to the design width: 260px plus
+            // padding does not fit a narrow Pixal window, and no amount of
+            // clamping the left edge saves a box that is wider than the
+            // viewport it is being clamped into.
+            maxWidth: `${Math.min(maxWidth,
+                                  Math.max(160, window.innerWidth - 24))}px`,
             width: "max-content",
             boxSizing: "border-box",
             lineHeight: LH.body,

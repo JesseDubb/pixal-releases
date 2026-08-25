@@ -8,13 +8,14 @@
 // Local-first: everything persists to pixal_dm/config.json via /api/settings.
 import { useEffect, useRef, useState } from "react";
 import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 import { Lockup } from "../lib/Lockup.jsx";
 import { ModalShell, OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, ValueGhost } from "./Skeleton.jsx";
+import { prettyModel } from "../lib/names.js";
 import { useStore } from "../store.js";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -169,7 +170,7 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
               )}
               {group.items.map((item) => (
                 <PickRow key={item.name} selected={item.name === value}
-                  title={item.name}
+                  title={item.title || item.name}
                   onClick={() => { onPick(item.name); setOpen(false); }}>
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
                                  textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -190,6 +191,23 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
     </div>
   );
 };
+
+// One edit-lane option (9.29): the product name plus what the build weighs on
+// disk, in MotionDirector's GB format. The raw filename stays the tooltip, and
+// a build heavier than the detected card says so there too - one honest line,
+// advisory only: no badge, no colour, no block. The render-time butler prices
+// the real fit; a null detected_gb or an unknown size says nothing at all.
+const editLaneOptions = (list, detectedGb) => (list || []).map((e) => {
+  const gb = e.size ? e.size / 1e9 : 0;
+  const heavy = gb > 0 && detectedGb > 0 && gb > detectedGb;
+  return {
+    name: e.name,
+    label: `${prettyModel(e.name)}${gb ? ` · ${gb.toFixed(1)} GB` : ""}`,
+    title: heavy
+      ? `${e.name}\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
+      : e.name,
+  };
+});
 
 const PickRow = ({ selected, onClick, children, title }) => (
   <button type="button" onClick={onClick} title={title}
@@ -560,6 +578,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     : videoEngines.flatMap((e) => (e.models || []).map((m) => ({
         ...m, label: `${e.label} · ${m.label}` })));
 
+  // The card's total once ComfyUI has answered - the edit lanes' only use is
+  // the advisory tooltip on a build heavier than the card (9.29). Null = the
+  // card was never read, and the option says nothing at all.
+  const detectedGb = (cfg && cfg.vram && cfg.vram.detected_gb) || null;
+
   // `panel` is the whole content, shared by both presentations below.
   const panel = (
     <>
@@ -903,6 +926,43 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Field>
           </>)}
         </Section>
+        <Section title={<>H3 2× upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
+                 gloss="The popup still decides per clip — this sets the default.">
+          {/* The MiniMax upscaler re-samples the render's own latent, so it
+              can only live on the render itself (9.31) - the per-clip row in
+              the Animate popup's fine-tune fold. This is the standing default
+              that row opens on, the same contract as Video model above. No
+              quality sub-row: 2× is the only size this upscaler does. */}
+          {videoCfg ? (
+            <Field className="px-ghost-in"
+                   hint={videoCfg.upscale_2x_available
+                     ? undefined
+                     : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."}>
+              <SegmentedControl ariaLabel="H3 2× upscale"
+                value={videoCfg.upscale_2x ? "2x" : "off"}
+                onChange={(id) => {
+                  const on = id === "2x";
+                  setVideoCfg((v) => ({ ...(v || {}), upscale_2x: on }));
+                  apply({ video: { upscale_2x: on } },
+                        on ? "2× default applied" : "2× default off");
+                }}
+                options={[
+                  { v: "off", label: "off",
+                    disabled: !videoCfg.upscale_2x_available,
+                    title: videoCfg.upscale_2x_available
+                      ? "The render's native canvas — the fast path."
+                      : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights." },
+                  { v: "2x", label: "2×",
+                    disabled: !videoCfg.upscale_2x_available,
+                    title: videoCfg.upscale_2x_available
+                      ? "Twice the size, inside the render — roughly 3× the render time."
+                      : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights." },
+                ]} />
+            </Field>
+          ) : (
+            <SegGhost segments={2} />
+          )}
+        </Section>
         </>)}
 
         {tab === "image" && (<>
@@ -924,26 +984,48 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <PickerGhost />
           )}
         </Section>
-        <Section title={<>Edit model <InfoTip text="Qwen-Image-Edit releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Used by the edit button on a finished render and by an attached photo." /></>}
+        <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works." /></>}
                  gloss={editCfg ? (
-                   <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length} compatible installed.`}</span>
+                   <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
                  ) : (
                    <>Runs instruction edits. <ValueGhost w={128} /></>
                  )}>
-          {editCfg ? (
-            <ScrollPicker className="px-ghost-in"
-              value={editCfg.model || ""}
-              placeholder="recipe default"
-              emptyLabel="recipe default"
-              options={(editCfg.installed || []).map((name) => ({ name, label: name }))}
-              onPick={(name) => {
-                setEditCfg({ ...editCfg, model: name });
-                apply({ edit: { model: name } },
-                      name ? "edit model applied" : "recipe default restored");
-              }} />
-          ) : (
-            <PickerGhost />
-          )}
+          {/* Two named lanes (9.29): whole frame runs when there is no mask,
+              masked area when a mask is painted. Until tonight the second one
+              was hard-pinned to KLEIN_MODEL and invisible here. */}
+          {editCfg ? (<>
+            <Field className="px-ghost-in" label="whole frame">
+              <ScrollPicker
+                value={editCfg.model || ""}
+                placeholder="recipe default"
+                emptyLabel="recipe default"
+                options={editLaneOptions(editCfg.installed, detectedGb)}
+                onPick={(name) => {
+                  setEditCfg({ ...editCfg, model: name });
+                  apply({ edit: { model: name } },
+                        name ? "edit model applied" : "recipe default restored");
+                }} />
+            </Field>
+            <Field className="px-ghost-in" label="masked area">
+              <ScrollPicker
+                value={editCfg.inpaint_model || ""}
+                placeholder="recipe default"
+                emptyLabel="recipe default"
+                options={editLaneOptions(editCfg.inpaint_installed, detectedGb)}
+                onPick={(name) => {
+                  setEditCfg({ ...editCfg, inpaint_model: name });
+                  apply({ edit: { inpaint_model: name } },
+                        name ? "masked edit model applied" : "recipe default restored");
+                }} />
+            </Field>
+          </>) : (<>
+            <Field label="whole frame">
+              <PickerGhost />
+            </Field>
+            <Field label="masked area">
+              <PickerGhost />
+            </Field>
+          </>)}
         </Section>
         <GroupLabel>finishing</GroupLabel>
         <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model mode upscales the frame it already made; PiD mode repaints it tile by tile with NVIDIA's pixel-diffusion decoder. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
@@ -1507,7 +1589,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         // Non-docked is the same scrim-plus-fixed-card pattern every modal
         // uses, so it goes through the shared shell — centred={false}
         // because these are positioned panels, not centred boxes.
-        <ModalShell onClose={onClose} z={34} scrim="rgba(0,0,0,0.45)"
+        <ModalShell onClose={onClose} z={OVERLAY.panel} scrim="rgba(0,0,0,0.45)"
           centred={false} boxStyle={phone ? {
             // Phone: a bottom sheet - full width, hugging the safe-area edge.
             left: 8, right: 8,

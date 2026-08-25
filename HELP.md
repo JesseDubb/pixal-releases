@@ -669,11 +669,16 @@ Default is "stock Z-Image VAE (recommended)". The tip: Z-Image and Flux
 share a VAE, so sharper drop-ins exist; it applies to Z-Image renders only,
 and the clear-anime profile keeps its own matched VAE either way.
 
-**Edit model** — "Runs instruction edits." plus the count of compatible
-builds installed ("3 compatible installed."). Default is the recipe's own.
-The tip: Qwen-Image-Edit releases differ in encoder node, not just weights —
-the graph switches on the filename, so any compatible generation works; it
-is used by the edit button on a finished render and by an attached photo.
+**Edit model** — two lanes, two pickers. "Runs instruction edits." plus both
+counts ("3 whole-frame, 2 masked compatible installed."). **whole frame**
+runs when there is no mask; **masked area** runs when a mask is painted.
+Each option names the build and what it weighs on disk ("Qwen Image Edit
+2511 · 10.4 GB"); a build heavier than your card says so in its tooltip —
+it will offload and run slowly, nothing is blocked. Both default to the
+recipe's own. The tip: a painted mask routes the edit to the masked lane;
+no mask runs the whole-frame lane. Whole-frame releases differ in encoder
+node, not just weights — the graph switches on the filename, so any
+compatible generation works.
 
 **Edit speed** — there is no Settings control for this one; it lives only
 in `config.json` in the Pixal folder. `"edit": {"speed": "turbo"}` is the
@@ -702,6 +707,12 @@ model** — "Which model the popup opens on." The Animate dialog's defaults
 
 **Upscaler** — "Used by the upscale button on a finished clip." The "video
 clips" engine (VSR, or LTX 2.5 2x); walked in Section 5.
+
+**H3 2× upscale** — "The popup still decides per clip — this sets the
+default." The MiniMax 2× pass runs inside the render — it re-samples the
+render's own latent, so it can never be a button on a finished clip — and
+costs roughly 3× the render time. Greyed until the MMH3 Ultimate Upscale
+pack and its 659 MB weights are installed.
 
 ### Brain
 
@@ -1077,7 +1088,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.7b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.8b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

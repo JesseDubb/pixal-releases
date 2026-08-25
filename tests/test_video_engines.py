@@ -791,6 +791,87 @@ class VideoDefaultModelTests(unittest.TestCase):
                            "label": "10Eros Max Skip Edges", "available": True}])
 
 
+class VideoUpscale2xDefaultTests(unittest.TestCase):
+    """video.upscale_2x (9.31): the H3 2x row's standing default. It can
+    never be a finished-clip action - the upscaler re-samples the render's
+    own latent - so a Settings toggle that sets the popup's opening
+    position is the whole setting. Same flag discipline as default_engine:
+    the value rides video_engine_options as a flag on the one engine that
+    has the row, and availability stays a separately published fact."""
+
+    def _full_cfg(self, video):
+        return {"llm": {"base_url": "", "model": ""},
+                "critic": {"model": ""}, "upscale": {}, "edit": {}, "vae": {},
+                "pid": {}, "video": video, "extra_model_roots": [],
+                "comfy_editor": False, "comfy_console": "tui",
+                "explicit": "auto", "vram_profile": "auto"}
+
+    def _options(self, video_cfg):
+        with patch.object(server, "load_config",
+                          return_value={"video": video_cfg,
+                                        "vram_profile": "auto"}), \
+             patch.object(server, "model_catalog", return_value=[]), \
+             patch.object(server, "_video_asset", side_effect=all_video_assets):
+            return server.video_engine_options()
+
+    def test_the_flag_lands_on_h3_alone_when_the_default_is_set(self):
+        engines = self._options({"upscale_2x": True})
+        h3 = next(e for e in engines if e["id"] == "h3")
+        self.assertTrue(h3["upscale_2x_default"])
+        # availability stays its own fact, published either way
+        self.assertTrue(h3["upscale_2x"])
+        for engine in engines:
+            if engine["id"] != "h3":
+                self.assertNotIn("upscale_2x_default", engine)
+
+    def test_an_unset_or_off_default_flags_nothing(self):
+        for video_cfg in ({}, {"upscale_2x": False}):
+            with self.subTest(video_cfg=video_cfg):
+                for engine in self._options(video_cfg):
+                    self.assertNotIn("upscale_2x_default", engine)
+
+    def test_settings_post_rejects_a_non_bool(self):
+        # "true" and 1 are the trap: JSON has real bools, and a truthy
+        # stand-in would silently stand a ~3x-cost default ON.
+        for bad in ("true", 1, 0, None, [True]):
+            with self.subTest(bad=bad):
+                saved = []
+                with patch.object(server, "load_config",
+                                  return_value=self._full_cfg(
+                                      {"default_engine": "",
+                                       "default_model": ""})), \
+                     patch.object(server, "model_catalog", return_value=[]), \
+                     patch.object(server, "save_config",
+                                  side_effect=lambda cfg: saved.append(cfg)):
+                    response = asyncio.run(server.settings_post(
+                        FakeRequest({"video": {"upscale_2x": bad}})))
+                self.assertEqual(response.status, 400)
+                self.assertEqual(json.loads(response.text),
+                                 {"ok": False, "error": f"not a bool: {bad}"})
+                self.assertEqual(saved, [])  # a rejected write never touches config
+
+    def test_settings_round_trip_exposes_the_default_and_its_availability(self):
+        cfg = self._full_cfg({"default_engine": "", "default_model": ""})
+        saved = []
+        with patch.object(server, "load_config", return_value=cfg), \
+             patch.object(server, "model_catalog", return_value=[]), \
+             patch.object(server, "_video_asset", side_effect=all_video_assets), \
+             patch.object(server, "h3_upscale_available", return_value=True), \
+             patch.object(server, "refresh_comfy_nodes", AsyncMock()), \
+             patch.object(server, "save_config",
+                          side_effect=lambda c: saved.append(c)):
+            post = asyncio.run(server.settings_post(
+                FakeRequest({"video": {"upscale_2x": True}})))
+            self.assertEqual(post.status, 200)
+            self.assertEqual(json.loads(post.text), {"ok": True})
+            response = asyncio.run(server.settings_get(FakeRequest({})))
+        self.assertEqual(response.status, 200)
+        video = json.loads(response.text)["video"]
+        self.assertIs(video["upscale_2x"], True)
+        self.assertIs(video["upscale_2x_available"], True)
+        self.assertEqual(saved[0]["video"]["upscale_2x"], True)
+
+
 class MiniMaxH3TurboTests(unittest.TestCase):
     """A distillation is a speed MODE, not a creative LoRA: fewer steps, and
     its own sampler and scheduler travel with it. There is now a ladder of

@@ -1,27 +1,28 @@
-"""The Animate model row splits base-first, and every Seg pairs shrink with clip.
+"""The Animate popup is ONE panel (9.32), and every Seg pairs shrink with clip.
 
-Jesse's screenshot of the Animate fine-tune fold (brief 9.21): "10Eros Max
-Beta2" and "10Eros Max Beta2 Skip Beta2" painted on top of each other, both
-unreadable. Two defects compounded:
+Brief 9.32 (Jesse: "Can you make the animate popup not so ugly and
+disorganized looking?") found the expanded dialog was three layouts stacked:
+Zone 2's labels sat ABOVE their controls while the fold's sat LEFT; the
+control column broke at SHOTS (a floating stepper) and END FRAME (a two-row
+thumbnail grid); MODEL was two controls for one choice (an FL2VA/REF2VA
+segmented track above a dropdown that also read "FL2VA"); the SPEED hint
+printed a sampler id (``res_multistep``) on screen; the LoRA chain was the
+only bordered card in the dialog; and at 958px tall the footer scrolled out
+of reach in a windowed Pixal.
 
-1. Pixal's hand-rolled ``Seg`` sets ``flex:1`` + ``minWidth:0`` - a shrink
-   rule - with ``whiteSpace:"nowrap"`` and NO clip rule, so a long label
-   spills out of its segment and over its neighbour. Lumen's SegmentedToggle
-   (grid columns) cannot shrink below its content; the hand-rolled one can.
-2. Worse, the MODEL row mixed two kinds of thing in one segmented track:
-   base checkpoints (FL2VA, REF2VA) and community finetunes OF a base. A
-   segmented control is for two to four short, known-in-advance options;
-   community names are long, arbitrary, and grow with the catalog.
+The contract this file pins after the fix:
 
-The fix this pins: the row picks a base first (a real segmented control of
-short stock labels), then offers that base's builds - stock and finetunes -
-in a picker that holds a long name and shows the selected one at rest. The
-base of a finetune is provable from its chip id: the id IS the lowercase
-filename stem (server ``h3_model_options``), and the stem carries "fl2va" or
-"ref2va" because that token is how the file earned a chip at all. Nothing
-else can prove it - ``model_profile`` files the whole family as "video", and
-the scraped _civitai_models.json says base "MiniMax H3" for the one
-finetune it has a hit for at all.
+- ONE label system: engine and length are ``Row``s on the fold's grid, at
+  the fold's row height (``size="sm"``).
+- MODEL is ONE control: the dropdown names the choice and holds a long
+  build name; the family track is gone. The 9.21 grouping survives as the
+  picker's ORDER - a finetune's base is still provable from its chip id
+  (the id IS the lowercase filename stem, server ``h3_model_options``), so
+  ``groupModels`` orders the list stock-first per base.
+- END FRAME is one scrollable row of thumbnails, ``none`` pill first.
+- The SPEED hint speaks English; the sampler id lives in tooltips.
+- The shell's header and footer pin; the body scrolls (StyleForm's
+  ``px-dialog-body`` recipe), so the commitment is always reachable.
 
 These are source-level assertions, the same way test_rail_vs_inline.py pins
 Chat.jsx: the JSX is the contract, and a regex that stops matching IS the
@@ -85,9 +86,12 @@ class SegClipContract(unittest.TestCase):
                       "a clipped segment's tooltip must contain the full label")
 
 
-class ModelRowSplit(unittest.TestCase):
-    """Base first, then that base's finetunes - never one flat track of
-    long community names (the added 9.21 brief)."""
+class ModelRowOneControl(unittest.TestCase):
+    """MODEL is ONE control (9.32-C): the dropdown names the choice and holds
+    a long build name, so the FL2VA/REF2VA family track above it could only
+    repeat it - and repeated it in a shape that cannot hold a community
+    finetune name (DESIGN.md §3: 2-4 short, known-in-advance options). The
+    9.21 base grouping survives as the picker's ORDER."""
 
     def test_the_model_row_never_feeds_the_whole_catalog_to_a_seg(self):
         self.assertNotRegex(SRC, r"options=\{availableModels\.map",
@@ -101,12 +105,12 @@ class ModelRowSplit(unittest.TestCase):
         self.assertLess(body.index('"ref2va"'), body.index('"fl2va"'),
                         "ref2va must win when a stem carries both tokens")
 
-    def test_the_base_track_draws_only_from_base_groups(self):
-        # The segmented control left in the model row lists base families
-        # (short stock labels: FL2VA / REF2VA), never the finetunes.
+    def test_the_picker_is_fed_in_base_group_order(self):
+        # groupModels still runs; its groups flatten into the picker's feed,
+        # stock build first inside each base, the baseless at the end.
         self.assertIn("const groupModels = ", SRC)
-        self.assertRegex(SRC, r"options=\{modelGroups\.map",
-                         "the base track is not fed by the base groups")
+        self.assertRegex(SRC, r"flatMap\(\(g\) => g\.models\)",
+                         "the picker no longer lists each base's builds together")
 
     def test_finetunes_pick_from_a_list_that_holds_a_long_name(self):
         # The picker shows the selected build's full label at rest (the
@@ -120,13 +124,15 @@ class ModelRowSplit(unittest.TestCase):
         self.assertIn("listbox", block,
                       "the picker is a listbox, not a segmented track")
 
-    def test_the_model_row_uses_the_split(self):
+    def test_the_model_row_is_one_control(self):
         row = _block('{availableModels.length > 1 && (', "</Row>")
         self.assertIn("<ModelPicker", row,
                       "the model row has no long-name picker")
-        if "<SegmentedControl" in row:
-            self.assertIn("modelGroups.map", row,
-                          "a segmented track in the model row may only list base groups")
+        self.assertNotIn("<SegmentedControl", row,
+                         "the family track is back beside the dropdown - "
+                         "two controls for one choice, both saying FL2VA")
+        self.assertIn("modelOptions", row,
+                      "the picker is not fed the base-ordered list")
 
     def test_the_short_cases_keep_their_segmented_tracks(self):
         # The regression guard the other way: 5s/10s/15s, engines, frame
@@ -136,6 +142,70 @@ class ModelRowSplit(unittest.TestCase):
         self.assertRegex(SRC, r"options=\{engines\.map")
         self.assertRegex(SRC, r"options=\{fpsChoices\.map")
         self.assertRegex(SRC, r"options=\{speedModes\.map")
+
+
+class OneLabelSystem(unittest.TestCase):
+    """Zone 2 sits on the fold's Row grid (9.32-A): labels LEFT in the same
+    92px column, controls starting at the same x - the fold is a
+    continuation of the panel, not a second layout stacked on top of it."""
+
+    def test_engine_and_length_are_rows_now(self):
+        self.assertIn('<Row label="engine"', SRC)
+        self.assertRegex(SRC, r"<Row label=\{activeShots > 1",
+                         "the length row left the grid")
+
+    def test_zone2_has_no_label_above_control_layout_left(self):
+        zone = _block("{/* ZONE 2", "{/* ZONE 3")
+        self.assertNotIn('gridTemplateColumns: "1fr 1fr"', zone,
+                         "the two-column label-above layout is back")
+        self.assertNotIn("<span style={MICRO}>", zone,
+                         "a bare micro label above a control is back in zone 2")
+
+    def test_zone2_tracks_are_the_fold_row_height(self):
+        zone = _block("{/* ZONE 2", "{/* ZONE 3")
+        self.assertEqual(zone.count('size="sm"'), 2,
+                         "zone 2's tracks must match the fold's row height")
+
+
+class SpeedHintPlain(unittest.TestCase):
+    """The SPEED hint says what the mode does in English (9.32-E). The
+    sampler id is a code word - the same class of leak plain_render_words
+    scrubbed from the chat lane - and lives in tooltips only."""
+
+    def test_the_hint_never_prints_the_sampler_id(self):
+        self.assertNotIn("${speedMode.gloss} · ${speedMode.sampler}", SRC,
+                         "the sampler id is back on screen")
+
+    def test_the_id_survives_in_tooltips(self):
+        # The row's title carries the active mode's sampler; each segment's
+        # title already carries its own.
+        self.assertIn("sampler: ${speedMode.sampler}", SRC)
+        self.assertIn("${m.gloss}, ${m.sampler}", SRC)
+
+
+class EndFrameOneRow(unittest.TestCase):
+    """The end-frame strip is ONE row that scrolls sideways (9.32-B); the
+    two-row thumbnail grid was the loudest rhythm break in the fold."""
+
+    def test_the_strip_never_wraps(self):
+        row = _block('<Row label="end frame"', "</Row>")
+        self.assertIn('flexWrap: "nowrap"', row)
+        self.assertIn('overflowX: "auto"', row)
+
+
+class ShellFitsAWindow(unittest.TestCase):
+    """Header and footer pin; the body scrolls (9.32-F) - 958px of dialog
+    never puts the commitment out of reach in a windowed Pixal."""
+
+    def test_the_shell_itself_never_scrolls(self):
+        box = _block("boxStyle={{", "}}>")
+        self.assertIn('overflow: "hidden"', box)
+        self.assertNotIn('overflowY: "auto"', box,
+                         "the whole shell scrolls again - the footer can "
+                         "scroll out of reach")
+
+    def test_the_body_is_the_scrolling_region(self):
+        self.assertIn('className="px-scroll px-dialog-body"', SRC)
 
 
 class ShotsCaption(unittest.TestCase):
@@ -182,20 +252,29 @@ class SparseAttentionRow(unittest.TestCase):
 
 
 class Upscale2xRow(unittest.TestCase):
-    """The 2x upscale row: OFF by default, and only where the server says
-    the pack AND its 659 MB upscaler weights exist.
+    """The 2x upscale row: opens on the Settings default (9.31), and only
+    where the server says the pack AND its 659 MB upscaler weights exist.
 
     "OMG put the 2x upscale in this version!" (Jesse, 2026-08-23). Opt-in
-    because it ~triples the render's time - measured 140s -> 464s on a
-    928x1120, 124-frame take - and it rides inside the render job: Pixal
-    does not store latents, so it can never be an action on a finished clip.
+    out of the box because it ~triples the render's time - measured 140s ->
+    464s on a 928x1120, 124-frame take - and it rides inside the render job:
+    Pixal does not store latents, so it can never be an action on a finished
+    clip. 9.31 made the opening position a standing Settings default, which
+    the server flags on the one engine that has the row - a flip here still
+    stays per-clip.
     """
 
     def test_the_row_only_exists_when_the_server_says_it_can_run(self):
         self.assertIn("{activeEngine?.upscale_2x && (", SRC)
 
-    def test_it_starts_off(self):
-        self.assertIn("useState(false)", _block("const [upscale", "const speedModes"))
+    def test_the_opening_position_comes_from_settings_not_a_literal(self):
+        # 9.31: the literal false is gone. The configured default rides
+        # video_engine_options as a flag on the h3 engine - the same way
+        # default_engine travels - gated on the row being able to run at all.
+        block = _block("const [upscale", "const speedModes")
+        self.assertNotIn("useState(false)", block,
+                         "the hardcoded OFF is back - the Settings default is ignored")
+        self.assertIn("item.upscale_2x_default && item.upscale_2x", block)
 
     def test_it_is_the_shared_segmented_control_not_a_new_switch(self):
         # DESIGN.md: never hand-roll a control.

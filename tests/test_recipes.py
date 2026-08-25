@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -2344,3 +2345,174 @@ class VectorPatchCount(unittest.TestCase):
         os.close(fd)
         self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
         self.assertIsNone(self.count(path))
+
+class FakeRequest:
+    """The aiohttp stand-in every settings_post test file keeps local."""
+    def __init__(self, body):
+        self.body = body
+
+    async def json(self):
+        return self.body
+
+
+class KleinInpaintModelPickTests(unittest.TestCase):
+    """9.29: the masked lane reads its model pick the way the whole-frame lane
+    always has - an explicit per-render pick wins, then Settings
+    (edit.inpaint_model), then the recipe default. Until this brief the masked
+    lane was hard-pinned to KLEIN_MODEL: Jesse ran a masked edit, saw the job
+    report Klein 9B, and three of his four klein builds were unreachable."""
+
+    def pick_seen(self, settings_pick, explicit=None):
+        """The model name pick_recipe_model is asked to resolve."""
+        seen = []
+
+        def resolve(nm):
+            seen.append(nm)
+            family = "qwen_edit" if "qwen" in str(nm).lower() else "klein"
+            return model(str(nm), family, "edit")
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "s.png").write_bytes(b"x")   # unmeasurable source
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config",
+                              return_value={"edit": {"inpaint_model": settings_pick}}), \
+                 patch.object(server, "resolve_model_entry", side_effect=resolve), \
+                 patch.object(server, "_pick_catalog_asset",
+                              side_effect=lambda kind, names, *a: names[0]):
+                server.build_klein_inpaint("make the top red", 5, "s.png",
+                                           model=explicit)
+        return seen
+
+    def test_the_settings_pick_feeds_the_masked_lane(self):
+        seen = self.pick_seen("Flux\\flux-2-klein-9b_bf16.safetensors")
+        self.assertEqual(seen, ["Flux\\flux-2-klein-9b_bf16.safetensors"])
+
+    def test_an_explicit_pick_outranks_settings(self):
+        seen = self.pick_seen(
+            "Flux\\flux-2-klein-9b_bf16.safetensors",
+            explicit="Flux\\DarkBeast-Klein9b-V2-BFS-FP8.safetensors")
+        self.assertEqual(seen, ["Flux\\DarkBeast-Klein9b-V2-BFS-FP8.safetensors"])
+
+    def test_no_pick_anywhere_keeps_the_recipe_default(self):
+        self.assertEqual(self.pick_seen(""), [server.KLEIN_MODEL])
+
+    def test_a_qwen_edit_file_in_the_masked_slot_raises_the_family_error(self):
+        with self.assertRaisesRegex(
+                ValueError, "is qwen_edit, but Klein Inpaint needs klein"):
+            self.pick_seen("Qwen\\qwen-image-edit-2511-Q6_K.gguf")
+
+
+class EditLaneSettingsTests(unittest.TestCase):
+    """9.29: Settings exposes BOTH edit lanes, every option carrying its
+    on-disk weight, and the masked lane's pick is validated exactly like the
+    whole-frame one - "" is the recipe default, anything else must be an
+    installed klein-family build or it is refused with a 400 that names the
+    file."""
+
+    QWEN = {"rel": "Qwen\\qwen-image-edit-2511-Q6_K.gguf",
+            "kind": "diffusion_models", "size": 10_000_000_000, "mtime": 1}
+    KLEIN_BF16 = {"rel": "Flux\\flux-2-klein-9b_bf16.safetensors",
+                  "kind": "diffusion_models", "size": 18_000_000_000, "mtime": 1}
+    KLEIN_INT8 = {"rel": "Flux\\flux-2-klein-9b_int8_convrot.safetensors",
+                  "kind": "diffusion_models", "size": 9_000_000_000, "mtime": 1}
+
+    def _catalog(self, kind=None):
+        entries = [self.QWEN, self.KLEIN_BF16, self.KLEIN_INT8]
+        return [e for e in entries if kind in (None, e["kind"])]
+
+    def _full_cfg(self, edit):
+        return {"llm": {"base_url": "", "model": ""},
+                "critic": {"model": ""}, "upscale": {}, "edit": edit, "vae": {},
+                "pid": {}, "video": {"default_engine": "", "default_model": ""},
+                "extra_model_roots": [], "comfy_editor": False,
+                "comfy_console": "tui", "explicit": "auto", "vram_profile": "auto"}
+
+    def _settings_get(self, cfg):
+        with patch.object(server, "load_config", return_value=cfg), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "_video_asset", side_effect=lambda k, r: r), \
+             patch.object(server, "refresh_comfy_nodes", AsyncMock()):
+            response = asyncio.run(server.settings_get(FakeRequest({})))
+        self.assertEqual(response.status, 200)
+        return json.loads(response.text)["edit"]
+
+    def test_the_edit_block_lists_both_lanes_with_their_weights(self):
+        edit = self._settings_get(self._full_cfg(
+            {"model": "", "inpaint_model": "", "speed": "turbo"}))
+        self.assertEqual(edit["default"], server.QWEN_EDIT_MODEL)
+        self.assertEqual(edit["inpaint_default"], server.KLEIN_MODEL)
+        self.assertEqual(edit["installed"],
+                         [{"name": self.QWEN["rel"], "size": self.QWEN["size"]}])
+        # candidates sort by rel: bf16 lands ahead of int8_convrot
+        self.assertEqual(edit["inpaint_installed"],
+                         [{"name": self.KLEIN_BF16["rel"],
+                           "size": self.KLEIN_BF16["size"]},
+                          {"name": self.KLEIN_INT8["rel"],
+                           "size": self.KLEIN_INT8["size"]}])
+
+    def test_the_masked_pick_round_trips(self):
+        cfg = self._full_cfg({"model": "", "inpaint_model": "", "speed": "turbo"})
+        with patch.object(server, "load_config", return_value=cfg), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "_video_asset", side_effect=lambda k, r: r), \
+             patch.object(server, "refresh_comfy_nodes", AsyncMock()), \
+             patch.object(server, "save_config", side_effect=lambda c: None):
+            post = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"inpaint_model": self.KLEIN_BF16["rel"]}})))
+            self.assertEqual(post.status, 200)
+            self.assertEqual(json.loads(post.text), {"ok": True})
+            # the cfg object save_config was handed is what the next
+            # load_config would return
+            edit = self._settings_get(cfg)
+        self.assertEqual(edit["inpaint_model"], self.KLEIN_BF16["rel"])
+
+    def test_an_empty_masked_pick_means_the_recipe_default(self):
+        saved = []
+        with patch.object(server, "load_config",
+                          return_value=self._full_cfg(
+                              {"model": "", "speed": "turbo"})), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "save_config",
+                          side_effect=lambda cfg: saved.append(cfg)):
+            post = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"inpaint_model": ""}})))
+        self.assertEqual(post.status, 200)
+        self.assertEqual(saved[0]["edit"]["inpaint_model"], "")
+
+    def test_a_non_klein_file_is_refused_with_a_400_that_names_it(self):
+        """The qwen build IS in the catalog - just not in the klein family, so
+        the masked lane's candidate list cannot contain it."""
+        saved = []
+        with patch.object(server, "load_config",
+                          return_value=self._full_cfg(
+                              {"model": "", "speed": "turbo"})), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "save_config",
+                          side_effect=lambda cfg: saved.append(cfg)):
+            response = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"inpaint_model": self.QWEN["rel"]}})))
+        self.assertEqual(response.status, 400)
+        self.assertEqual(
+            json.loads(response.text),
+            {"ok": False, "error": "not an installed Klein Inpaint model: "
+                                   + self.QWEN["rel"]})
+        self.assertEqual(saved, [])     # a rejected write never touches config
+
+    def test_the_masked_pick_defaults_to_empty_and_survives_a_save(self):
+        with TemporaryDirectory() as td:
+            cfg_path = Path(td) / "config.json"
+            with patch.object(server, "CONFIG", cfg_path):
+                # first run: no file at all
+                self.assertEqual(server.load_config()["edit"]["inpaint_model"], "")
+                # an old config that predates the key still defaults
+                cfg_path.write_text(json.dumps({"edit": {"model": "x"}}),
+                                    encoding="utf-8")
+                self.assertEqual(server.load_config()["edit"]["inpaint_model"], "")
+                # and a saved pick round-trips through the file
+                cfg_path.write_text(
+                    json.dumps({"edit": {"inpaint_model": self.KLEIN_BF16["rel"]}}),
+                    encoding="utf-8")
+                self.assertEqual(server.load_config()["edit"]["inpaint_model"],
+                                 self.KLEIN_BF16["rel"])

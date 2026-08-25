@@ -46,7 +46,7 @@ TAB_KEYS = {
                 "/api/settings/rescan"],
     "image": ["zimage", "edit: { model", "image_mode", "image_model",
               "identity_finish"],
-    "video": ["default_engine", "default_model", "video_mode"],
+    "video": ["default_engine", "default_model", "video_mode", "upscale_2x"],
     "brain": ["base_url", "local_model", "local_keep", "local_gpu_layers",
               "api_key", "critic: { model", "onClick={test}"],
     "about": [],

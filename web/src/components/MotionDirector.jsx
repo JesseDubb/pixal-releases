@@ -3,12 +3,19 @@
 // brief comes back into the lane so they see what their words became. "Surprise me"
 // ships without a note — the director animates what's already in the frame.
 //
-// LAYOUT (2026-08-11): three zones instead of a flat stack. The note is the hero;
-// engine + length are the only decisions every clip needs and sit as two segmented
-// tracks (the SettingsMenu Appearance recipe); everything situational — model
-// variants, shots, the end-frame bridge, LoRAs, the speed recipe, fps — lives behind one
-// "fine-tune" fold. The fold's collapsed row narrates any non-default it is
-// hiding, so collapsing never lies about what will render.
+// LAYOUT (2026-08-24, brief 9.32): one panel, one grid. The note is the hero;
+// every setting — engine and length (the two every clip needs) as much as the
+// fold's situational ones (model, shots, the end-frame bridge, LoRAs, speed,
+// fps) — sits on the SAME Row grid: micro label in a fixed left column,
+// control starting at one x, its hint attached beneath. One label system and
+// one row rhythm, so the fold reads as a continuation of the panel rather
+// than a second layout stacked on it. The model choice is ONE control (the
+// dropdown holds a long build name, a segment never could); the end-frame
+// strip is one scrollable row of thumbnails; the LoRA chain wears no card
+// chrome of its own. The shell never grows past the window: header and
+// footer pin, the body scrolls (StyleForm's recipe). The fold's collapsed
+// row narrates any non-default it is hiding, so collapsing never lies about
+// what will render.
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, CaretDown, FilmStrip,
          Minus, Plus, Trash, X } from "@phosphor-icons/react";
@@ -87,9 +94,12 @@ const normalizeVideoPlan = (plan, engine, model, catalog) => {
 
 // ---------------------------------------------------------------- primitives
 // The micro label + caption pair every zone speaks in. One voice, not eight.
+// CAPTION IS Settings Field's hint (TYPE.label / textTer / LH.body) - a hint
+// belongs to its row and reads subordinate to it, never as a free line of
+// body text in the gap (9.32-D).
 const MICRO = { fontSize: TYPE.micro, color: "var(--textTer)", fontWeight: W.label,
                 textTransform: "uppercase", letterSpacing: "0.08em" };
-const CAPTION = { fontSize: TYPE.label, color: "var(--textTer)", lineHeight: LH.ui };
+const CAPTION = { fontSize: TYPE.label, color: "var(--textTer)", lineHeight: LH.body };
 
 // One switch recipe for every on/off in the dialog (was hand-rolled per row).
 const Switch = ({ on, onChange, disabled, label, title }) => (
@@ -137,16 +147,20 @@ const Stepper = ({ value, min, max, onChange, disabled, label }) => {
   );
 };
 
-// A fine-tune row: micro label in a fixed left column, control + caption right.
-// The fixed column is what makes six settings read as one table instead of six
-// stacked headings.
-const Row = ({ label, hint, children }) => (
-  <div style={{ display: "grid", gridTemplateColumns: "92px minmax(0,1fr)",
+// A settings row: micro label in a fixed left column, control + hint right.
+// The fixed column is what makes eight settings read as one table instead of
+// eight stacked headings - zone 2 and the fold share it, so the whole dialog
+// is one grid (9.32-A). A string hint wears CAPTION; a node arrives styled
+// (the engine's error line). `title` is the row's own tooltip - where an id
+// worth keeping lives (9.32-E).
+const Row = ({ label, hint, title, children }) => (
+  <div title={title} style={{ display: "grid", gridTemplateColumns: "92px minmax(0,1fr)",
                 gap: SPACE[10], alignItems: "start" }}>
     <span style={{ ...MICRO, paddingTop: 7 }}>{label}</span>
     <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: SPACE[6] }}>
       {children}
-      {hint && <span style={CAPTION}>{hint}</span>}
+      {hint && (typeof hint === "string"
+        ? <span style={CAPTION}>{hint}</span> : hint)}
     </div>
   </div>
 );
@@ -418,13 +432,17 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // reference, not to opt in. The row hides entirely when the server says
   // the node is absent.
   const [sparse, setSparse] = useState(true);
-  // 2x upscale. OFF by default - it ~triples the render's time (measured
-  // 140s -> 464s on a 928x1120, 124-frame take, peaking at 30.9 of 32.6 GB)
-  // - and it rides INSIDE the render job, re-sampling the latent the sampler
-  // just produced: Pixal does not store latents, so it can never be an
-  // action on a finished clip. The row hides unless the server sees both
-  // the pack and its 659 MB upscaler weights.
-  const [upscale, setUpscale] = useState(false);
+  // 2x upscale. Opens on the Settings default (9.31), which the server
+  // flags on the one engine that has the row - the same way the default
+  // engine and model travel. A flip below stays per-clip; this is only the
+  // opening position. OFF out of the box because it ~triples the render's
+  // time (measured 140s -> 464s on a 928x1120, 124-frame take, peaking at
+  // 30.9 of 32.6 GB) - and it rides INSIDE the render job, re-sampling the
+  // latent the sampler just produced: Pixal does not store latents, so it
+  // can never be an action on a finished clip. The row hides unless the
+  // server sees both the pack and its 659 MB upscaler weights.
+  const [upscale, setUpscale] = useState(
+    !!engines.find((item) => item.upscale_2x_default && item.upscale_2x));
   const speedModes = activeEngine?.speed_modes || [];
   const defaultSpeed = activeEngine?.speed_default || "quality";
   const speedMode = speedModes.find((m) => m.id === speed && m.available !== false)
@@ -467,30 +485,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // than the server and would block a tokenless finetune it would have run.
   const bridgeEligible = activeEngine?.id === "h3" && activeShots === 1
     && !isScript && modelBaseId(activeModel?.id) !== "ref2va";
-  // Base first, then its builds: a finetune belongs to exactly one base, so
-  // picking the family narrows the list - the architecture the flat row was
-  // missing (9.21). The segmented track only ever lists families (short stock
-  // labels); long community names live in the picker, never in a segment.
+  // ONE list for ONE control (9.32-C): the 9.21 grouping still decides the
+  // ORDER - each base's stock build first, its finetunes behind it, anything
+  // baseless at the end - but the family track is gone. The dropdown names
+  // the choice at full length, which a segment never could, so the two
+  // controls could only ever repeat each other (both said "FL2VA").
   const { groups: modelGroups, loose: looseModels } = groupModels(availableModels);
-  const modelsSplit = modelGroups.length > 0 && looseModels.length === 0;
-  const activeGroup = modelGroups.find(
-    (g) => g.models.some((m) => m.id === activeModel?.id)) || modelGroups[0];
-  // A base flip lands on the family's stock build, but remembering each
-  // family's last pick means flipping away and back never loses the finetune
-  // the user was on.
-  const baseMemory = useRef({});
-  const pickModel = (id) => {
-    const baseId = modelBaseId(id);
-    if (baseId) baseMemory.current = { ...baseMemory.current, [baseId]: id };
-    setModel(id);
-  };
-  const pickBase = (baseId) => {
-    const group = modelGroups.find((g) => g.baseId === baseId);
-    if (!group || !group.models.length) return;
-    const remembered = baseMemory.current[baseId];
-    setModel(group.models.some((m) => m.id === remembered)
-      ? remembered : group.models[0].id);
-  };
+  const modelOptions = [...modelGroups.flatMap((g) => g.models), ...looseModels];
   // The BASE, not the id. A finetune's id is its own filename stem
   // (`10eros_max_fl2va_skip_edges`), so this gate stopped firing for every
   // finetune OF fl2va the moment the model row split into bases and builds -
@@ -635,12 +636,18 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
 
   return (
     <ModalShell onClose={onClose} boxStyle={{
-      width: 560, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto",
+      width: 560, maxWidth: "94vw", maxHeight: "90vh", overflow: "hidden",
       background: "var(--bg1)", border: "1px solid var(--borderHov)",
-      borderRadius: 20, boxShadow: SHADOW.xl, padding: SPACE[20],
-      display: "flex", flexDirection: "column", gap: SPACE[16], fontFamily: FONT,
+      borderRadius: 20, boxShadow: SHADOW.xl,
+      display: "flex", flexDirection: "column", fontFamily: FONT,
     }}>
-        <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
+        {/* Header and footer pin; the body scrolls between them (9.32-F) -
+            StyleForm's recipe. The shell itself never scrolls: a flex column
+            under maxHeight compresses its panels instead of overflowing, and
+            px-dialog-body's children are made non-shrinking in the theme CSS
+            (the clipped-modal bug of 2026-08-22). */}
+        <div style={{ flex: "0 0 auto", padding: `${SPACE[20]}px ${SPACE[20]}px 0`,
+                      display: "flex", alignItems: "center", gap: SPACE[8] }}>
           <FilmStrip size={17} weight="duotone" style={{ color: "var(--accent)" }} />
           <span style={{ fontSize: TYPE.h3, fontWeight: W.heading, color: "var(--text)" }}>
             Direct the clip
@@ -654,6 +661,11 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
           </button>
         </div>
 
+        <div className="px-scroll px-dialog-body" style={{
+          flex: "1 1 auto", minHeight: 0, overflowY: "auto",
+          padding: `${SPACE[16]}px ${SPACE[20]}px`,
+          display: "flex", flexDirection: "column", gap: SPACE[16],
+        }}>
         {/* ZONE 1 - the brief. The note IS the product; it gets the room. */}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
           <textarea
@@ -681,12 +693,14 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
           )}
         </div>
 
-        {/* ZONE 2 - the two decisions every clip needs. Everything else is
-            fine print, and lives below the fold. */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE[12] }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
-            <span style={MICRO}>engine</span>
-            <SegmentedControl ariaLabel="video engine" value={engineId} onChange={chooseEngine}
+        {/* ZONE 2 - the two decisions every clip needs, on the fold's own
+            grid: same label column, same control x, same row height, so the
+            fold below reads as a continuation, not a new panel (9.32-A/B). */}
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE[12] }}>
+          <Row label="engine"
+            hint={activeEngine?.vram_note ? null
+                  : activeEngine?.tag || activeEngine?.description || null}>
+            <SegmentedControl ariaLabel="video engine" size="sm" value={engineId} onChange={chooseEngine}
               options={engines.map((item) => ({
                 v: item.id, label: item.label, Icon: ENGINE_ICONS[item.id],
                 disabled: item.available === false,
@@ -698,13 +712,15 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
               }))} />
             {/* A starved engine stays PICKABLE - the note is honest ("runs,
                 ~5x slower"), never a block; the butler decides at render time.
+                Status, not a hint, so it rides inside the row in error red.
                 One-fact line: nowrap + ellipsis + title. */}
-            <span title={activeEngine?.vram_note || undefined}
-              style={{ ...CAPTION,
-                       ...(activeEngine?.vram_note
-                         ? { color: "var(--error)", whiteSpace: "nowrap",
-                             overflow: "hidden", textOverflow: "ellipsis" }
-                         : null) }}>{activeEngine?.vram_note || activeEngine?.tag || activeEngine?.description || " "}</span>
+            {activeEngine?.vram_note && (
+              <span title={activeEngine.vram_note}
+                style={{ ...CAPTION, color: "var(--error)", whiteSpace: "nowrap",
+                         overflow: "hidden", textOverflow: "ellipsis" }}>
+                {activeEngine.vram_note}
+              </span>
+            )}
             {/* A starved note is actionable when the family ships lighter
                 builds: one click lists the ladder, one more fetches a rung.
                 Mono 10px - the register every status line in the app uses. */}
@@ -780,16 +796,12 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                 )}
               </div>
             )}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
-            <span style={MICRO}>{activeShots > 1 ? "length · per shot" : "length"}</span>
-            <SegmentedControl ariaLabel="clip length" value={secs} onChange={setSecs}
+          </Row>
+          <Row label={activeShots > 1 ? "length · per shot" : "length"}
+            hint={`${activeLength?.gloss || ""}${activeShots > 1 ? ` · ~${activeShots * secs}s total` : ""}` || null}>
+            <SegmentedControl ariaLabel="clip length" size="sm" value={secs} onChange={setSecs}
               options={lengths.map((l) => ({ v: l.s, label: l.label, title: l.gloss }))} />
-            <span style={CAPTION}>
-              {activeLength?.gloss || ""}
-              {activeShots > 1 ? ` · ~${activeShots * secs}s total` : ""}
-            </span>
-          </div>
+          </Row>
         </div>
 
         {/* ZONE 3 - the fold. Its collapsed row narrates any non-default it
@@ -812,28 +824,12 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                   hint={activeModel?.nsfw
                     ? "NSFW finetune — distill LoRA chained automatically"
                     : activeModel?.description || null}>
-                  {modelsSplit ? (
-                    <>
-                      {modelGroups.length > 1 && (
-                        <SegmentedControl ariaLabel={`${activeEngine?.label || "video"} model family`}
-                          size="sm" value={activeGroup?.baseId} onChange={pickBase}
-                          options={modelGroups.map((g) => ({
-                            v: g.baseId, label: g.label,
-                            title: (g.models.find((m) => m.id === g.baseId)
-                              || g.models[0])?.description || g.label,
-                          }))} />
-                      )}
-                      {activeGroup?.models.length > 1 && (
-                        <ModelPicker label={`${activeGroup.label} build`}
-                          options={activeGroup.models} value={activeModel?.id}
-                          onChange={pickModel} />
-                      )}
-                    </>
-                  ) : (
-                    <ModelPicker label={`${activeEngine?.label || "video"} model`}
-                      options={availableModels} value={activeModel?.id}
-                      onChange={pickModel} />
-                  )}
+                  {/* ONE control for one choice (9.32-C): the dropdown holds
+                      every build of every base at full name; the family track
+                      above it only repeated what it already says. */}
+                  <ModelPicker label={`${activeEngine?.label || "video"} model`}
+                    options={modelOptions} value={activeModel?.id}
+                    onChange={setModel} />
                 </Row>
               )}
 
@@ -857,13 +853,15 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                       ? "render another still first — the clip can converge on it"
                       : endId ? "the clip converges on the selected frame"
                       : "optional — end the clip exactly on another render"}>
+                  {/* ONE row (9.32-B): the strip scrolls sideways instead of
+                      wrapping to a second line - the none pill stays first. */}
                   <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
-                                flexWrap: "wrap", opacity: bridgeEligible ? 1 : 0.45 }}>
+                                flexWrap: "nowrap", overflowX: "auto", opacity: bridgeEligible ? 1 : 0.45 }}>
                     <button type="button" disabled={!bridgeEligible}
                       onClick={() => setEndId("")}
                       title="no end frame - the clip ends wherever the motion lands"
                       style={{
-                        height: 28, padding: `0 ${SPACE[10]}px`,
+                        height: 28, padding: `0 ${SPACE[10]}px`, flex: "none",
                         cursor: bridgeEligible ? "pointer" : "default",
                         border: `1px solid ${endId ? "var(--border)" : "var(--borderStr)"}`,
                         borderRadius: RADIUS.pill,
@@ -884,7 +882,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                           title={on ? "clear the end frame"
                             : (e.scene || "").slice(0, 90) || "end on this frame"}
                           style={{
-                            padding: 2, lineHeight: 0,
+                            padding: 2, lineHeight: 0, flex: "none",
                             cursor: bridgeEligible ? "pointer" : "default",
                             border: `2px solid ${on ? "var(--accent)" : "var(--border)"}`,
                             borderRadius: 10, background: "transparent",
@@ -911,11 +909,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                 </Row>
               )}
 
+              {/* The speed hint says what the mode does in English; the
+                  sampler id is a code word (9.32-E) and lives in the row's
+                  title - same contract as plain_render_words in the chat. */}
               {speedModes.length > 1 && (
                 <Row label="speed"
-                  hint={speedMode
-                    ? `${speedMode.gloss} · ${speedMode.sampler}`
-                    : null}>
+                  title={speedMode ? `sampler: ${speedMode.sampler}` : undefined}
+                  hint={speedMode ? speedMode.gloss : null}>
                   <SegmentedControl ariaLabel="speed" size="sm"
                     value={speedMode ? speedMode.id : defaultSpeed}
                     onChange={setSpeed}
@@ -968,10 +968,10 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                 </Row>
               )}
 
+              {/* No card chrome (9.32, fault 7): the chain is one more section
+                  of the one panel, not a different app pasted at the bottom. */}
               {showVideoLoraChain && (
-                <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6],
-                              padding: SPACE[8], border: "1px solid var(--border)",
-                              borderRadius: RADIUS.card, background: "var(--bg2)" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
                   <div style={{ display: "flex", alignItems: "center", gap: SPACE[6] }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={MICRO}>video LoRA chain</div>
@@ -1057,10 +1057,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                 </div>
               )}
         </Disclosure>
+        </div>
 
         {/* Footer - the commitment. "surprise me" ships without a note; the
-            director animates what's already in the frame. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end",
+            director animates what's already in the frame. Pinned, so the
+            commitment is always reachable (9.32-F). */}
+        <div style={{ flex: "0 0 auto", padding: `0 ${SPACE[20]}px ${SPACE[20]}px`,
+                      display: "flex", alignItems: "center", justifyContent: "flex-end",
                       gap: SPACE[8] }}>
           <button type="button" onClick={() => go(null)}
             disabled={!activeEngine?.available || !model}

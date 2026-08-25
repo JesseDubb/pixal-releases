@@ -371,7 +371,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.7b"
+PIXAL_VERSION = "1.0.8b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -433,11 +433,14 @@ def load_config():
            # Which Qwen-Image-Edit release runs an instruction edit. "" = the
            # recipe default. Releases differ in encoder node (see
            # set_qwen_edit_encoder), so this is a real choice, not a preference.
+           # "inpaint_model" is the masked lane's own pick (9.29): a painted
+           # mask routes the edit to Klein, and until this key existed that
+           # lane was hard-pinned to KLEIN_MODEL no matter what was installed.
            # "speed" picks between the model's own distillation and its
            # un-accelerated schedule; the step counts behind both come from
            # EDIT_ACCELERATORS, never from the user, because a distillation
            # belongs to one transformer.
-           "edit": {"model": "", "speed": "turbo"},
+           "edit": {"model": "", "inpaint_model": "", "speed": "turbo"},
            # Optional decoder swap for the Z-Image/Flux VAE - "" keeps the
            # profile's own matched VAE. See zimage_vae_candidates().
            "vae": {"zimage": ""},
@@ -449,8 +452,12 @@ def load_config():
            # Which engine the Animate popup opens on, and which model inside
            # it. "" = the server's order (LTX 2.5 first, stock FL2VA inside
            # H3). Deliberate defaults, set in Settings - the popup itself
-           # still switches freely per clip.
-           "video": {"default_engine": "", "default_model": ""},
+           # still switches freely per clip. "upscale_2x" is the H3 2x row's
+           # opening position under the same contract (9.31) - it can never
+           # be a finished-clip action, so a standing default is the whole
+           # setting.
+           "video": {"default_engine": "", "default_model": "",
+                     "upscale_2x": False},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -636,13 +643,16 @@ def model_catalog(kind=None, ttl=30):
                 for p in base_dir.rglob("*"):
                     if p.is_file() and p.suffix.lower() in MODEL_EXTS \
                             and ".cache" not in p.parts:
+                        # One stat, both facts: mtime feeds the NEW badge, size
+                        # lets pickers say what a build weighs on disk (9.29).
                         try:
-                            mtime = p.stat().st_mtime
+                            st = p.stat()
+                            mtime, size = st.st_mtime, st.st_size
                         except OSError:
-                            mtime = 0
+                            mtime, size = 0, 0
                         entries.append({"kind": kd, "root": str(root),
                                         "rel": str(p.relative_to(base_dir)),
-                                        "mtime": mtime})
+                                        "mtime": mtime, "size": size})
         _CATALOG.update(at=now, data=entries)
     data = _CATALOG["data"]
     return [e for e in data if e["kind"] == kind] if kind else data
@@ -3644,8 +3654,12 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
     if not instruction:
         raise ValueError("Klein Inpaint needs an instruction for the masked area")
     g = json.loads(json.dumps(TEMPLATES["klein_inpaint"]))
+    # An explicit per-render pick wins; failing that Settings names the build,
+    # and only then the recipe default - the same precedence build_qwen_edit
+    # has always had, for the lane a painted mask routes to.
     model_entry = pick_recipe_model(
-        model or None, "klein_inpaint")
+        model or load_config()["edit"].get("inpaint_model") or None,
+        "klein_inpaint")
     set_unet_loader(g, "ki:unet", model_entry)
     clip = _pick_catalog_asset("text_encoders", (KLEIN_CLIP,),
                                "its Qwen3 8B text encoder", "Klein Inpaint")
@@ -4917,6 +4931,14 @@ def video_engine_options():
         for model in engine["models"]:
             if model["id"] == want_model:
                 model["default"] = True
+    # The H3 2x row's opening position, same discipline again (9.31): a flag
+    # on the one engine that has the row. The popup still flips it per clip,
+    # and the row's own availability gate ("upscale_2x" above) decides
+    # whether the flag can ever show.
+    if video_cfg.get("upscale_2x"):
+        for engine in engines:
+            if engine["id"] == "h3":
+                engine["upscale_2x_default"] = True
     return engines
 
 
@@ -10473,7 +10495,13 @@ def render_note(template, args, count=1):
     "queued on comfy - sampling soon" named neither the recipe nor the model,
     which is exactly what the user wants confirmed before waiting on a GPU.
     """
-    what = RECIPE_NOTE.get(template, template)
+    # The fallback used to be the raw id, so an unmapped recipe announced
+    # itself as "rendering klein_inpaint" (Jesse, 2026-08-24 - face_mint and
+    # anima had the same hole). A recipe with no note of its own still has a
+    # label; see plain_render_words.
+    what = (RECIPE_NOTE.get(template)
+            or RECIPE_SPECS.get(template, {}).get("label")
+            or plain_render_words(template))
     model = str(args.get("model") or "")
     label = ""
     if model:
@@ -12599,7 +12627,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
         HUB.broadcast(type="text", cid=cid,
                       text="Got it \u2014 rendering your prompt exactly as written.")
         HUB.broadcast(type="thinking", cid=cid,
-                      note="writing the workflow - " + template)
+                      note="writing the workflow - " + plain_render_words(template))
         job = await HUB.submit(cid, "chat", template,
                                scene_for_flags, args, 1, verbatim=True)
         if not job["error"]:
@@ -12679,9 +12707,10 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                     # it supplied one) instead of echoing the prompt as Pixal.
                     display_text = scene_text if direct_prompt else render_scene
                     if display_text:
-                        HUB.broadcast(type="text", cid=cid, text=display_text)
+                        HUB.broadcast(type="text", cid=cid,
+                                      text=chat_speech(display_text, opts))
                     HUB.broadcast(type="thinking", cid=cid,
-                                  note="writing the workflow - " + template)
+                                  note="writing the workflow - " + plain_render_words(template))
                     freeze_seed(args, opts)
                     job = await HUB.submit(cid, "chat", template, render_scene, args, 1)
                     if not job["error"]:
@@ -12735,10 +12764,10 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                         "\n\nWant me to run it? Say \u201cgo\u201d, or tell me "
                         "what to change."))
                     return
-                HUB.broadcast(type="text", cid=cid, text=scene_text)
+                HUB.broadcast(type="text", cid=cid, text=chat_speech(scene_text, opts))
                 return
-            said = _SCENE_LABEL_RE.sub(
-                "", _strip_history_directives(msg.get("content") or "")).strip()
+            said = chat_speech(_SCENE_LABEL_RE.sub(
+                "", _strip_history_directives(msg.get("content") or "")).strip(), opts)
             # It called the tool AND printed the tool's name; only the call counts.
             if said and not scene_is_command(said):
                 HUB.broadcast(type="text", cid=cid, text=said)
@@ -12888,7 +12917,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                                         args.pop("lora_plan", None)
                                     args = heal_stored_lora_plan(template, args)
                             HUB.broadcast(type="thinking", cid=cid,
-                                          note="writing the workflow - " + template)
+                                          note="writing the workflow - " + plain_render_words(template))
                             freeze_seed(args, opts)
                             job = await HUB.submit(cid, "chat", template, scene, args, count)
                             rendered = rendered or not job["error"]
@@ -12900,14 +12929,28 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                             # follow-up turn reprinted the whole thing. And the
                             # job is QUEUED, not finished - the model was saying
                             # "Rendered!" before the sampler had a first step.
+                            # The receipt says "realism" because that IS the
+                            # graph - and it is the last thing the model reads
+                            # before it speaks, which is exactly why the STYLE
+                            # block's "call it an anime shot" lost to it twice.
+                            # Recency beats a rule stated upstream, so the
+                            # correction travels WITH the temptation. See
+                            # spoken_style_repair for the guarantee behind it.
+                            look = ((opts or {}).get("style") or "").strip() \
+                                if style_directive(opts) else ""
                             result = ({"queued": job["id"], "template": template,
                                        "seed": job["seed"], "count": count,
+                                       **({"call_it": look} if look else {}),
                                        "status": ("accepted by the GPU queue - NOT finished. "
                                                   "Do not say rendered, done, ready or here it "
                                                   "is, and do not repeat the prompt. Reply with "
                                                   "ONE short line saying what is now rendering "
-                                                  "and that it takes a moment. This turn is "
-                                                  "over: call no further tools.")}
+                                                  "and that it takes a moment."
+                                                  + (f" Call it {'an' if look[0] in 'aeiou' else 'a'}"
+                                                     f" {look} shot, never a {template} shot -"
+                                                     f" {template} is the graph, not the look."
+                                                     if look else "")
+                                                  + " This turn is over: call no further tools.")}
                                       if not job["error"] else {"error": job["error"]})
                 elif fn in ("animate", "review", "upscale") and not local_brain:
                     # Render actions ride the SAME verified route code the
@@ -13107,6 +13150,93 @@ STYLE_ON_PHOTO_GRAPH = {
     "fantasy": "readable silhouettes, materials and scale, one motivated "
                "magical effect, and painterly light",
 }
+
+
+_SPOKEN_GRAPH_RE = re.compile(
+    r"\b(?:(an?|the)\s+)?(realism(?:\s+ii)?|photorealistic|photoreal)\b", re.I)
+
+
+def spoken_style_repair(text, opts):
+    """Say the look that was asked for, not the graph that drew it.
+
+    7fffc7c told the writer, in the STYLE block, to call an anime ask an anime
+    shot. It still said "it's a realism shot" (Jesse, 2026-08-24, second
+    sighting). The cause is recency, not disobedience: the render tool's own
+    result hands the model {"template": "realism"} in the last thing it reads
+    before it speaks, while the instruction sits back in the user turn. The
+    tool result now carries the correction too - and this is the deterministic
+    repair behind it, because a rule a small model CAN ignore is not a
+    guarantee (the same detect-then-repair that finally held H3's dialogue
+    tags).
+
+    Only runs when style_directive fired, and that is what makes a blanket
+    swap safe: on those renders the user picked anime or fantasy, so the word
+    "realism" in the spoken line is wrong every time it appears. Graphs that
+    draw their own style never reach here."""
+    style = ((opts or {}).get("style") or "").strip()
+    if not text or not style or not style_directive(opts):
+        return text
+
+    def swap(m):
+        article, graph = m.group(1), m.group(2)
+        if not article:
+            # Sentence-initial "Realism ..." keeps its capital.
+            return style.capitalize() if graph[0].isupper() else style
+        if article.lower() in ("a", "an"):
+            # "a realism shot" -> "an anime shot": the article has to follow.
+            fixed = "an" if style[0].lower() in "aeiou" else "a"
+            article = fixed.capitalize() if article[0].isupper() else fixed
+        return f"{article} {style}"
+
+    return _SPOKEN_GRAPH_RE.sub(swap, text)
+
+
+# Ids that must never be spoken. Built from the recipes' own labels, plus the
+# action and video templates that live outside RECIPE_SPECS - the server-side
+# twin of web/src/lib/names.js prettyTemplate, and for the same reason: the UI
+# never shows code ids, and the chat lane IS the UI.
+_SPOKEN_ID_EXTRAS = {
+    "zara_edit": "Identity Edit",        # pre-rename ledger entries
+    "upscale_image": "Upscale", "upscale_video": "Upscale",
+    "ltx25_upscale_video": "Upscale",
+    "ltx_i2v": "LTX 2.3", "ltx25_i2v": "LTX 2.5",
+    "h3_i2v": "MiniMax H3", "h3_ref2v": "MiniMax H3",
+    "h3_multishot": "MiniMax H3 Multishot",
+    "vl_review": "review",
+}
+
+
+@lru_cache(maxsize=1)
+def _spoken_id_map():
+    names = {rid: spec["label"] for rid, spec in RECIPE_SPECS.items()
+             if "_" in rid or rid == "zimage"}
+    names.update(_SPOKEN_ID_EXTRAS)
+    # Longest first so klein_inpaint is spent before any shorter overlap.
+    return [(re.compile(rf"\b{re.escape(rid)}\b", re.I), label)
+            for rid, label in sorted(names.items(), key=lambda kv: -len(kv[0]))]
+
+
+def plain_render_words(text):
+    """No internal id reaches the chat lane - "identity_edit" is not English.
+
+    Jesse, 2026-08-24: "should be no code like things leaking into chat no
+    underscored names like that." The brain names the recipe because the
+    recipe is what it called, and every tool result it reads carries the raw
+    id, so telling it not to is a rule it can drop. This is the guarantee.
+
+    Only ids that READ as code are mapped - "realism" and "anime" are ordinary
+    words and stay. `\b` does the rest of the work: the underscore is a word
+    character, so realism_ii can never be half-matched as realism."""
+    if not text:
+        return text
+    for pattern, label in _spoken_id_map():
+        text = pattern.sub(label, text)
+    return text
+
+
+def chat_speech(text, opts=None):
+    """Every line the chat lane speaks goes through here."""
+    return plain_render_words(spoken_style_repair(text, opts))
 
 
 def style_directive(opts):
@@ -13453,8 +13583,15 @@ async def settings_get(_req):
                     "video_available": bool(_video_upscale_node()),
                     "ltx25_video_available": not _ltx25_upscale_missing()},
         "edit": {**cfg["edit"],
-                 "installed": [e["rel"] for e in recipe_model_candidates("qwen_edit")],
-                 "default": QWEN_EDIT_MODEL},
+                 # Both lanes, each option carrying what it weighs on disk
+                 # (9.29) - name+size objects like the critic block above,
+                 # never bare strings.
+                 "installed": [{"name": e["rel"], "size": e.get("size")}
+                               for e in recipe_model_candidates("qwen_edit")],
+                 "default": QWEN_EDIT_MODEL,
+                 "inpaint_installed": [{"name": e["rel"], "size": e.get("size")}
+                                       for e in recipe_model_candidates("klein_inpaint")],
+                 "inpaint_default": KLEIN_MODEL},
         "vae": {**cfg["vae"],
                 "installed": [e["rel"] for e in model_catalog("vae")],
                 "stock": list(ZIMAGE_VAE_CANDIDATES)},
@@ -13462,6 +13599,12 @@ async def settings_get(_req):
                 "decode_available": _pid_node_available(PID_DECODE_NODE)},
         "video": {"default_engine": cfg["video"]["default_engine"],
                   "default_model": cfg["video"]["default_model"],
+                  # The H3 2x default (9.31), published with whether it can
+                  # run at all - pack plus 659 MB weights - so the Settings
+                  # row disables itself honestly instead of offering a
+                  # setting that silently does nothing.
+                  "upscale_2x": bool(cfg["video"].get("upscale_2x", False)),
+                  "upscale_2x_available": h3_upscale_available(),
                   "engines": [{"id": e["id"], "label": e["label"],
                                "available": e.get("available", True),
                                "models": [{"id": m["id"], "label": m["label"],
@@ -13548,6 +13691,18 @@ async def settings_post(req):
                 {"ok": False, "error": f"not an installed Qwen Image Edit model: {want}"},
                 status=400)
         cfg["edit"]["model"] = want
+    if "inpaint_model" in edit_cfg and isinstance(edit_cfg["inpaint_model"], str):
+        # The masked lane's pick, same contract as the whole-frame one above:
+        # "" means "use the recipe default", anything else must be an installed
+        # klein-family build or it is refused here with the file named, rather
+        # than failing every later masked edit.
+        want = edit_cfg["inpaint_model"].strip().replace("/", "\\")
+        if want and not any(entry["rel"].replace("/", "\\").lower() == want.lower()
+                            for entry in recipe_model_candidates("klein_inpaint")):
+            return web.json_response(
+                {"ok": False, "error": f"not an installed Klein Inpaint model: {want}"},
+                status=400)
+        cfg["edit"]["inpaint_model"] = want
     vae = body.get("vae") or {}
     if "zimage" in vae and isinstance(vae["zimage"], str):
         want = vae["zimage"].strip().replace("/", "\\")
@@ -13579,6 +13734,15 @@ async def settings_post(req):
             return web.json_response(
                 {"ok": False, "error": f"not a video model: {want}"}, status=400)
         cfg["video"]["default_model"] = want
+    if "upscale_2x" in video_cfg:
+        # Strictly a bool (9.31): a truthy string would silently stand a
+        # ~3x-cost default ON - the same refusal this endpoint gives "not a
+        # gpu layer count" and "not a console style".
+        if not isinstance(video_cfg["upscale_2x"], bool):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not a bool: {video_cfg['upscale_2x']}"}, status=400)
+        cfg["video"]["upscale_2x"] = video_cfg["upscale_2x"]
     if "comfy_editor" in body:
         cfg["comfy_editor"] = bool(body["comfy_editor"])
     if "comfy_console" in body:
@@ -16315,13 +16479,16 @@ async def warmup_catalog():
                 for p in base_dir.rglob("*"):
                     if p.is_file() and p.suffix.lower() in MODEL_EXTS \
                             and ".cache" not in p.parts:
+                        # One stat, both facts: mtime feeds the NEW badge, size
+                        # lets pickers say what a build weighs on disk (9.29).
                         try:
-                            mtime = p.stat().st_mtime
+                            st = p.stat()
+                            mtime, size = st.st_mtime, st.st_size
                         except OSError:
-                            mtime = 0
+                            mtime, size = 0, 0
                         entries.append({"kind": kd, "root": str(root),
                                         "rel": str(p.relative_to(base_dir)),
-                                        "mtime": mtime})
+                                        "mtime": mtime, "size": size})
                 if len(entries) > n0:
                     say(f"{kd} - {len(entries) - n0} files")
         _CATALOG.update(at=time.time(), data=entries)

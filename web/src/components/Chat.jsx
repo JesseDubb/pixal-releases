@@ -9,7 +9,7 @@ import { ArrowClockwise, ArrowUp, ArrowRight, CaretLeft, CaretRight,
          DiceOne, DiceTwo, DiceThree, DiceFour,
          DiceFive, DiceSix, DownloadSimple, LockSimple, Stop, UserCircle, UserCircleCheck,
          UserCirclePlus, Sparkle, X, Brain } from "@phosphor-icons/react";
-import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
+import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 
 // The lobby die: every roll spins it a random 1¼–1¾ turns on a spring curve
 // and lands on a DIFFERENT face — a real roll, not a button that swaps text.
@@ -98,7 +98,7 @@ const RenderMeter = ({ jobId }) => {
   return (
     <div aria-hidden="true" style={{
       position: "fixed", left: 0, right: 0, bottom: 0, height: 3,
-      zIndex: 45, pointerEvents: "none", overflow: "hidden",
+      zIndex: OVERLAY.meter, pointerEvents: "none", overflow: "hidden",
     }}>
       <div style={{
         position: "absolute", inset: 0, background: "var(--accent)",
@@ -533,7 +533,9 @@ const Lightbox = ({ lb, onClose, onNav }) => {
   ].filter(Boolean);
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, zIndex: 40, background: "rgba(3,8,10,0.94)",
+      // Below every dialog: animate and edit open FROM this viewer, so they
+      // have to land on top of it. See OVERLAY in design-tokens.
+      position: "fixed", inset: 0, zIndex: OVERLAY.viewer, background: "rgba(3,8,10,0.94)",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       {/* Toolbar glyphs: 20px duotone, quiet grey -> near-white on hover
@@ -1532,7 +1534,7 @@ export const Chat = () => {
         <SettingsMenu phone={narrow} onClose={() => store.setSettingsOpen(false)} />}
 
       {!wide && store.chatsOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 40, display: "flex" }}
+        <div style={{ position: "fixed", inset: 0, zIndex: OVERLAY.panel, display: "flex" }}
           onClick={() => store.setChatsOpen(false)}>
           <div style={{ width: 292, maxWidth: "84vw", height: "100%",
                         padding: 10, boxSizing: "border-box" }}

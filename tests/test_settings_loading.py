@@ -49,10 +49,11 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 
 # The gated swaps each slot owns. cfg carries the General and Brain controls
 # plus the live-value glosses, because everything it feeds lands in the one
-# /api/settings batch; upscale owns three (its Image-tab controls, its
-# Video-tab controls, and the Image-tab installed-count gloss); editCfg owns
-# two (the picker and its count gloss).
-GATES = {"cfg": 12, "videoCfg": 2, "upscale": 3, "editCfg": 2,
+# /api/settings batch; videoCfg owns three (engine, model, and the 9.31 H3
+# 2× default); upscale owns three (its Image-tab controls, its Video-tab
+# controls, and the Image-tab installed-count gloss); editCfg owns two (the
+# picker and its count gloss).
+GATES = {"cfg": 12, "videoCfg": 3, "upscale": 3, "editCfg": 2,
          "vae": 1, "pidCfg": 1, "upd": 1}
 
 GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<LineGhost", "<ValueGhost", "<Bar")

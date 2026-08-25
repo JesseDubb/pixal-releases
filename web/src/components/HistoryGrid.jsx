@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, ArrowsOut, ArrowsOutSimple, FilmStrip, ImageSquare,
          LockSimple, LockSimpleOpen, MagnifyingGlass, PencilSimple, Play, Trash,
          X } from "@phosphor-icons/react";
-import { BORDER, CURVE, FONT, GLASS_SOLID, MOTION, RADIUS, SHADOW, SPACE, TYPE, W } from "../lib/design-tokens.js";
+import { BORDER, CURVE, FONT, GLASS_SOLID, MOTION, RADIUS, SHADOW, SPACE, TYPE, W, OVERLAY } from "../lib/design-tokens.js";
 import { buildColumns } from "../lib/masonry.js";
 import { OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { prettyTemplate, prettyResolvedModel } from "../lib/names.js";
@@ -353,10 +353,10 @@ export const HistoryGrid = ({ history, onClose, onOpen, onAnimate, onReroll, onR
       ...(docked
         ? { width: "100%", height: "100%", position: "relative", boxShadow: SHADOW.md }
         : phone
-          ? { position: "fixed", zIndex: 30, boxShadow: SHADOW.xl,
+          ? { position: "fixed", zIndex: OVERLAY.card, boxShadow: SHADOW.xl,
               top: "calc(8px + env(safe-area-inset-top))", right: 8,
               bottom: "calc(8px + env(safe-area-inset-bottom))", left: 8 }
-          : { position: "fixed", top: 12, right: 12, bottom: 12, left: 76, zIndex: 30,
+          : { position: "fixed", top: 12, right: 12, bottom: 12, left: 76, zIndex: OVERLAY.card,
               boxShadow: SHADOW.xl }),
       background: "var(--surfaceSolid)",
       border: "1px solid var(--border)", borderRadius: RADIUS.surface,

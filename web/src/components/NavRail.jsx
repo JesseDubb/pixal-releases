@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatsCircle, GearSix, Images, UserCirclePlus } from "@phosphor-icons/react";
 import { RADIUS, SPACE } from "../lib/design-tokens.js";
-import { BlockLogo } from "../lib/BlockLogo.jsx";
+import { BlockLogo, RAIL_DRIFT } from "../lib/BlockLogo.jsx";
 import { ComfyCompatCard } from "./ComfyCompat.jsx";
 
 // Round, bubbly, and barless: the icons float straight on the page ground —
@@ -122,7 +122,7 @@ export const NavRail = ({ store, onNewCharacter, horizontal, calm }) => (
     display: "flex", flexDirection: "column", alignItems: "center",
     padding: `${SPACE[16]}px 0 ${SPACE[16]}px`, gap: SPACE[10],
   }}>
-    <BlockLogo size={horizontal ? 40 : 54} calm={calm} />
+    <BlockLogo size={horizontal ? 40 : 54} calm={calm} drift={RAIL_DRIFT} />
     <div style={horizontal ? { flex: 1 } : { height: SPACE[8] }} />
     <RailButton icon={ChatsCircle} label={`chats (${store.chats.length})`}
       active={store.chatsOpen} onClick={() => store.setChatsOpen(!store.chatsOpen)} />

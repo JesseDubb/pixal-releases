@@ -1325,10 +1325,13 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
         return argv[argv.index("--n_gpu_layers") + 1]
 
     async def _ensure(self, td, cfg, state=None, port_open=(False,),
-                      mmproj=None, vision=True, serving=None):
+                      mmproj=None, vision=True, serving=None,
+                      port_pids=(), cmdline=None):
         """Run _ensure_local_llm with every outside effect stubbed (the
         LIVE-MACHINE RULE: no real spawn, no real port probe, no real config).
-        Returns (error, popen, kill, state_path)."""
+        Returns (error, popen, kill, state_path). port_pids/cmdline stub the
+        port-owner lookup: the pids netstat/lsof reports (or an exception to
+        raise) and the one command line _process_cmdline answers with."""
         root = Path(td)
         selected = root / "python_embeded" / "python.exe"
         selected.parent.mkdir(exist_ok=True)
@@ -1337,7 +1340,15 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
         log_path = root / "llama.log"
         proc = Mock(pid=4321)
         proc.poll.return_value = None
+        owner_probe = (patch.object(server, "_local_llm_port_pids",
+                                    side_effect=port_pids)
+                       if isinstance(port_pids, BaseException)
+                       else patch.object(server, "_local_llm_port_pids",
+                                         return_value=list(port_pids)))
         with patch.object(server, "load_config", return_value=cfg), \
+             owner_probe, \
+             patch.object(server, "_process_cmdline",
+                          side_effect=lambda pid: cmdline), \
              patch.object(server, "local_llm_port_open",
                           AsyncMock(side_effect=list(port_open))), \
              patch.object(server, "local_llm_up", AsyncMock(return_value=True)), \
@@ -1492,6 +1503,57 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
             popen.assert_not_called()
             kill.assert_not_called()
             self.assertFalse(state_path.exists())
+    async def test_our_own_brain_is_adopted_with_its_real_pid(self):
+        # 2026-08-25 16:45: the card idled at 10.2 GB and nothing would
+        # reclaim it - the holder was OUR pixal_brain_server.py re-registered
+        # pid-less after a sidecar restart, and "free brain" refused it. The
+        # port-holder's command line is the proof of ownership the pidfile
+        # used to be: our script from our tree gets its real pid recorded.
+        script = server.HERE / "pixal_brain_server.py"
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "brain.gguf"
+            model.touch()
+            error, popen, kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                serving=str(model), port_pids=[4242],
+                cmdline=f'C:\\py\\python.exe "{script}" '
+                        f'--port {server.LOCAL_LLM_PORT}')
+            self.assertIsNone(error)
+            popen.assert_not_called()
+            kill.assert_not_called()
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["pid"], 4242)
+            self.assertTrue(state["adopted"])
+
+    async def test_a_same_model_stranger_keeps_pid_none(self):
+        # run_llm.bat serving the very same gguf passes the model check - the
+        # command line is the only thing that says it is not ours to kill.
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "brain.gguf"
+            model.touch()
+            error, _popen, _kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                serving=str(model), port_pids=[4242],
+                cmdline=f"C:\\py\\python.exe -m llama_cpp.server "
+                        f"--model {model}")
+            self.assertIsNone(error)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIsNone(state["pid"])
+            self.assertTrue(state["adopted"])
+
+    async def test_a_failed_owner_lookup_still_adopts_pid_less(self):
+        # netstat/CIM failing must neither strand the registration nor invent
+        # a pid: adoption completes exactly as it did before the lookup.
+        with tempfile.TemporaryDirectory() as td:
+            model = Path(td) / "brain.gguf"
+            model.touch()
+            error, _popen, _kill, state_path = await self._ensure(
+                td, self._cfg(model), state={}, port_open=(True,),
+                serving=str(model), port_pids=OSError("no netstat on PATH"))
+            self.assertIsNone(error)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIsNone(state["pid"])
+            self.assertTrue(state["adopted"])
 
     async def test_changed_settings_on_an_adopted_brain_refuse_a_doomed_spawn(self):
         # A pidless adoption cannot be killed and must not be spawned into:
@@ -1569,6 +1631,34 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
         body = json.loads(resp.text)
         self.assertTrue(body["ok"])
         self.assertFalse(body["freed"])
+        self.assertIn("no chat model was started by Pixal", body["note"])
+
+    async def test_a_recorded_pid_is_the_one_killed(self):
+        # An adopted brain whose pid the port lookup proved (9.47) is the pid
+        # /api/llm/free must spend - anything else is a wrong-process kill.
+        with patch.object(server, "_llm_state", return_value={"pid": 4242}), \
+             patch.object(server, "_llm_kill", return_value=True) as kill, \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=False)), \
+             patch.object(server, "gpu_free_bytes", return_value=None), \
+             patch.object(server, "LLM_STATE", Mock()):
+            resp = await server.free_chat_model(None)
+        kill.assert_called_once_with(4242)
+        self.assertTrue(json.loads(resp.text)["freed"])
+
+    async def test_an_adopted_brain_pixal_did_not_start_says_it_stays(self):
+        # pid-less adopted state = a brain IS listening but was not provably
+        # spawned by Pixal. "no chat model was started by Pixal" read as
+        # "nothing is running" while 8.3 GB sat stranded (Jesse, 2026-08-25) -
+        # a refusal has to say what is actually true.
+        with patch.object(server, "_llm_state",
+                          return_value={"pid": None, "adopted": True,
+                                        "model": "brain.gguf"}):
+            resp = await server.free_chat_model(None)
+        body = json.loads(resp.text)
+        self.assertTrue(body["ok"])
+        self.assertFalse(body["freed"])
+        self.assertIn("did not start it", body["note"])
 
 
 class SubstantiveRedirectTests(unittest.TestCase):
@@ -1643,3 +1733,25 @@ class SubstantiveRedirectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DemonstrativeCaptionIsARender(unittest.TestCase):
+    """Chat 952084e3 (2026-08-25): "This blonde bombshell is posing for
+    Hustler magazine in 2026", Mia selected, scored as conversation because
+    _VISUAL_COPULA refused any subject beginning with a demonstrative. Only a
+    BARE demonstrative ("this is great") is chat; a demonstrative phrase with
+    a posed subject is a caption."""
+
+    def test_a_demonstrative_phrase_with_a_posed_subject_renders(self):
+        for text in ("This blonde bombshell is posing for Hustler magazine in 2026",
+                     "That tall woman is standing at the window",
+                     "These two friends are sitting on the pier at dusk"):
+            with self.subTest(text=text):
+                self.assertTrue(server.user_wants_render(text))
+
+    def test_a_bare_demonstrative_stays_chat(self):
+        for text in ("this is great", "that was sitting on my desk all week",
+                     "this is posing a problem"):
+            with self.subTest(text=text):
+                self.assertFalse(server.user_wants_render(text))
+

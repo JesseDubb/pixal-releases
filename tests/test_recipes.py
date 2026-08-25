@@ -6,7 +6,7 @@ from contextlib import ExitStack, contextmanager
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 _SPEC = spec_from_file_location("pixal_server", Path(__file__).resolve().parents[1] / "server.py")
@@ -78,7 +78,8 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(
             server.PUBLIC_RECIPE_IDS,
             ("realism", "realism_ii", "fantasy", "anime", "zimage", "identity_edit",
-             "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "anima"),
+             "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "klein_edit",
+             "anima"),
         )
         self.assertTrue(set(server.PUBLIC_RECIPE_IDS).issubset(server.BUILDERS))
 
@@ -93,7 +94,7 @@ class RecipeTests(unittest.TestCase):
         one. Only qwen_edit's *models* are source_only; face_mint's are not.
         """
         self.assertEqual(server.SOURCE_ONLY_RECIPE_IDS,
-                         {"qwen_edit", "face_mint", "klein_inpaint"})
+                         {"qwen_edit", "face_mint", "klein_inpaint", "klein_edit"})
         mint_model = server.model_profile(
             server.RECIPE_SPECS["face_mint"]["default_model"])
         self.assertFalse(mint_model.get("source_only", False))
@@ -106,6 +107,13 @@ class RecipeTests(unittest.TestCase):
         krea = server.model_profile("Krea 2\\krea2_turbo_mxfp8.safetensors")
         self.assertNotIn("qwen_edit", server.compatible_recipes(krea))
         self.assertFalse(krea.get("source_only", False))
+        # a Klein build serves BOTH klein lanes - the masked picker and the
+        # whole-frame one list the same installs
+        klein = server.model_profile(server.KLEIN_MODEL)
+        self.assertEqual(klein["family"], "klein")
+        self.assertTrue(klein["source_only"])
+        self.assertEqual(server.compatible_recipes(klein),
+                         ["klein_inpaint", "klein_edit"])
 
     def test_new_model_badge_reads_the_file_not_pixals_memory(self):
         """The picker's NEW chip must mean "you just downloaded this". Reading the
@@ -1454,6 +1462,10 @@ class VramButlerBehavior(unittest.TestCase):
                 server, "gpu_free_bytes", return_value=25 * 2**30))
             st.enter_context(patch.object(
                 server, "ram_free_bytes", return_value=32 * 2**30))
+            # No resident brain (9.35): nothing to rest first, so the cold
+            # path goes straight to the flush it always ran.
+            st.enter_context(patch.object(
+                server, "brain_vram_estimate", return_value=0))
             brain = st.enter_context(patch.object(
                 server, "free_brain_vram", AsyncMock(return_value=True)))
             st.enter_context(patch.object(
@@ -1660,14 +1672,14 @@ class PrevFloorGuard(unittest.TestCase):
 class VramPrevFloorTrim(unittest.TestCase):
     """The guard-band rule wired into the butler: 27 of the last 126 priced
     renders ended under 1.0GB free, so a job that fits as the card stands
-    still trims torch's reclaimable pool when the LAST job ended inside the
-    band - and that is the whole escalation. Never an unload (the reload IS
-    the bill), never the chat brain."""
+    still takes headroom back when the LAST job ended inside the band. A
+    resident chat brain steps aside first (9.35 - the cheap reload); only
+    its absence gets the trim. Never an unload (the reload IS the bill)."""
 
     GRAPH = {"u": {"class_type": "UNETLoader",
                    "inputs": {"unet_name": "Krea 2\\m.safetensors"}}}
 
-    def run_butler(self, prev_min):
+    def run_butler(self, prev_min, brain_alive=False):
         hub = _StubHub(resident={"Krea 2\\m.safetensors": 12 * 2**30})
         hub.prev_job_free_min = prev_min
         with ExitStack() as st:
@@ -1680,6 +1692,9 @@ class VramPrevFloorTrim(unittest.TestCase):
                 server, "gpu_free_bytes", return_value=25 * 2**30))
             st.enter_context(patch.object(
                 server, "ram_free_bytes", return_value=32 * 2**30))
+            hub.brain = st.enter_context(patch.object(
+                server, "free_brain_vram",
+                AsyncMock(return_value=brain_alive)))
             st.enter_context(patch.object(
                 server.asyncio, "sleep", AsyncMock()))
             asyncio.run(hub.ensure_vram("realism_ii", dict(self.GRAPH),
@@ -1687,16 +1702,284 @@ class VramPrevFloorTrim(unittest.TestCase):
         return hub
 
     def test_a_near_miss_last_job_trims_the_pool_without_unloading(self):
-        hub = self.run_butler(int(0.9 * 2**30))
-        self.assertTrue(hub.flushed)             # the trim happened...
-        self.assertEqual(hub.resident_heavies,   # ...but unload=False: the
+        hub = self.run_butler(int(0.9 * 2**30))     # no brain resident
+        hub.brain.assert_awaited_once()             # it is always asked first
+        self.assertTrue(hub.flushed)                # ...so the trim happened
+        self.assertEqual(hub.resident_heavies,      # ...but unload=False: the
                          {"Krea 2\\m.safetensors": 12 * 2**30})  # stack stayed
-        self.assertEqual(hub.texts, [])          # silent in the lane
+        self.assertEqual(hub.texts, [])             # silent in the lane
+
+    def test_a_near_miss_rests_a_resident_brain_instead_of_trimming(self):
+        hub = self.run_butler(int(0.9 * 2**30), brain_alive=True)
+        hub.brain.assert_awaited_once()
+        self.assertFalse(hub.flushed)               # rest, not trim
+        self.assertEqual(hub.resident_heavies,      # the stack stays resident
+                         {"Krea 2\\m.safetensors": 12 * 2**30})
+        self.assertEqual(hub.texts,
+                         ["*rested the chat brain for headroom - the last "
+                          "render ended at 0.9GB free*"])
 
     def test_a_comfortable_last_job_costs_the_next_one_nothing(self):
         hub = self.run_butler(int(8 * 2**30))
+        hub.brain.assert_not_awaited()
         self.assertFalse(hub.flushed)
         self.assertEqual(hub.texts, [])
+
+
+class BrainShouldRest(unittest.TestCase):
+    """9.35's pure decision: the brain is now the cheap reload (~5.5GB
+    resident, seconds from page cache) and the flush is the expensive one
+    (~20GB, 15-25s) - so a short job rests the brain FIRST, but only when
+    that alone closes the gap. No I/O: numbers in, a bool out."""
+
+    GB = 2**30
+
+    def test_a_job_that_fits_already_never_rests_the_brain(self):
+        self.assertFalse(server.brain_should_rest(
+            20 * self.GB, 15 * self.GB, 6 * self.GB))
+
+    def test_a_job_that_fits_only_with_the_brain_gone_rests_it(self):
+        self.assertTrue(server.brain_should_rest(
+            10 * self.GB, 15 * self.GB, 6 * self.GB))
+
+    def test_a_job_short_even_without_the_brain_keeps_it(self):
+        # resting would be pure cost - the flush still has to run
+        self.assertFalse(server.brain_should_rest(
+            8 * self.GB, 15 * self.GB, 6 * self.GB))
+
+    def test_no_free_reading_is_no_signal_and_never_a_decision(self):
+        self.assertFalse(server.brain_should_rest(
+            None, 15 * self.GB, 6 * self.GB))
+
+    def test_no_resident_brain_is_nothing_to_rest(self):
+        self.assertFalse(server.brain_should_rest(
+            10 * self.GB, 15 * self.GB, 0))
+
+
+class BrainVramEstimate(unittest.TestCase):
+    """The estimate the butler spends before flushing: the resident GGUF's
+    bytes plus BRAIN_KV_SLACK - and 0 whenever there is nothing of ours to
+    rest, so a stranger's server is never spent as headroom we cannot take."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def estimate(self, state):
+        with patch.object(server, "_llm_state", return_value=state):
+            return server.brain_vram_estimate()
+
+    def test_no_pid_means_nothing_of_ours_is_resident(self):
+        self.assertEqual(self.estimate({}), 0)
+        self.assertEqual(self.estimate({"pid": None, "model": "x.gguf"}), 0)
+
+    def test_a_missing_model_file_estimates_zero(self):
+        gone = str(self.root / "gone.gguf")
+        self.assertEqual(self.estimate({"pid": 4242, "model": gone}), 0)
+
+    def test_a_resident_brain_prices_its_gguf_plus_the_kv_slack(self):
+        model = self.root / "brain.gguf"
+        model.write_bytes(b"\0" * 4_500_000)
+        self.assertEqual(self.estimate({"pid": 4242, "model": str(model)}),
+                         4_500_000 + server.BRAIN_KV_SLACK)
+
+
+class VramButlerBrainRest(unittest.TestCase):
+    """9.35's reorder wired into the cold path. zimage is unprofiled, so the
+    graph below prices at 12GB weights + 1GB act + 2GB floor = 15GB need.
+    When resting the brain alone closes that gap there is no /free post at
+    all; when the rest still falls short the flush runs as priced, and the
+    'rested the chat brain' note cannot fire a second time."""
+
+    GRAPH = {"u": {"class_type": "UNETLoader",
+                   "inputs": {"unet_name": "ZiT\\new.safetensors"}}}
+
+    def run_butler(self, free_reads, brain_gb, brain_kills, gpu_free_gb=13):
+        hub = _StubHub(resident={"Krea 2\\old.safetensors": 12 * 2**30})
+        job = {"id": "b1", "cid": "c"}
+        with ExitStack() as st:
+            st.enter_context(patch.object(
+                server, "_weight_file_bytes", return_value=12 * 2**30))
+            st.enter_context(patch.object(
+                server, "comfy_vram_free_bytes",
+                AsyncMock(side_effect=[f * 2**30 for f in free_reads])))
+            st.enter_context(patch.object(
+                server, "gpu_free_bytes", return_value=gpu_free_gb * 2**30))
+            st.enter_context(patch.object(
+                server, "gpu_hogs", return_value=[]))
+            st.enter_context(patch.object(
+                server, "ram_free_bytes", return_value=32 * 2**30))
+            st.enter_context(patch.object(
+                server, "brain_vram_estimate",
+                return_value=brain_gb * 2**30))
+            hub.brain = st.enter_context(patch.object(
+                server, "free_brain_vram",
+                AsyncMock(side_effect=brain_kills)))
+            st.enter_context(patch.object(
+                server.asyncio, "sleep", AsyncMock()))
+            asyncio.run(hub.ensure_vram("zimage", dict(self.GRAPH), job))
+        return hub, job
+
+    def test_a_short_job_rests_the_brain_instead_of_flushing(self):
+        # 10GB free, need 15GB, a 6GB brain: 10 < 15 but 10 + 6 >= 15, and
+        # the post-rest read lands at 16GB - the job fits, the flush is
+        # skipped, so NO /free post ever leaves the stub.
+        hub, job = self.run_butler([10, 16], 6, [True])
+        hub.brain.assert_awaited_once()
+        self.assertFalse(hub.flushed)
+        self.assertEqual(hub.resident_heavies,
+                         {"ZiT\\new.safetensors": 12 * 2**30})
+        self.assertEqual(hub.texts,
+                         ["*rested the chat brain instead of clearing ~12 GB "
+                          "of cached models - it returns on your next "
+                          "message*"])
+        self.assertNotIn("model_switch", job)
+
+    def test_a_rest_that_falls_short_still_flushes_without_repeating(self):
+        # Same gap, but the post-rest read lands at 12GB - still short of
+        # 15GB, so the flush runs as priced. The brain is already gone (the
+        # pidfile went with the kill, so the real free_brain_vram answers
+        # False the second time): the note must not fire twice.
+        hub, job = self.run_butler([10, 12], 6, [True, False])
+        self.assertEqual(hub.brain.await_count, 2)
+        self.assertTrue(hub.flushed)
+        self.assertTrue(job.get("model_switch"))
+        self.assertEqual(len(hub.texts), 1)
+        self.assertIn("cleared cached models", hub.texts[0])
+        self.assertNotIn("rested the chat brain", hub.texts[0])
+
+
+class WarmVideoRerun(unittest.TestCase):
+    """9.39: the unconditional pre-video flush was right for a DIRTY card
+    (three ltx25 OOMs started from a still's stack under a video's) and
+    wrong for a warm one - three same-still H3 clips in a row each paid
+    ~100s to reload the 24.9GB stack the flush had just evicted. So when
+    every heavy file the graph names is already resident and the
+    activations fit, the clip keeps the stack and goes. The test is set
+    membership, not the still path's hot == weights: weights is a PEAK
+    (max heavy + light) where hot is a SUM, so H3's DiT+CLIP pair could
+    never satisfy it. Every other video case flushes exactly as today.
+
+    The graph mirrors build_h3_i2v's spine - UNETLoader + CLIPLoader (both
+    HEAVY_KEYS) + a VAELoader (light). With no builder info the h3_i2v
+    profile prices act at its 5.0GB base, so 7GB free is the bar."""
+
+    GRAPH = {"1": {"class_type": "UNETLoader",
+                   "inputs": {"unet_name": "H3\\dit.safetensors"}},
+             "2": {"class_type": "CLIPLoader",
+                   "inputs": {"clip_name": "H3\\clip.safetensors"}},
+             "3": {"class_type": "VAELoader",
+                   "inputs": {"vae_name": "H3\\vae.safetensors"}}}
+    SIZES = {"H3\\dit.safetensors": 20 * 2**30,
+             "H3\\clip.safetensors": 8 * 2**30,
+             "H3\\vae.safetensors": 1 * 2**30}
+    RESIDENT = {"H3\\dit.safetensors": 20 * 2**30,
+                "H3\\clip.safetensors": 8 * 2**30}
+    HEAVY = dict(RESIDENT)      # what dict(heavy) re-records after a flush
+
+    def run_butler(self, resident, free_gb, ram_gb=32, prev_min=None,
+                   brain_alive=False, template="h3_i2v"):
+        hub = _StubHub(resident=resident)
+        hub.prev_job_free_min = prev_min
+        job = {"id": "v1", "cid": "c"}
+        with ExitStack() as st:
+            st.enter_context(patch.object(
+                server, "_weight_file_bytes",
+                side_effect=lambda _kinds, rel: self.SIZES[rel]))
+            st.enter_context(patch.object(
+                server, "comfy_vram_free_bytes",
+                AsyncMock(return_value=free_gb * 2**30)))
+            st.enter_context(patch.object(
+                server, "gpu_free_bytes", return_value=25 * 2**30))
+            st.enter_context(patch.object(
+                server, "gpu_hogs", return_value=[]))
+            st.enter_context(patch.object(
+                server, "ram_free_bytes", return_value=ram_gb * 2**30))
+            hub.brain = st.enter_context(patch.object(
+                server, "free_brain_vram",
+                AsyncMock(return_value=brain_alive)))
+            st.enter_context(patch.object(
+                server.asyncio, "sleep", AsyncMock()))
+            asyncio.run(hub.ensure_vram(template, dict(self.GRAPH), job))
+        return hub, job
+
+    def test_a_second_clip_from_the_same_stack_never_flushes(self):
+        # The extra resident entry is the keep-vs-replace tell: the warm
+        # path keeps residency as it stands, where the still fit path
+        # REPLACES it with dict(heavy).
+        warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
+        hub, job = self.run_butler(warm, free_gb=8)
+        self.assertFalse(hub.flushed)
+        hub.brain.assert_not_awaited()          # no near-miss predecessor
+        self.assertEqual(hub.resident_heavies, warm)
+        self.assertEqual(hub.texts, [])
+        self.assertNotIn("model_switch", job)
+
+    def test_a_missing_heavy_file_flushes_as_today(self):
+        # Only the DiT is resident - the 8GB text encoder is not, so this
+        # is a cold stack by the brief's own definition, and a cold stack
+        # flushes. The set membership test is what makes "any heavy file
+        # missing" a veto; a size coincidence (hot == weights with the
+        # light VAE excluded from hot) can never stand in for it.
+        hub, job = self.run_butler(
+            {"H3\\dit.safetensors": 20 * 2**30}, free_gb=8)
+        self.assertTrue(hub.flushed)
+        self.assertTrue(job.get("model_switch"))
+        self.assertEqual(hub.resident_heavies, self.HEAVY)
+
+    def test_a_card_too_short_for_the_activations_flushes_as_today(self):
+        hub, job = self.run_butler(self.RESIDENT, free_gb=6)   # bar is 7
+        self.assertTrue(hub.flushed)
+        self.assertTrue(job.get("model_switch"))
+
+    def test_short_ram_flushes_as_today(self):
+        # 1GB against the full 21GB bill + RAM_FLOOR: the warm path wants
+        # no reload looming anywhere, RAM included.
+        hub, job = self.run_butler(self.RESIDENT, free_gb=8, ram_gb=1)
+        self.assertTrue(hub.flushed)
+        self.assertTrue(job.get("model_switch"))
+
+    def test_a_cold_video_stack_flushes_exactly_as_today(self):
+        # A still's stack resident under the clip: the dirty card the
+        # unconditional flush was written for, unchanged by 9.39.
+        hub, job = self.run_butler(
+            {"Krea 2\\m.safetensors": 12 * 2**30}, free_gb=8)
+        self.assertTrue(hub.flushed)
+        self.assertTrue(job.get("model_switch"))
+        self.assertEqual(hub.resident_heavies, self.HEAVY)
+
+    def test_a_still_template_on_the_same_numbers_is_unchanged(self):
+        warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
+        hub, job = self.run_butler(warm, free_gb=8, template="zimage")
+        self.assertFalse(hub.flushed)           # the fit path, as today
+        self.assertEqual(hub.resident_heavies,  # ...which REPLACES residency
+                         self.HEAVY)
+        self.assertEqual(hub.texts, [])
+
+    def test_a_near_miss_last_job_rests_the_brain_on_the_warm_path(self):
+        # The 9.35 guard applies ahead of the keep-and-return, the same
+        # way it does for stills: rest the cheap reload, keep the weights.
+        warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
+        hub, job = self.run_butler(warm, free_gb=8,
+                                   prev_min=int(0.9 * 2**30),
+                                   brain_alive=True)
+        hub.brain.assert_awaited_once()
+        self.assertFalse(hub.flushed)           # rest, not trim
+        self.assertEqual(hub.resident_heavies, warm)
+        self.assertEqual(hub.texts,
+                         ["*rested the chat brain for headroom - the last "
+                          "render ended at 0.9GB free*"])
+
+    def test_a_near_miss_without_a_brain_trims_without_unloading(self):
+        warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
+        hub, job = self.run_butler(warm, free_gb=8,
+                                   prev_min=int(0.9 * 2**30))
+        hub.brain.assert_awaited_once()         # it is always asked first
+        self.assertTrue(hub.flushed)            # ...so the trim happened
+        self.assertEqual(hub.resident_heavies,  # ...but unload=False: the
+                         warm)                  # stack stayed, extras too
+        self.assertEqual(hub.texts, [])         # silent in the lane
 
 
 class _FinalizeHub:
@@ -2104,24 +2387,33 @@ class KleinCompositeTests(unittest.TestCase):
         self.assertEqual(g["ki:back"]["inputs"]["width"], 1024)
 
     def test_an_unmeasurable_source_skips_the_cap_rather_than_guessing(self):
-        """ki:back has to hold the source's EXACT size for ki:comp to lay the
-        patch down with resize_source off. No size means no cap - capping blind
-        would composite a 1024px patch onto a full-size frame."""
+        """ki:back has to hold the source's EXACT size for the composite to
+        lay the patch down. No size means no cap - capping blind would
+        composite a 1024px patch onto a full-size frame."""
         g = self.build(real=False)
         self.assertEqual(g["ki:latent"]["inputs"]["pixels"], ["ki:img", 0])
         self.assertEqual(g["ki:latent"]["inputs"]["mask"], ["ki:img", 1])
         self.assertEqual(g["ki:reffull"]["inputs"]["pixels"], ["ki:img", 0])
-        self.assertEqual(g["ki:comp"]["inputs"]["source"], ["ki:decode", 0])
+        self.assertEqual(g["ki:composite"]["inputs"]["generated_image"],
+                         ["ki:decode", 0])
 
     def test_untouched_pixels_come_from_the_source_not_the_decode(self):
-        """The destination is the ORIGINAL file, at its own resolution - not
-        the scaled sampling copy. That is what makes unmasked pixels
-        bit-identical rather than merely close: they never go through a resize
-        either. ki:back brings the decode up to meet them."""
+        """The original is the ORIGINAL file, at its own resolution - not the
+        scaled sampling copy; ki:back brings the decode up to meet it.
+
+        The tail is KleinEditComposite (Jesse's pick by eye, 2026-08-25,
+        render 00010 of the earring edit): background-referenced colour match,
+        Poisson-blended seam, feathered edge. The mask-local KJNodes ColorMatch
+        it replaced (daf47de) scored better on a saturation mean and worse on
+        a face - the seam is what the eye sees, and a mean cannot."""
         g = self.build()
-        self.assertEqual(g["ki:save"]["inputs"]["images"], ["ki:comp", 0])
-        self.assertEqual(g["ki:comp"]["inputs"]["destination"], ["ki:img", 0])
-        self.assertEqual(g["ki:comp"]["inputs"]["source"], ["ki:back", 0])
+        self.assertEqual(g["ki:save"]["inputs"]["images"], ["ki:composite", 0])
+        c = g["ki:composite"]
+        self.assertEqual(c["class_type"], "KleinEditComposite")
+        self.assertEqual(c["inputs"]["original_image"], ["ki:img", 0])
+        self.assertEqual(c["inputs"]["generated_image"], ["ki:back", 0])
+        self.assertEqual(c["inputs"]["color_match_blend"], 1.0)
+        self.assertTrue(c["inputs"]["poisson_blend_edges"])
         self.assertEqual(g["ki:back"]["inputs"]["image"], ["ki:decode", 0])
         self.assertEqual(g["ki:decode"]["class_type"], "VAEDecode")
 
@@ -2129,9 +2421,281 @@ class KleinCompositeTests(unittest.TestCase):
         g = self.build()
         self.assertEqual(g["ki:growmask"]["inputs"]["expand"],
                          g["ki:latent"]["inputs"]["grow_mask_by"])
+        # the node's own change detection is overridden by OUR mask - the
+        # window is the grown paint, not whatever it thinks moved
+        c = g["ki:composite"]["inputs"]
+        self.assertEqual(c["custom_mask"], ["ki:growmask", 0])
+        self.assertEqual(c["custom_mask_mode"], "replace")
         # and the seam is feathered, not a hard edge
-        self.assertEqual(g["ki:comp"]["inputs"]["mask"], ["ki:softmask", 0])
-        self.assertGreater(g["ki:maskblur"]["inputs"]["blur_radius"], 0)
+        self.assertGreater(c["feather_pct"], 0)
+
+
+class KleinEditTests(unittest.TestCase):
+    """9.44: the whole-frame Klein lane, ported node-for-node from Comfy-Org's
+    shipped image_flux2_klein_image_edit_9b_distilled template. No mask, no
+    composite: the whole-frame decode IS the output, scaled back to native -
+    every pixel deliberately round-trips the flux2 VAE."""
+
+    def build(self, size=(1024, 1024), real=True, pick=None, **kwargs):
+        pick = pick or patch.object(
+            server, "pick_recipe_model",
+            return_value=model(server.KLEIN_MODEL, "klein", "edit"))
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            if real:
+                from PIL import Image
+                Image.new("RGB", size, (9, 9, 9)).save(root / "input" / "s.png")
+            else:
+                (root / "input" / "s.png").write_bytes(b"x")   # unreadable
+            with patch.object(server, "CDIR", root), pick, \
+                 patch.object(server, "_pick_catalog_asset",
+                              side_effect=lambda kind, names, *a: names[0]):
+                graph, _scene, info = server.build_klein_edit(
+                    "remove her earrings", 5, "s.png", **kwargs)
+        self.info = info
+        return graph
+
+    def test_loaders_are_the_masked_lanes_constants(self):
+        """UNET/CLIP/VAE come through the same helpers and constants as
+        klein_inpaint: the int8 convrot stands in for the template's fp8, the
+        abliterated Qwen3 8B encodes, the flux2 VAE round-trips the frame."""
+        g = self.build()
+        self.assertEqual(g["ke:unet"]["class_type"], "UNETLoader")
+        self.assertEqual(g["ke:unet"]["inputs"]["unet_name"], server.KLEIN_MODEL)
+        self.assertEqual(g["ke:unet"]["inputs"]["weight_dtype"], "default")
+        self.assertEqual(g["ke:clip"]["inputs"]["clip_name"], server.KLEIN_CLIP)
+        self.assertEqual(g["ke:clip"]["inputs"]["type"], "flux2")
+        self.assertEqual(g["ke:vae"]["inputs"]["vae_name"], server.KLEIN_VAE)
+
+    def test_the_reference_latent_chain_is_the_ported_one(self):
+        """Both guider branches read the SAME VAEEncode of the scaled source:
+        positive from the instruction, negative from the zeroed instruction.
+        The source enters only through KV-attention reference latents - the
+        sampling latent is empty, which is the distilled edit's design."""
+        g = self.build()
+        self.assertEqual(g["ke:reflatent"]["class_type"], "VAEEncode")
+        self.assertEqual(g["ke:reflatent"]["inputs"]["pixels"], ["ke:scale", 0])
+        self.assertEqual(g["ke:reflatent"]["inputs"]["vae"], ["ke:vae", 0])
+        self.assertEqual(g["ke:refpos"]["inputs"],
+                         {"conditioning": ["ke:pos", 0],
+                          "latent": ["ke:reflatent", 0]})
+        self.assertEqual(g["ke:neg"]["class_type"], "ConditioningZeroOut")
+        self.assertEqual(g["ke:neg"]["inputs"]["conditioning"], ["ke:pos", 0])
+        self.assertEqual(g["ke:refneg"]["inputs"],
+                         {"conditioning": ["ke:neg", 0],
+                          "latent": ["ke:reflatent", 0]})
+        self.assertEqual(g["ke:guider"]["inputs"]["positive"], ["ke:refpos", 0])
+        self.assertEqual(g["ke:guider"]["inputs"]["negative"], ["ke:refneg", 0])
+        self.assertEqual(g["ke:guider"]["inputs"]["model"], ["ke:unet", 0])
+
+    def test_steps_and_cfg_are_the_templates_distilled_schedule(self):
+        """4 steps at cfg 1.0 on a Flux2Scheduler, euler - Klein's native
+        schedule, not a speed trick."""
+        g = self.build()
+        self.assertEqual(g["ke:sched"]["class_type"], "Flux2Scheduler")
+        self.assertEqual(g["ke:sched"]["inputs"]["steps"], 4)
+        self.assertEqual(g["ke:sched"]["inputs"]["width"], ["ke:size", 0])
+        self.assertEqual(g["ke:sched"]["inputs"]["height"], ["ke:size", 1])
+        self.assertEqual(g["ke:guider"]["inputs"]["cfg"], 1.0)
+        self.assertEqual(g["ke:sampler_sel"]["inputs"]["sampler_name"], "euler")
+        self.assertEqual(g["ke:latent"]["class_type"], "EmptyFlux2LatentImage")
+        self.assertEqual(g["ke:latent"]["inputs"]["width"], ["ke:size", 0])
+        self.assertEqual(g["ke:latent"]["inputs"]["height"], ["ke:size", 1])
+        s = g["ke:sampler"]["inputs"]
+        self.assertEqual(s["noise"], ["ke:noise", 0])
+        self.assertEqual(s["guider"], ["ke:guider", 0])
+        self.assertEqual(s["sampler"], ["ke:sampler_sel", 0])
+        self.assertEqual(s["sigmas"], ["ke:sched", 0])
+        self.assertEqual(s["latent_image"], ["ke:latent", 0])
+        self.assertEqual(g["ke:noise"]["inputs"]["noise_seed"], 5)
+
+    def test_the_save_is_the_whole_frame_decode_scaled_back(self):
+        """No composite - there is no mask. The decode goes through ke:back to
+        the source's exact native size and that is what saves."""
+        g = self.build()
+        self.assertEqual(g["ke:save"]["inputs"]["images"], ["ke:back", 0])
+        self.assertEqual(g["ke:back"]["inputs"]["image"], ["ke:decode", 0])
+        self.assertEqual(g["ke:back"]["inputs"]["crop"], "disabled")
+        self.assertEqual(g["ke:decode"]["class_type"], "VAEDecode")
+        self.assertEqual(g["ke:decode"]["inputs"]["samples"], ["ke:sampler", 0])
+
+    def test_an_upscaled_source_samples_small_and_saves_native(self):
+        """Same canvas policy as the other edit lanes: the 2 MP ceiling prices
+        the VAE round trip, the saved frame stays the source's own size."""
+        g = self.build(size=(4608, 6912))
+        self.assertEqual(g["ke:scale"]["inputs"]["megapixels"],
+                         server.KLEIN_EDIT_MP_CAP)
+        self.assertEqual(g["ke:scale"]["inputs"]["resolution_steps"],
+                         server.KLEIN_INPAINT_STEPS)
+        # the encode reads the CAPPED canvas, not the source
+        self.assertEqual(g["ke:reflatent"]["inputs"]["pixels"], ["ke:scale", 0])
+        self.assertEqual(g["ke:size"]["inputs"]["image"], ["ke:scale", 0])
+        # and the saved frame is still the source's own size
+        self.assertEqual(g["ke:back"]["inputs"]["width"], 4608)
+        self.assertEqual(g["ke:back"]["inputs"]["height"], 6912)
+        self.assertLess(self.info["canvas_mp"], 2.5)
+        self.assertIn("sampled at", self.info["size"])
+
+    def test_a_source_under_the_cap_is_never_upscaled(self):
+        g = self.build(size=(1024, 1024))
+        self.assertLess(g["ke:scale"]["inputs"]["megapixels"],
+                        server.KLEIN_EDIT_MP_CAP)
+        self.assertEqual(g["ke:back"]["inputs"]["width"], 1024)
+
+    def test_an_explicit_megapixels_wins(self):
+        """The OOM retry's lever: it shrinks the canvas through spec
+        megapixels, the same way qwen_edit's does."""
+        g = self.build(size=(4608, 6912), megapixels=1.0)
+        self.assertEqual(g["ke:scale"]["inputs"]["megapixels"], 1.0)
+
+    def test_an_unmeasurable_source_skips_cap_and_scaleback(self):
+        """ke:back has to hold the source's EXACT size. No size means no cap
+        and no scale-back - capping blind would hand back a 1024px frame, so
+        the graph samples native and saves the decode the way the template it
+        was ported from always does."""
+        g = self.build(real=False)
+        self.assertEqual(g["ke:size"]["inputs"]["image"], ["ke:img", 0])
+        self.assertEqual(g["ke:reflatent"]["inputs"]["pixels"], ["ke:img", 0])
+        self.assertEqual(g["ke:save"]["inputs"]["images"], ["ke:decode", 0])
+
+    def test_a_klein_config_pick_feeds_the_builder(self):
+        pick = MagicMock(return_value=model(server.KLEIN_MODEL, "klein", "edit"))
+        with patch.object(server, "load_config",
+                          return_value={"edit": {"model": server.KLEIN_MODEL}}), \
+             patch.object(server, "resolve_model_entry",
+                          return_value=model(server.KLEIN_MODEL, "klein", "edit")):
+            self.build(pick=patch.object(server, "pick_recipe_model", pick))
+        pick.assert_called_once_with(server.KLEIN_MODEL, "klein_edit")
+
+    def test_a_qwen_config_pick_falls_back_to_the_recipe_default(self):
+        """The whole-frame slot holds both families now. An explicit klein_edit
+        ask while the pick is a Qwen build must not die on the family check -
+        it runs the recipe default, the same way an old qwen_edit ledger entry
+        rerolled after the pick moved to Klein survives."""
+        pick = MagicMock(return_value=model(server.KLEIN_MODEL, "klein", "edit"))
+        with patch.object(server, "load_config",
+                          return_value={"edit": {"model": "Qwen\\fire.safetensors"}}), \
+             patch.object(server, "resolve_model_entry",
+                          return_value=model("Qwen\\fire.safetensors",
+                                             "qwen_edit", "edit")):
+            self.build(pick=patch.object(server, "pick_recipe_model", pick))
+        pick.assert_called_once_with(None, "klein_edit")
+
+
+class EditRoutingTests(unittest.TestCase):
+    """9.44: /api/edit sends a mask-less edit to klein_edit when the configured
+    edit model is a Klein build, to qwen_edit otherwise; a painted mask always
+    takes klein_inpaint; an explicit recipe in the body always wins."""
+
+    QWEN = "Qwen\\qwen-image-edit-2511-Q6_K.gguf"
+    KLEIN = "Flux\\flux-2-klein-9b_int8_convrot.safetensors"
+
+    def post(self, body, configured=""):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            from PIL import Image
+            Image.new("RGB", (64, 64), (9, 9, 9)).save(root / "input" / "s.png")
+            hub = MagicMock()
+            hub.submit = AsyncMock(return_value=None)
+
+            def resolve(nm):
+                family = "klein" if "klein" in str(nm).lower() else "qwen_edit"
+                return model(str(nm), family, "edit")
+
+            async def go():
+                with patch.object(server, "CDIR", root), \
+                     patch.object(server, "HUB", hub), \
+                     patch.object(server, "load_config",
+                                  return_value={"edit": {"model": configured}}), \
+                     patch.object(server, "resolve_model_entry",
+                                  side_effect=resolve):
+                    resp = await server.edit(FakeRequest(body))
+                await asyncio.sleep(0)      # let the submitted task run its mock
+                return resp
+
+            resp = asyncio.run(go())
+        self.assertEqual(resp.status, 200, json.loads(resp.text))
+        return json.loads(resp.text), hub
+
+    def test_klein_configured_routes_a_maskless_edit_to_klein_edit(self):
+        out, hub = self.post({"input": "s.png",
+                              "instruction": "make her jacket red"}, self.KLEIN)
+        self.assertEqual(out["recipe"], "klein_edit")
+        self.assertEqual(hub.submit.call_args[0][2], "klein_edit")
+
+    def test_qwen_configured_keeps_the_qwen_lane(self):
+        out, hub = self.post({"input": "s.png",
+                              "instruction": "make her jacket red"}, self.QWEN)
+        self.assertEqual(out["recipe"], "qwen_edit")
+        self.assertEqual(hub.submit.call_args[0][2], "qwen_edit")
+
+    def test_no_config_means_qwen_as_today(self):
+        out, _hub = self.post({"input": "s.png",
+                               "instruction": "make her jacket red"})
+        self.assertEqual(out["recipe"], "qwen_edit")
+
+    def test_a_mask_takes_klein_inpaint_regardless_of_the_pick(self):
+        import base64, io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("L", (64, 64), 255).save(buf, format="PNG")
+        mask = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        # Klein configured for the whole-frame lane changes nothing for a
+        # painted mask; neither does a Qwen pick.
+        for configured in (self.KLEIN, self.QWEN):
+            out, hub = self.post({"input": "s.png",
+                                  "instruction": "make her jacket red",
+                                  "mask": mask}, configured)
+            self.assertEqual(out["recipe"], "klein_inpaint")
+            self.assertEqual(hub.submit.call_args[0][2], "klein_inpaint")
+
+    def test_an_explicit_recipe_wins_over_the_configured_family(self):
+        out, hub = self.post({"input": "s.png", "instruction": "x",
+                              "recipe": "qwen_edit"}, self.KLEIN)
+        self.assertEqual(out["recipe"], "qwen_edit")
+        self.assertEqual(hub.submit.call_args[0][2], "qwen_edit")
+
+    def test_a_seed_rides_past_the_sigs_filter(self):
+        """Same contract as generate(): submit pops the seed, the recipe
+        builders never see it - which is also how same-seed A/B edits work."""
+        _out, hub = self.post({"input": "s.png", "instruction": "x",
+                               "seed": 424242}, self.QWEN)
+        self.assertEqual(hub.submit.call_args[0][4].get("seed"), 424242)
+
+    def test_a_reference_is_refused_when_the_lane_cannot_take_one(self):
+        """The reference rides qwen_edit only. Routed to klein_edit it would
+        be silently dropped by the SIGS filter - refuse, the same standard the
+        masked lane's reference guard already sets."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            from PIL import Image
+            Image.new("RGB", (64, 64), (9, 9, 9)).save(root / "input" / "s.png")
+            Image.new("RGB", (64, 64), (9, 9, 9)).save(root / "input" / "r.png")
+            hub = MagicMock()
+            hub.submit = AsyncMock(return_value=None)
+
+            def resolve(nm):
+                family = "klein" if "klein" in str(nm).lower() else "qwen_edit"
+                return model(str(nm), family, "edit")
+
+            async def go():
+                with patch.object(server, "CDIR", root), \
+                     patch.object(server, "HUB", hub), \
+                     patch.object(server, "load_config",
+                                  return_value={"edit": {"model": self.KLEIN}}), \
+                     patch.object(server, "resolve_model_entry",
+                                  side_effect=resolve):
+                    return await server.edit(FakeRequest(
+                        {"input": "s.png", "instruction": "add the logo",
+                         "reference": "r.png"}))
+
+            resp = asyncio.run(go())
+        self.assertEqual(resp.status, 400)
+        self.assertIn("reference", json.loads(resp.text)["error"])
+        hub.submit.assert_not_called()
 
 
 class CanvasMath(unittest.TestCase):
@@ -2498,6 +3062,52 @@ class EditLaneSettingsTests(unittest.TestCase):
             json.loads(response.text),
             {"ok": False, "error": "not an installed Klein Inpaint model: "
                                    + self.QWEN["rel"]})
+        self.assertEqual(saved, [])     # a rejected write never touches config
+
+    def test_a_klein_build_is_now_a_valid_whole_frame_pick(self):
+        """9.44: the whole-frame slot holds both families - a Klein pick was a
+        400 before it routed the mask-less lane to klein_edit."""
+        cfg = self._full_cfg({"model": "", "inpaint_model": "", "speed": "turbo"})
+        with patch.object(server, "load_config", return_value=cfg), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "_video_asset", side_effect=lambda k, r: r), \
+             patch.object(server, "refresh_comfy_nodes", AsyncMock()), \
+             patch.object(server, "save_config", side_effect=lambda c: None):
+            post = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"model": self.KLEIN_INT8["rel"]}})))
+            self.assertEqual(post.status, 200)
+            self.assertEqual(json.loads(post.text), {"ok": True})
+            edit = self._settings_get(cfg)
+        self.assertEqual(edit["model"], self.KLEIN_INT8["rel"])
+
+    def test_a_qwen_build_still_validates_for_the_whole_frame_slot(self):
+        cfg = self._full_cfg({"model": "", "inpaint_model": "", "speed": "turbo"})
+        with patch.object(server, "load_config", return_value=cfg), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "refresh_comfy_nodes", AsyncMock()), \
+             patch.object(server, "save_config", side_effect=lambda c: None):
+            post = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"model": self.QWEN["rel"]}})))
+        self.assertEqual(post.status, 200)
+        self.assertEqual(cfg["edit"]["model"], self.QWEN["rel"])
+
+    def test_an_unknown_edit_model_is_still_refused_with_a_400(self):
+        """Both families validate, but a name in NEITHER candidate list is
+        refused here rather than failing every later edit."""
+        saved = []
+        with patch.object(server, "load_config",
+                          return_value=self._full_cfg(
+                              {"model": "", "speed": "turbo"})), \
+             patch.object(server, "model_catalog", side_effect=self._catalog), \
+             patch.object(server, "save_config",
+                          side_effect=lambda cfg: saved.append(cfg)):
+            response = asyncio.run(server.settings_post(FakeRequest(
+                {"edit": {"model": "Somewhere\\else.safetensors"}})))
+        self.assertEqual(response.status, 400)
+        self.assertEqual(
+            json.loads(response.text),
+            {"ok": False, "error": "not an installed edit model: "
+                                   "Somewhere\\else.safetensors"})
         self.assertEqual(saved, [])     # a rejected write never touches config
 
     def test_the_masked_pick_defaults_to_empty_and_survives_a_save(self):

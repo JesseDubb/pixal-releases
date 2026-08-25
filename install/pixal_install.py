@@ -198,7 +198,7 @@ def free_bytes(path):
         return 0
 
 
-def disk_preflight(choices, lanes, have):
+def disk_preflight(choices, lanes, have, found=None):
     """Refuse before the first byte moves when a destination drive cannot hold
     what the plan is about to write.
 
@@ -217,7 +217,7 @@ def disk_preflight(choices, lanes, have):
         prev = need.get(key)
         need[key] = (prev[0] + nbytes, probe) if prev else (nbytes, probe)
 
-    weights = sum(f["bytes"] for f in pending_files(lanes, have))
+    weights = sum(f["bytes"] for f, _ in pending_files(lanes, have, found))
     if weights:
         add(clean_path(choices["comfy"]["path"]) or "C:/", int(weights * 1.1))
     if choices["comfy"]["mode"] == "install":
@@ -746,6 +746,31 @@ def _strays(entry, files):
     return out
 
 
+def _beside_dest(f, lane, files, models):
+    """Where a "beside" file's effective dest is: the folder its sibling was
+    satisfied in, plus the file's own name. server.py's _local_llm_mmproj
+    discovers the projector by the model's OWN folder, so "installed" only
+    counts there; when the sibling is nowhere (a fresh install) the answer is
+    the sibling's catalog dest folder, which is exactly the old fixed dest.
+
+    Returns (dest, folder): dest models-relative when the folder is under this
+    ComfyUI's models tree, absolute when the sibling lives on an
+    extra_model_roots drive (tidy joins move targets against the models root;
+    an absolute right-hand side wins that join, and tidy's same-drive guard
+    still applies). folder is the absolute Path "have" is judged against."""
+    sib = next((x for x in lane["files"] if x["dest"] == f["beside"]), {})
+    sib_full, _ = _satisfied(sib.get("satisfied_by"), files)
+    name = Path(f["dest"]).name
+    if sib_full:
+        folder = Path(sib_full).parent
+        try:
+            return folder.relative_to(models).as_posix() + "/" + name, folder
+        except ValueError:
+            return str(folder / name), folder
+    folder = models / str(Path(f["beside"]).parent)
+    return Path(f["beside"]).parent.as_posix() + "/" + name, folder
+
+
 def survey(cdir):
     """What this ComfyUI already has, per lane, and what is merely misfiled.
 
@@ -753,16 +778,46 @@ def survey(cdir):
       have    - installed where server.py's constants actually look
       stray   - the file is here, in a folder Pixal does not read
       missing - not on this machine
+
+    A file that declares "beside" resolves its dest against its sibling first:
+    "have" means in the sibling's folder, and a match anywhere else is the
+    stray, with a move to the sibling's folder.
     """
     out = {"lanes": {}, "moves": [], "manual": [], "scanned": 0}
     if not cdir:
         return out
     files = inventory(cdir, extra_model_roots(cdir))
     out["scanned"] = len(files)
+    models = Path(cdir) / "models"
 
     for lane in CATALOG["lanes"]:
         rows, moves = [], []
         for f in lane["files"]:
+            if "beside" in f:
+                dest, folder = _beside_dest(f, lane, files, models)
+                row = {"dest": dest, "catalog_dest": f["dest"],
+                       "name": Path(dest).name, "bytes": f["bytes"],
+                       "repo": f["repo"],
+                       "page": f"https://huggingface.co/{f['repo']}"}
+                norm = os.path.normcase(str(folder))
+                beside = {rel: p for rel, p in files.items()
+                          if os.path.normcase(str(p.parent)) == norm}
+                full, at = _satisfied(f.get("satisfied_by"), beside)
+                if full:
+                    row.update(state="have", at=at, full=str(full),
+                               exact=at == dest.lower())
+                else:
+                    # A match anywhere else is the stray - any_path is kept on
+                    # the entry for exactly this, never for "have".
+                    full, at = _satisfied(f.get("satisfied_by"), files)
+                    if full:
+                        row.update(state="stray", at=at)
+                        moves.append({"from": at, "to": dest,
+                                      "name": Path(at).name})
+                    else:
+                        row.update(state="missing", at="")
+                rows.append(row)
+                continue
             full, at = _satisfied(f.get("satisfied_by"), files)
             row = {"dest": f["dest"], "name": Path(f["dest"]).name,
                    "bytes": f["bytes"], "repo": f["repo"],
@@ -1268,6 +1323,20 @@ def already_here(choices):
             for row in info["files"] if row["state"] in keep}
     return have, found
 
+def plan_files(lane, found):
+    """(catalog entry, effective dest) pairs for a lane, in catalog order.
+
+    The survey's rows are the truth about dests: a "beside" file's row carries
+    the resolved dest, and every consumer of the plan - steps, downloads, the
+    disk preflight - must agree with it, or the projector downloads to
+    LLM/GGUF while the model sits in text_encoders/Qwen. No survey (a fresh
+    ComfyUI) means the catalog dest, which for a beside file IS the sibling's
+    folder."""
+    rows = (((found or {}).get("lanes") or {}).get(lane["id"])
+            or {}).get("files") or []
+    for i, f in enumerate(lane["files"]):
+        yield f, (rows[i]["dest"] if i < len(rows) else f["dest"])
+
 
 def build_plan(choices):
     """The whole plan up front, so the page can show what it is in for before
@@ -1309,11 +1378,11 @@ def build_plan(choices):
 
     seen = set()
     for lane in lanes:
-        for f in lane["files"]:
-            if f["dest"] in seen or f["dest"] in have:
+        for f, dest in plan_files(lane, found):
+            if dest in seen or dest in have:
                 continue
-            seen.add(f["dest"])
-            steps_add("dl:" + f["dest"], Path(f["dest"]).name, human(f["bytes"]))
+            seen.add(dest)
+            steps_add("dl:" + dest, Path(dest).name, human(f["bytes"]))
     if not seen and lanes:
         steps_add("nodl", "Weights", "already on this machine - nothing to download")
 
@@ -1325,19 +1394,20 @@ def build_plan(choices):
     return lanes, packs, have, found
 
 
-def pending_files(lanes, have):
-    """The weights rows this machine still needs, in plan order, de-duplicated
-    across lanes - the same set build_plan writes steps for."""
+def pending_files(lanes, have, found=None):
+    """The weights rows this machine still needs, as (entry, dest) pairs in
+    plan order, de-duplicated across lanes - the same set build_plan writes
+    steps for. dest is the survey-resolved dest (see plan_files)."""
     seen = set()
     for lane in lanes:
-        for f in lane["files"]:
-            if f["dest"] in seen or f["dest"] in have:
+        for f, dest in plan_files(lane, found):
+            if dest in seen or dest in have:
                 continue
-            seen.add(f["dest"])
-            yield f
+            seen.add(dest)
+            yield f, dest
 
 
-def fetch_weights(lanes, have, models):
+def fetch_weights(lanes, have, models, found=None):
     """Download every missing row; a row that fails is marked and logged, and
     the rest still get their turn.
 
@@ -1348,21 +1418,21 @@ def fetch_weights(lanes, have, models):
     at exactly those files. DiskFull and Cancelled still stop everything:
     continuing cannot help either."""
     models = Path(models)
-    planned = list(pending_files(lanes, have))
+    planned = list(pending_files(lanes, have, found))
     failed = []
-    for f in planned:
-        sid = "dl:" + f["dest"]
+    for f, dest in planned:
+        sid = "dl:" + dest
         step_set(sid, status="run")
         try:
             download(HF.format(repo=f["repo"], path=f["path"]),
-                     models / f["dest"].replace("/", os.sep),
-                     f["bytes"], sid=sid, label=Path(f["dest"]).name)
+                     models / dest.replace("/", os.sep),
+                     f["bytes"], sid=sid, label=Path(dest).name)
         except (Cancelled, DiskFull):
             raise
         except Exception as exc:
             failed.append((f, exc))
             step_set(sid, status="fail", detail=str(exc))
-            log(f"  {Path(f['dest']).name}: FAILED ({exc}) - "
+            log(f"  {Path(dest).name}: FAILED ({exc}) - "
                 f"continuing with the rest")
     return planned, failed
 
@@ -1387,7 +1457,7 @@ def worker(choices):
     try:
         lanes, packs, have, found = build_plan(choices)
         WORK.mkdir(parents=True, exist_ok=True)
-        disk_preflight(choices, lanes, have)
+        disk_preflight(choices, lanes, have, found)
 
         # 1 - ComfyUI ------------------------------------------------------- #
         mode = choices["comfy"]["mode"]
@@ -1490,7 +1560,7 @@ def worker(choices):
 
         # 4 - weights ------------------------------------------------------- #
         models = Path(cdir) / "models"
-        planned, failed = fetch_weights(lanes, have, models)
+        planned, failed = fetch_weights(lanes, have, models, found)
         if have:
             log(f"skipped {len(have)} file(s) this machine already has")
             step_set("nodl", status="ok", detail=f"{len(have)} already here")
@@ -1501,8 +1571,10 @@ def worker(choices):
         if brain_lane:
             # If this machine already had the brain gguf somewhere of its own,
             # config points at THAT file rather than at a path we never wrote.
-            row = next((r for r in (found or {}).get("lanes", {})
-                        .get("brain", {}).get("files", []) if r.get("full")), None)
+            # rows[0], never "any row with a full": the projector row has one
+            # too, and picking it would point local_model at the mmproj itself.
+            rows = (found or {}).get("lanes", {}).get("brain", {}).get("files", [])
+            row = rows[0] if rows and rows[0].get("full") else None
             brain_gguf = row["full"] if row else str(
                 models / brain_lane["files"][0]["dest"].replace("/", os.sep))
             step_set("llama", status="run", detail="finding a matching wheel")
@@ -1553,7 +1625,8 @@ def worker(choices):
                 key = f.get("config")
                 row = next((r for r in (found or {}).get("lanes", {})
                             .get(lane["id"], {}).get("files", [])
-                            if r["dest"] == f["dest"] and r.get("full")), None)
+                            if f["dest"] in (r["dest"], r.get("catalog_dest"))
+                                           and r.get("full")), None)
                 if not key or not row:
                     continue
                 rel = Path(row["full"]).relative_to(models)
@@ -1593,6 +1666,25 @@ def worker(choices):
         if failed:
             finish_partial(note, planned, failed)
             return
+        if brain_lane and brain_gguf and Path(brain_gguf).is_file():
+            # The brain component's done-check: server.py's _local_llm_mmproj
+            # finds the projector by globbing the model's OWN folder - that
+            # one line, reimplemented, because the installer imports nothing
+            # from server.py. Everything else green with no mmproj beside the
+            # gguf is the blind-brain defect this component exists to prevent:
+            # two green rows, eyes in another folder. A failure, never silent.
+            if not any(Path(brain_gguf).parent.glob("*mmproj*.gguf")):
+                msg = (f"projector not beside the model: no *mmproj*.gguf "
+                       f"next to {brain_gguf} - chat cannot see the images you "
+                       f"attach until one lands in that folder. Re-run the "
+                       f"installer and let the tidy move it.")
+                note.append(msg)
+                with LOCK:
+                    STATE["done_note"] = " ".join(note)
+                    STATE["phase"] = "error"
+                    STATE["error"] = msg
+                log(msg)
+                return
         with LOCK:
             STATE["done_note"] = " ".join(note)
             STATE["phase"] = "done"

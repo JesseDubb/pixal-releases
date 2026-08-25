@@ -298,5 +298,60 @@ class Upscale2xRow(unittest.TestCase):
         self.assertIn("activeEngine.upscale_2x ? upscale : undefined", SRC)
 
 
+class DraftTheBrief(unittest.TestCase):
+    """9.36: the dialog can DRAFT the director's brief and let the user read
+    and edit it before a 90-170s clip is spent. The button is an ACTION, so
+    it wears the footer's action pill, not a selection chip (DESIGN.md:
+    selection and action must look different); the drafted note ships as
+    `script` on action; and the draft stales exactly with the director's
+    inputs - engine, model, length, shots, end frame - never with the
+    sampler settings that never reach the director."""
+
+    FOOTER = _block("{/* Footer - the commitment.", "</ModalShell>")
+
+    def test_the_button_is_a_footer_action_pill_left_of_surprise_me(self):
+        self.assertLess(self.FOOTER.index("draft the brief\n"),
+                        self.FOOTER.index("surprise me\n"),
+                        "draft the brief must sit left of surprise me")
+        button = self.FOOTER[self.FOOTER.index("onClick={draftBrief}"):
+                             self.FOOTER.index("draft the brief\n")]
+        self.assertIn("borderRadius: RADIUS.pill", button,
+                      "an action wears the pill, not a selection chip")
+        self.assertIn("disabled={drafting || !activeEngine?.available || !model}",
+                      button, "disabled while drafting or when the engine is down")
+
+    def test_drafted_extends_script_mode(self):
+        self.assertIn("const isScript = drafted || hasSplit;", SRC,
+                      "a drafted brief must ship verbatim like a --- script")
+        self.assertIn("isScript ? note.trim() : null", SRC,
+                      "action no longer sends the note as `script`")
+
+    def test_the_draft_stales_only_with_the_directors_inputs(self):
+        self.assertIn("}, [engineId, model, secs, shots, endId]);", SRC,
+                      "the stale-watch must be exactly the director's inputs")
+        effect = _block("const draftCfg = useRef(",
+                        "}, [engineId, model, secs, shots, endId]);")
+        self.assertIn("setDrafted(false)", effect,
+                      "a configuration change does not clear the draft")
+
+    def test_emptying_the_note_clears_the_draft_but_typing_keeps_it(self):
+        onchange = _block("onChange={(e) => {", "onKeyDown=")
+        self.assertIn("setNote(e.target.value)", onchange)
+        self.assertRegex(onchange,
+                         r"if \(!e\.target\.value\.trim\(\)\) setDrafted\(false\);",
+                         "emptying the note must clear the draft")
+
+    def test_the_caption_strings(self):
+        self.assertIn("looking at the frame · directing…", SRC,
+                      "the in-flight caption is gone")
+        self.assertIn("brief drafted — edit freely, ships as written", SRC,
+                      "the drafted caption is gone")
+        self.assertIn("re-draft", SRC, "the re-draft text button is gone")
+
+    def test_the_fold_narrates_a_drafted_brief(self):
+        self.assertIn('tweaks.push("drafted brief")', SRC,
+                      "a drafted brief is a non-default worth naming")
+
+
 if __name__ == "__main__":
     unittest.main()

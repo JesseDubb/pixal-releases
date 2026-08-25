@@ -128,9 +128,10 @@ def _lit_words(expr):
 
 
 def _state_line():
-    """The JSX inside the state-line div: `{profileLabel} · …` to </div>."""
+    """The state line is the filter chip on the popover's title row
+    (2026-08-25): `{profileLabel} · …` to the chip's </button>."""
     i = SRC.index("{profileLabel} ·")
-    return SRC[i:SRC.index("</div>", i)]
+    return SRC[i:SRC.index("</button>", i)]
 
 
 class LoraPickerCopy(unittest.TestCase):

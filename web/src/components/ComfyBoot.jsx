@@ -7,7 +7,7 @@
 // guess. It holds just short of full if the boot runs long — never claims done
 // before ComfyUI answers.
 import { useEffect, useRef, useState } from "react";
-import { BlockLogo } from "../lib/BlockLogo.jsx";
+import { BlockLogo, BOOT_DRIFT } from "../lib/BlockLogo.jsx";
 import { PhotonField } from "../lib/PhotonField.jsx";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, OVERLAY } from "../lib/design-tokens.js";
 import { status } from "../transport.js";
@@ -119,7 +119,7 @@ export const ComfyBoot = ({ onReady }) => {
       <PhotonField />
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
                     gap: SPACE[16], width: "min(340px, 88vw)", zIndex: 1 }}>
-        <BlockLogo size={132} />
+        <BlockLogo size={132} drift={BOOT_DRIFT} />
 
         {/* On a dead screen the messaging drops clear of the logo so the two
             read as separate moments; while booting it stays snug so the bar

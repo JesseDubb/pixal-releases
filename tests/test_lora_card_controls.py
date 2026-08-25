@@ -131,16 +131,17 @@ class LoraCardControls(unittest.TestCase):
         (the chevron is earlier in the source than the drawer it opens), so
         the header - the thing under the cursor - never moves when it opens."""
         self.assertIn("toggleCard(stage.slot)", COMPOSER)
-        self.assertIn("cardOpen && stageDials.length > 0", COMPOSER)
+        # The drawer is an AccordionPanel (transitions.dev 21 on Pixal's
+        # tokens) that stays in the tree and grows/shrinks; the panel for a
+        # card sits after that card's chevron in the source.
+        self.assertIn("<AccordionPanel open={cardOpen}>", COMPOSER)
         self.assertLess(COMPOSER.index("toggleCard(stage.slot)"),
-                        COMPOSER.index("cardOpen && stageDials.length > 0"),
+                        COMPOSER.index("<AccordionPanel open={cardOpen}>"),
                         "a stage card's drawer is not below its header")
         self.assertIn('toggleCard("recipe")', COMPOSER)
-        # The leading brace anchors the drawer gate; the collapsed summary's
-        # gate is the same text negated (`!openCards.recipe && ...`).
-        self.assertIn("{openCards.recipe && recipeCardDials.length > 0", COMPOSER)
+        self.assertIn("<AccordionPanel open={!!openCards.recipe}>", COMPOSER)
         self.assertLess(COMPOSER.index('toggleCard("recipe")'),
-                        COMPOSER.index("{openCards.recipe && recipeCardDials.length > 0"),
+                        COMPOSER.index("<AccordionPanel open={!!openCards.recipe}>"),
                         "the recipe card's drawer is not below its header")
 
     def test_an_override_is_stated_even_with_the_chain_collapsed(self):

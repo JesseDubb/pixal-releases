@@ -310,6 +310,16 @@ def character_identity_ready(ch):
     except ValueError:
         return False
 
+
+def character_identity_rev(ch):
+    """Cache-bust revision for the ref-thumb URL: the identity file's mtime in
+    ns. A bare number, never the filename - the privacy contract holds."""
+    try:
+        _ch, image = character_identity(ch)
+        return (CDIR / "input" / image).stat().st_mtime_ns
+    except (ValueError, OSError):
+        return None
+
 def character_subject(ch):
     """The standing 'who is this person' block for txt2img captions."""
     if ch.get("subject_block"):
@@ -371,7 +381,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.8b"
+PIXAL_VERSION = "1.0.9b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -454,10 +464,16 @@ def load_config():
            # H3). Deliberate defaults, set in Settings - the popup itself
            # still switches freely per clip. "upscale_2x" is the H3 2x row's
            # opening position under the same contract (9.31) - it can never
+
            # be a finished-clip action, so a standing default is the whole
-           # setting.
+           # setting. "h3_dialogue_tags" (9.38) picks how spoken lines are
+           # written in H3 briefs: "quotes" is the MiniMax-H3 #76 form,
+           # `(S1) says "..."`, and the default since the 2026-08-25 same-seed
+           # A/B (no opening blip, no cue read aloud); "tags" is MiniMax's
+           # trained <d>[Lang] ... </d>, which some seeds open with a
+           # half-second of gibberish.
            "video": {"default_engine": "", "default_model": "",
-                     "upscale_2x": False},
+                     "upscale_2x": False, "h3_dialogue_tags": "quotes"},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -1530,13 +1546,18 @@ IDENTITY_REF_BOOST = 4.0
 # declaration. A saved style carrying dials is deliberately OUT of scope - the
 # composer sends them itself, and _apply_opts applies them over the style's
 # file exactly like the composer's LoRA stack.
+# "stage" names the LoRA card each dial lives on in the composer's chain -
+# the identity patch's own row, in a drawer under it (Jesse, 2026-08-25:
+# "advanced settings should go under the LoRA it is editing, not its own
+# card at the top of the lora explorer"). The choice dial below binds the
+# same way through "choices_from".
 IDENTITY_DIALS = [
-    {"key": "ref_boost", "label": "Likeness",
+    {"key": "ref_boost", "label": "Likeness", "stage": "identity_edit",
      "min": 0.0, "max": 10.0, "step": 0.1, "default": IDENTITY_REF_BOOST,
      "help": ("How hard the edit holds the reference. ~4 is a strong-likeness "
               "start; below 1 loosens toward creative freedom; above 10 starts "
               "breaking removals.")},
-    {"key": "grounding", "label": "Grounding",
+    {"key": "grounding", "label": "Grounding", "stage": "identity_edit",
      "min": 384, "max": 1536, "step": 64, "default": IDENTITY_GROUNDING_PX,
      "help": ("Lower = stronger edit adherence, higher = stronger identity. "
               "Trained range 384-768. Duplicated or split compositions mean "
@@ -1677,8 +1698,10 @@ EDIT_ACCELERATORS = (
      "full": {"steps": 20, "cfg": 2.5, "shift": 3.0}},
 )
 
-# FLUX.2 Klein 9B: the masked-inpaint lane. Graph ported from the F4 group of
-# geoahmed's flux2_klein_ultimate_v2.1 workflow. Klein is step-distilled, so
+# FLUX.2 Klein 9B: two edit lanes. The masked-inpaint lane's graph is ported
+# from the F4 group of geoahmed's flux2_klein_ultimate_v2.1 workflow; the
+# whole-frame lane's from Comfy-Org's shipped
+# image_flux2_klein_image_edit_9b_distilled template. Klein is step-distilled, so
 # 4 steps at cfg 1.0 is its native schedule, not a speed hack. License is
 # the FLUX Non-Commercial License v2.1 - surface it like PiD's, never ship it
 # silently.
@@ -1697,6 +1720,12 @@ KLEIN_VAE = "Flux\\flux2-vae.safetensors"
 # size and only the edited region pays the round trip.
 KLEIN_INPAINT_MP_CAP = 2.0
 KLEIN_INPAINT_STEPS = 16          # flux2 VAE is /16; keep both sides legal
+# The whole-frame lane runs the same canvas policy - the source's own size
+# under a 2 MP ceiling, then the decode scaled back. It gets its own cap
+# constant rather than sharing the masked lane's because the two tune
+# independently: there is no mask composite here, so every output pixel has
+# been through the flux2 VAE and over-capping costs real texture.
+KLEIN_EDIT_MP_CAP = 2.0
 
 # Qwen-Image is the text-to-image line (Qwen-Image, Qwen-Image-2512), separate
 # from the Qwen-Image-Edit line above. It shares the 2.5-VL encoder and the VAE.
@@ -1887,6 +1916,16 @@ RECIPE_SPECS = {
     },
     "klein_inpaint": {
         "label": "Klein Inpaint", "tag": "paint the spot · only that redraws",
+        "family": "klein",
+        "default_model": KLEIN_MODEL,
+        "aspect": "", "mp": 0,
+        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+        "required_text_encoders": [KLEIN_CLIP],
+        "required_vaes": [KLEIN_VAE],
+        "needs_source_image": True,
+    },
+    "klein_edit": {
+        "label": "Klein Edit", "tag": "whole-frame edit · keeps skin texture",
         "family": "klein",
         "default_model": KLEIN_MODEL,
         "aspect": "", "mp": 0,
@@ -3437,6 +3476,31 @@ def qwen_edit_canvas(source_path, megapixels, steps=8):
         out.append(int(math.ceil(side / steps) * steps) if steps > 1 else int(round(side)))
     return out[0], out[1]
 
+def _configured_edit_model(family):
+    """The Settings whole-frame edit pick, or None when it belongs to the
+    OTHER edit family.
+
+    edit.model now holds Qwen and Klein builds side by side (9.44): routing
+    sends a mask-less edit to the family the pick resolves to, and an
+    explicit recipe ask for the other family must run that recipe's default
+    rather than die on pick_recipe_model's family check. An old qwen_edit
+    ledger entry rerolled after the pick moved to Klein is the case that
+    forces this - the stored spec carries no model, so the builder would
+    otherwise read the Klein pick and refuse its own recipe. An unresolvable
+    name (a deleted file in an old config) is likewise None here: the recipe
+    default stands in, as it always has for an empty pick."""
+    want = str(load_config()["edit"].get("model") or "")
+    if not want:
+        return None
+    entry = resolve_model_entry(want)
+    return want if (entry or {}).get("family") == family else None
+
+
+def _whole_frame_edit_recipe():
+    """The lane a mask-less edit takes: klein_edit when the configured edit
+    model is a Klein build, qwen_edit as today otherwise."""
+    return "klein_edit" if _configured_edit_model("klein") else "qwen_edit"
+
 
 def edit_accelerator(model_entry):
     """The EDIT_ACCELERATORS row that belongs to this edit transformer.
@@ -3540,10 +3604,12 @@ def build_qwen_edit(scene, seed, image=None, megapixels=None, steps=None, cfg=No
     if not instruction:
         raise ValueError("Qwen Image Edit needs an edit instruction")
     g = json.loads(json.dumps(TEMPLATES["qwen_edit"]))
-    # An explicit per-render pick wins; failing that Settings names the release,
-    # and only then the recipe default.
+    # An explicit per-render pick wins; failing that Settings names the release
+    # (only when it is a Qwen build - a Klein pick routes whole-frame edits to
+    # klein_edit instead, and an explicit qwen_edit ask then runs the recipe
+    # default), and only then the recipe default.
     model_entry = pick_recipe_model(
-        model or load_config()["edit"].get("model") or None, "qwen_edit")
+        model or _configured_edit_model("qwen_edit"), "qwen_edit")
     set_unet_loader(g, "qe:unet", model_entry)
     encoder = set_qwen_edit_encoder(g, model_entry)
     clip = _pick_catalog_asset("text_encoders", (QWEN_EDIT_CLIP,),
@@ -3720,7 +3786,111 @@ def _klein_bypass_scaling(g):
     g["ki:latent"]["inputs"]["pixels"] = ["ki:img", 0]
     g["ki:latent"]["inputs"]["mask"] = ["ki:img", 1]
     g["ki:reffull"]["inputs"]["pixels"] = ["ki:img", 0]
-    g["ki:comp"]["inputs"]["source"] = ["ki:decode", 0]
+    g["ki:composite"]["inputs"]["generated_image"] = ["ki:decode", 0]
+
+def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
+                     model=None):
+    """Whole-frame instruction edit of an existing frame (FLUX.2 Klein 9B).
+
+    Ported node-for-node from Comfy-Org's shipped
+    `image_flux2_klein_image_edit_9b_distilled` template (subgraph 7b34ab90
+    expanded; the multi-reference variant is a follow-up). The spine: the
+    scaled source is VAE-encoded ONCE and that latent feeds BOTH
+    ReferenceLatents - positive from the instruction, negative from the zeroed
+    instruction - the sampler starts from an EMPTY Flux2 latent, and a 4-step
+    Flux2Scheduler at cfg 1.0 drives SamplerCustomAdvanced. 4 steps at cfg 1.0
+    IS Klein's distilled schedule, not a speed trick, which also makes the
+    zeroed negative the correct one.
+
+    Unlike the masked lane there is no composite: nothing restricts the edit
+    to a painted region, so the whole-frame decode IS the output (scaled back
+    to the source's exact size). This lane DOES round-trip every pixel through
+    the flux2 VAE - the global softening the masked lane's composite exists to
+    prevent is accepted here on purpose, because a whole-frame instruction is
+    meant to be allowed to touch the whole frame. Klein keeps skin texture
+    through that round trip, which is the entire reason this lane exists next
+    to qwen_edit (Jesse, 2026-08-25: Qwen/FireRed come back airbrushed).
+
+    Same canvas policy as the other edit lanes: sample at the source's own
+    size under KLEIN_EDIT_MP_CAP, never upscale a small source to reach it.
+    The template's own scale node samples at 1 MP nearest-exact; the cap and
+    the scale-back are the two deliberate deviations (ke:back is ours)."""
+    src = input_ref_name(image)
+    if not src:
+        raise ValueError("Klein Edit needs a source image in ComfyUI/input")
+    if not (CDIR / "input" / src).is_file():
+        raise ValueError(f"source image not found in ComfyUI/input: {src}")
+    instruction = " ".join(str(scene or "").split())
+    if not instruction:
+        raise ValueError("Klein Edit needs an edit instruction")
+    g = json.loads(json.dumps(TEMPLATES["klein_edit"]))
+    # Same precedence as the qwen lane: an explicit per-render pick wins, then
+    # the Settings whole-frame pick when it is a Klein build (the picker holds
+    # both families now), then the recipe default.
+    model_entry = pick_recipe_model(
+        model or _configured_edit_model("klein"), "klein_edit")
+    set_unet_loader(g, "ke:unet", model_entry)
+    clip = _pick_catalog_asset("text_encoders", (KLEIN_CLIP,),
+                               "its Qwen3 8B text encoder", "Klein Edit")
+    set_clip_loader(g, "ke:clip", clip, "flux2")
+    g["ke:vae"]["inputs"]["vae_name"] = _pick_catalog_asset(
+        "vae", (KLEIN_VAE,), "the Flux2 VAE", "Klein Edit")
+    g["ke:img"]["inputs"]["image"] = src
+    g["ke:pos"]["inputs"]["text"] = instruction
+    g["ke:noise"]["inputs"]["noise_seed"] = int(seed)
+    g["ke:save"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(instruction)}"
+    # Canvas: the source's own size under the cap, on the flux2 VAE's /16 grid
+    # (KLEIN_INPAINT_STEPS is that grid, not an inpaint property). ke:back then
+    # returns the decode to the source's EXACT size - exactness is load-bearing
+    # the same way it is in the masked lane, so a source we cannot measure gets
+    # no guessed size: it samples uncapped and saves the decode as-is.
+    native = _image_size(CDIR / "input" / src)
+    if megapixels is not None:
+        working_mp = float(megapixels)
+    elif native:
+        working_mp = min((native[0] * native[1]) / (1024.0 * 1024.0),
+                         KLEIN_EDIT_MP_CAP)
+    else:
+        working_mp = None
+    if working_mp is not None:
+        g["ke:scale"]["inputs"]["megapixels"] = working_mp
+        g["ke:scale"]["inputs"]["resolution_steps"] = KLEIN_INPAINT_STEPS
+    if native:
+        g["ke:back"]["inputs"]["width"] = native[0]
+        g["ke:back"]["inputs"]["height"] = native[1]
+    else:
+        _klein_edit_bypass_scaling(g, capped=working_mp is not None)
+    for o in overrides:
+        g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+    info = {**model_job_info(model_entry), "source_image": src}
+    if native:
+        canvas = qwen_edit_canvas(CDIR / "input" / src, working_mp,
+                                  KLEIN_INPAINT_STEPS) or native
+        info["megapixels"] = working_mp
+        # canvas_mp is what the butler prices; the saved frame stays native, so
+        # `size` and `canvas_mp` deliberately disagree.
+        info["canvas_mp"] = (canvas[0] * canvas[1]) / 1e6
+        info["size"] = f"{native[0]}x{native[1]}"
+        if tuple(canvas) != tuple(native):
+            # Say it plainly on the job card: sampled small, returned full size.
+            info["size"] = (f"{native[0]}x{native[1]} "
+                            f"(sampled at {canvas[0]}x{canvas[1]})")
+    return g, instruction, info
+
+
+def _klein_edit_bypass_scaling(g, capped=False):
+    """Wire klein_edit around its scale nodes when the source is unmeasurable.
+
+    ke:back's exact native size is load-bearing, and a size we cannot read
+    cannot be written - so the save reads the decode directly, exactly the way
+    the template it was ported from always does. With no explicit megapixels
+    the cap nodes go inert too (sample at native); with one, ke:scale still
+    does its one job and only the scale-back is skipped. The nodes stay in the
+    graph, disconnected, so it keeps the shape of the template."""
+    g["ke:save"]["inputs"]["images"] = ["ke:decode", 0]
+    if not capped:
+        g["ke:size"]["inputs"]["image"] = ["ke:img", 0]
+        g["ke:reflatent"]["inputs"]["pixels"] = ["ke:img", 0]
 
 
 def build_qwen_image(scene, seed, aspect=None, mp=None, width=None, height=None,
@@ -5269,6 +5439,94 @@ _H3_ATTRIBUTION_VERBS = frozenset({
     "asks", "asked"})
 _H3_TAG_BLOCK_RE = re.compile(r"<d>(\[[A-Za-z]+\].*?)</d>", re.S)
 _H3_ORPHAN_QUOTE_RE = re.compile("[\"\u201d]")
+# The doubled line (9.37's live-clip defect, fixed for 9.38): the brain
+# shipped `she says: "line" (S1) says: <d>[Lang] line</d>` - the spoken words
+# TWICE, and H3 reads both. The quoted copy is replaced by the chosen form,
+# never left beside the tag; the collapse keeps the shipped d400350d shape
+# (`she says: (S1) says: <d>...</d>`), and only when the two texts are the
+# same line - a mismatch is somebody quoting somebody and survives. The cued
+# twin (`(S1) says: "line" (S1) says: <d>line</d>`) reaches here one repair
+# later: the untagged-cue wrap turns it into two adjacent identical cue+tag
+# blocks, which the second regex collapses the same way.
+_H3_DOUBLED_QUOTE_RE = re.compile(
+    r"says\s*:\s*[\"“]([^\"”]+)[\"”][\s,]*"
+    r"(\(S\d+\)\s*says\s*:\s*<d>\[[A-Za-z]+\]\s*([^<]*?)\s*</d>)", re.S)
+_H3_DOUBLED_TAG_RE = re.compile(
+    r"(\(S(\d+)\)\s*says\s*:\s*<d>\[[A-Za-z]+\]\s*([^<]*?)\s*</d>)[\s,]*"
+    r"\(S(\d+)\)\s*says\s*:\s*<d>\[[A-Za-z]+\]\s*([^<]*?)\s*</d>", re.S)
+# One proper pair's spoken words, for the quotes-mode conversion.
+_H3_TAG_WORDS_RE = re.compile(r"<d>\[[A-Za-z]+\]\s*([^<]*?)\s*</d>")
+# A cue with its tag, for the #76 spelling: the cue keeps its words, the
+# colon, tag syntax and language token go - `(S1) says "..."`.
+_H3_CUED_TAG_RE = re.compile(
+    r"(\(S\d+\)\s*says)\s*:?\s*<d>\[[A-Za-z]+\]\s*([^<]*?)\s*</d>")
+# A prose verb right before the cue - "She says: (S1) says ..." - is a second
+# "says" the model reads aloud (the 2026-08-25 A/B's "I says"). The optional
+# pronoun goes with it so the sentence still parses: "then (S1) says ...".
+_H3_PROSE_VERB_BEFORE_CUE_RE = re.compile(
+    r"(?:\b(?:she|he|they|it)\s+)?\bsays\s*:?\s*(?=\(S\d+\)\s*says\b)", re.I)
+# The line quoted ANYWHERE else in the prose - `mouth opens fully to say
+# "Finally found a jacket I actually love."` three sentences before the cue
+# (seed 4004, 2026-08-25) - is a second spoken copy the adjacency collapse
+# above cannot see. The optional lead-in verb goes with the quote so the
+# prose does not keep a dangling "to say".
+_H3_QUOTED_LINE_ANYWHERE_RE = re.compile(
+    r"(?:\b(?:to\s+say|says?|saying|mouths?|mouthing|whispers?|murmurs?)"
+    r"\s*[:,]?\s*)?[\"\u201c]([^\"\u201c\u201d]{2,}?)[\"\u201d][.,]?", re.I)
+
+
+def _h3_same_spoken_line(a, b):
+    """Same line, forgiving of punctuation and case - the doubling repair's
+    ONLY licence to delete."""
+    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    return norm(a) == norm(b)
+
+
+def _h3_collapse_doubled_lines(body):
+    """One spoken copy: the quoted line beside a matching tag dissolves into
+    the tag's cue, two adjacent identical cue+tag blocks become one, and a
+    prose "says" left standing in front of the cue goes with it."""
+    def _quoted(m):
+        if not _h3_same_spoken_line(m.group(1), m.group(3)):
+            return m.group(0)
+        return "says: " + m.group(2)
+    out = _H3_DOUBLED_QUOTE_RE.sub(_quoted, body)
+    def _tags(m):
+        if (m.group(2) != m.group(4)
+                or not _h3_same_spoken_line(m.group(3), m.group(5))):
+            return m.group(0)
+        return m.group(1)
+    out = _H3_DOUBLED_TAG_RE.sub(_tags, out)
+    out = _H3_PROSE_VERB_BEFORE_CUE_RE.sub("", out)
+    # The full line quoted anywhere else in the prose dissolves too; the
+    # tags themselves are masked first so a line quoted INSIDE its own tag
+    # is never touched. Only whole-line equality licenses the delete - a
+    # single quoted word ("lips parting for 'love'") is delivery prose.
+    lines = [w for w in _H3_TAG_WORDS_RE.findall(out) if w.strip()]
+    if not lines:
+        return out
+    protected = _H3_PROPER_TAG_RE.findall(out)
+    for i, block in enumerate(protected):
+        out = out.replace(block, f"\x00{i}\x00", 1)
+    def _stray(m):
+        if any(_h3_same_spoken_line(m.group(1), w) for w in lines):
+            return ""
+        return m.group(0)
+    out = _H3_QUOTED_LINE_ANYWHERE_RE.sub(_stray, out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    for i, block in enumerate(protected):
+        out = out.replace(f"\x00{i}\x00", block, 1)
+    return out
+
+
+def h3_dialogue_tags_mode():
+    """The standing dialogue-format switch (9.38): "quotes" ships the #76
+    form `(S1) says "..."`, "tags" MiniMax's trained <d>[Lang] ...</d>.
+    Anything else (an old config, a hand edit) is quotes - the default since
+    the 2026-08-25 same-seed A/B (briefs/9.38-findings.md): on the same
+    opening, tags still blipped and quotes did not."""
+    mode = (load_config().get("video") or {}).get("h3_dialogue_tags", "quotes")
+    return mode if mode in ("tags", "quotes") else "quotes"
 
 
 def _h3_relocate_intag_prose(m):
@@ -5298,7 +5556,7 @@ def _h3_relocate_intag_prose(m):
     return m.group(0)
 
 
-def repair_h3_dialogue_tags(body, language="English"):
+def repair_h3_dialogue_tags(body, language="English", dialogue_tags="tags"):
     """Normalize spoken lines to the trained `(Sn) says: <d>[Lang] words</d>`.
 
     Three malformations observed on the live brain (harness + the 2026-08-12
@@ -5311,7 +5569,16 @@ def repair_h3_dialogue_tags(body, language="English"):
     over real history: the [EN] shorthand normalizes through the two-token
     map, and delivery prose stranded inside a proper tag relocates in front
     of it. Mechanical, so fix rather than re-ask - same policy as every
-    other repair in assemble_h3_prompt."""
+    other repair in assemble_h3_prompt.
+
+    Two later lessons ride the same pass. 9.37's live-clip defect: a quoted
+    line beside a matching tag shipped the words twice, so the collapse runs
+    on the canonical form (a quoted line is REPLACED by the chosen form,
+    never left beside it). 9.38: the normaliser is CANONICAL - it never
+    reads the dialogue-format switch, because 9.9's closer and 9.37's settle
+    beat downstream are keyed on </d>. h3_spell_dialogue reads the switch
+    and spells the standing form last; dialogue_tags="quotes" here is the
+    same spelling on demand, for tests and callers that ship at once."""
     def _wrap(m):
         return (f"{m.group(1)}<d>[{language}] "
                 f"{m.group(2).strip().rstrip(',')}</d> ")
@@ -5329,7 +5596,28 @@ def repair_h3_dialogue_tags(body, language="English"):
     out = re.sub(r"(?<!<)\bd>|</d>|<d>", "", out)
     for i, block in enumerate(protected):
         out = out.replace(f"\x00{i}\x00", block, 1)
+    out = _h3_collapse_doubled_lines(out)
+    if dialogue_tags == "quotes":
+        out = h3_spell_dialogue(out, "quotes")
     return out
+
+
+def h3_spell_dialogue(text, dialogue_tags=None):
+    """The LAST pass before an H3 prompt ships: spell every spoken line in
+    the standing format. Every repair upstream - the normaliser, 9.9's
+    closing beat, 9.37's settle beat - is keyed on the canonical `(Sn) says:
+    <d>[Lang] ...</d>`, so the assemblers keep that form and the spelling
+    happens here, once, after them. Quotes mode writes the #76 form `(Sn)
+    says "..."` (no colon, no language token - the shape that won the
+    2026-08-25 A/B); tags mode returns the text untouched. Idempotent, and
+    it applies to a user's script too: only the syntax changes, never the
+    words."""
+    if dialogue_tags is None:
+        dialogue_tags = h3_dialogue_tags_mode()
+    if dialogue_tags != "quotes":
+        return text
+    out = _H3_CUED_TAG_RE.sub(lambda m: f'{m.group(1)} "{m.group(2)}"', text)
+    return _H3_TAG_WORDS_RE.sub(lambda m: f'"{m.group(1)}"', out)
 
 
 # ---- the line-end beat after </d> (brief 9.9) -------------------------------
@@ -5465,6 +5753,364 @@ async def repair_h3_hanging_dialogue(brief, cid=None):
     return _h3_append_closing_beat(text, beat)
 
 
+# ---- the settle beat before the first word (brief 9.37) ---------------------
+# Jesse, 2026-08-25, on two otherwise good clips (ledger 3458c98e, d400350d):
+# "there is no pause to let the clip settle then dialogue - it starts mid
+# mouth noise ... it's been a running problem." The source stills are prompted
+# "mid-sentence expression", so frame zero has an open mouth and the director
+# narrates a word in flight: "finishes a word", "lips parting mid-sentence",
+# "mouth opening mid-word as she begins to speak". The director rule lives in
+# the two SYSTEM prompts' closing contracts; this detector and the repair
+# below are the deterministic floor behind it - the brief-harness lesson
+# again: small models obey end contracts and deterministic repair, never
+# mid-prompt rules.
+#
+# The same detector also covers the Reddit addendum's second defect: a brief
+# with dialogue that never says the mouth stays shut for the rest of the clip
+# (H3 fills unspoken seconds with mouth noise - the thread's gibberish
+# reports). There is nothing to author in that case, so the after-line
+# silence clause is appended deterministically and never spends a brain call.
+
+# Speech-in-progress openings, description field only - the soundscape may
+# legitimately say "a breath before she speaks". Case-insensitive.
+_H3_IN_PROGRESS_RE = re.compile(
+    r"mid[- ]sentence|mid[- ]word|finish(?:es|ing) a word|"
+    r"as (?:she|he|they) begins? to speak|with no pause|already speaking|"
+    r"continues speaking", re.I)
+_H3_SAYS_CUE_RE = re.compile(r"\(S\d+\)\s*says\s*:", re.I)
+# What "the opening already settles" looks like: the clause
+# _h3_settle_clause emits (the shapes are pronoun-free, so any pronoun
+# counts) plus the natural phrasings the brain writes when asked for a
+# settle beat. A CLOSED list, case-insensitive, checked against the first
+# prose sentence only - dialogue is masked, so a spoken "lips closed"
+# never satisfies the opening.
+_H3_SETTLE_PRESENT_RE = re.compile(
+    r"lips\s+closed|mouth\s+closed|settles?\s+for\s+a\s+(?:beat|moment)|"
+    r"a\s+beat\s+before|after\s+a\s+beat|holds?\s+still\s+for\s+a\s+beat|"
+    r"takes?\s+a\s+breath\s+before", re.I)
+# The deterministic replacement removes the whole delimited clause around a
+# flagged phrase, so the original connectors (", then pivots ...") survive
+# around the settle clause. Spoken words are masked first: a quoted line can
+# hold commas, periods and even a flagged phrase of its own.
+_H3_CLAUSE_DELIMS = ",;.!?—\n"
+# What counts as the mouth staying shut after the line: the 9.9 closer's own
+# shapes plus the natural director phrasings. A CLOSED list, searched in the
+# description field after the last spoken line only.
+_H3_AFTER_LINE_SILENCE_RE = re.compile(
+    r"lips\s+(?:close|closed|shut|remain\s+closed|stay\s+closed|"
+    r"pressed\s+shut)|(?:closes?|shuts?)\s+(?:(?:her|his|their)\s+)?lips|"
+    r"mouth\s+(?:closes|closed|shuts)|speaking\s+motion\s+stops|"
+    r"stops?\s+(?:speaking|talking)|no\s+further\s+speech|"
+    r"no\s+more\s+(?:words|speech)|says\s+nothing\s+more|"
+    r"falls?\s+(?:silent|quiet)|only\s+listens?\b", re.I)
+
+# A mouth-closed clause that is really the OPENING beat - "mouth closed at
+# first ... before she begins to speak" written after the cue (seed 4004,
+# 2026-08-25, clip 222e0326) - must not pass as after-line silence: it says
+# what the mouth does before the words, and the seconds after them stay
+# unclaimed. The clause around a match is read for these tells.
+_H3_OPENING_BEAT_RE = re.compile(
+    r"\bat\s+first\b|\bbefore\s+(?:she|he|they)\s+(?:begins?|starts?|speaks?|says?)\b|"
+    r"\bthen\s+(?:she|he|they)\s+(?:speaks?|says?|begins?)\b|"
+    r"\bbehind\s+the\s+words\b", re.I)
+_H3_CLAUSE_EDGE_RE = re.compile(r"[,;.!?\u2014\n]")
+
+
+def _h3_after_line_silence_present(tail):
+    """True when some mouth-shut clause in the text after the last line is
+    about the AFTER, not a settle written for the opening."""
+    for m in _H3_AFTER_LINE_SILENCE_RE.finditer(tail):
+        before = tail[:m.start()]
+        after = tail[m.end():]
+        left = [e.end() for e in _H3_CLAUSE_EDGE_RE.finditer(before)]
+        right = _H3_CLAUSE_EDGE_RE.search(after)
+        clause = (before[left[-1]:] if left else before) + m.group(0) + \
+                 (after[:right.start()] if right else after)
+        if not _H3_OPENING_BEAT_RE.search(clause):
+            return True
+    return False
+
+
+# The sentinel for the absence case: the defect is a missing clause, so there
+# is no offending clause to return - this stands in for it. Compared against
+# the detector's return, never searched in brief text.
+H3_NO_AFTER_LINE_SILENCE = "no after-line silence clause"
+H3_SETTLE_TIMEOUT = 20
+# Bounded like every repair loop here: each pass removes at least one flagged
+# offense and the inserted text is pattern-free, so this is a formality.
+_H3_SETTLE_MAX_PASSES = 12
+
+
+def _h3_mask_dialogue(text):
+    """Blank each <d>...</d> span with a same-length placeholder so clause,
+    sentence and pronoun scans never read the spoken words - positions stay
+    aligned with the original text."""
+    return _H3_DIALOGUE_RE.sub(lambda m: "\x00" * len(m.group(0)), text)
+
+
+def _h3_prose_start(text, span):
+    """Offset of the [Shot 1] prose inside the description field: after the
+    shot marker and the style preamble, connector included, so an inserted
+    settle sentence never displaces the style declaration (9.9's slot). The
+    connector is normally the em dash; a , ; : form is part of the preamble
+    too, so the settle clause can join after it (9.40)."""
+    field = text[span[0]:span[1]]
+    rel = 0
+    marker = re.match(r"\s*\[\s*shot\s*\d+\s*\]\s*", field, re.I)
+    if marker:
+        rel = marker.end()
+    style = re.match(
+        r"(?:live-action|2d-animated),\s*natural real-time motion\s*[—.,;:]?\s*",
+        field[rel:], re.I)
+    if style:
+        rel += style.end()
+    return span[0] + rel
+
+
+def _h3_opening_offense(text):
+    """The earliest speech-in-progress offense in the description field, as
+    (kind, start, end, clause): kind "phrase" spans the delimited clause for
+    the deterministic replacement; kind "says" spans the cue itself. None
+    when the opening is clean (or there is no description field). A cue in
+    the first prose sentence is only an offense when that sentence carries
+    no settle clause - a brief that already opens on the settle beat is
+    left alone (9.40). "phrase" hits fire regardless: an in-progress clause
+    beside a settle clause is a contradiction, not a settle."""
+    span = _h3_desc_span(text)
+    if not span:
+        return None
+    field = text[span[0]:span[1]]
+    masked = _h3_mask_dialogue(field)
+    hits = []
+    phrase = _H3_IN_PROGRESS_RE.search(masked)
+    if phrase:
+        hits.append(("phrase", phrase.start(), phrase))
+    prose = _h3_prose_start(masked, (0, len(field)))
+    terminal = re.search(r"[.!?]", masked[prose:])
+    sentence_end = prose + terminal.start() if terminal else len(field)
+    cue = _H3_SAYS_CUE_RE.search(masked, prose)
+    if (cue and cue.start() < sentence_end
+            and not _H3_SETTLE_PRESENT_RE.search(masked[prose:sentence_end])):
+        hits.append(("says", cue.start(), cue))
+    if not hits:
+        return None
+    kind, _pos, match = min(hits, key=lambda h: h[1])
+    if kind == "says":
+        return ("says", span[0] + match.start(), span[0] + match.end(),
+                match.group(0))
+    left = -1
+    for delim in _H3_CLAUSE_DELIMS:
+        left = max(left, masked.rfind(delim, 0, match.start()))
+    right = len(field)
+    for delim in _H3_CLAUSE_DELIMS:
+        at = masked.find(delim, match.end())
+        if 0 <= at < right:
+            right = at
+    c_start, c_end = left + 1, right
+    while c_start < match.start() and field[c_start] in " \t":
+        c_start += 1
+    while c_end > match.end() and field[c_end - 1] in " \t":
+        c_end -= 1
+    return ("phrase", span[0] + c_start, span[0] + c_end,
+            field[c_start:c_end])
+
+
+def _h3_missing_after_line_silence(text):
+    """Dialogue with no clause saying the mouth stays shut afterwards: the
+    unspoken seconds are H3's to fill, and it fills them with mouth noise.
+    Anchors after the LAST spoken line. A field that ends on the tag counts
+    as missing - in animate the hanging repair lands its beat first; this is
+    the standalone backstop for the same slot."""
+    span = _h3_desc_span(text)
+    if not span:
+        return False
+    field = text[span[0]:span[1]]
+    tags = [m.end() for m in re.finditer(r"</d>", field)]
+    if tags:
+        anchor = tags[-1]
+    else:
+        cues = [m.end() for m in _H3_SAYS_CUE_RE.finditer(field)]
+        if not cues:
+            return False
+        anchor = cues[-1]
+    return not _h3_after_line_silence_present(field[anchor:])
+
+
+def h3_speech_in_progress(brief):
+    """The offending clause of a speech-in-progress opening, the
+    H3_NO_AFTER_LINE_SILENCE sentinel when the dialogue never says the mouth
+    stays shut, or None. Pure, description field only, case-insensitive."""
+    text = str(brief or "")
+    hit = _h3_opening_offense(text)
+    if hit:
+        return hit[3]
+    if _h3_missing_after_line_silence(text):
+        return H3_NO_AFTER_LINE_SILENCE
+    return None
+
+
+def _h3_subject_pronoun(text):
+    """The brief's own subject pronoun: she/he by simple majority in the
+    description field (spoken words masked out), else the neutral "they" -
+    the hanging-dialogue repair's choice when the brief names nobody."""
+    span = _h3_desc_span(text)
+    field = text[span[0]:span[1]] if span else str(text)
+    masked = _h3_mask_dialogue(field)
+    fem = len(re.findall(r"\b(?:she|her|hers)\b", masked, re.I))
+    masc = len(re.findall(r"\b(?:he|him|his)\b", masked, re.I))
+    if fem > masc:
+        return "she"
+    if masc > fem:
+        return "he"
+    return "they"
+
+
+def _h3_settle_clause(text, capital=False):
+    """"lips closed, she settles for a beat" - pronoun and agreement follow
+    the brief's own subject. The clause holds no flagged pattern and matches
+    _H3_SETTLE_PRESENT_RE, which is what makes the deterministic loop
+    terminating by construction: once it lands, the sentence it joined is
+    settle-present, so the cue there no longer flags."""
+    pron = _h3_subject_pronoun(text)
+    verb = "settle" if pron == "they" else "settles"
+    clause = f"lips closed, {pron} {verb} for a beat"
+    return clause[:1].upper() + clause[1:] if capital else clause
+
+
+def _h3_silence_clause(text):
+    """"After the line, her lips close and she only listens; no further
+    speech." - the Reddit thread's own shape, pronoun-adjusted."""
+    pron = _h3_subject_pronoun(text)
+    poss = {"she": "her", "he": "his", "they": "their"}[pron]
+    verb = "listen" if pron == "they" else "listens"
+    return (f"After the line, {poss} lips close and {pron} only {verb}; "
+            "no further speech.")
+
+
+def _h3_deterministic_settle(text):
+    """The brain-independent floor for an in-progress opening: replace each
+    flagged clause with the settle clause, or insert the settle clause at
+    the prose start when the offense is a first-sentence cue. The connectors
+    around a replaced clause are the brief's own, so the result stays
+    grammatical without authoring anything. The inserted clause JOINS the
+    sentence it lands in (9.40): after the style preamble's em dash (or a
+    , ; :) it goes in lowercase with ", then " and the prose's first letter
+    is never touched; only at a true sentence start (field start, after
+    . ! ?, or right after the [Shot 1] marker) is it a capitalised sentence
+    of its own. A first sentence that already carries a settle clause is
+    left alone - the detector's settle-present check, not luck, is what
+    stops the loop from prepending a second beat beside the cue."""
+    for _ in range(_H3_SETTLE_MAX_PASSES):
+        hit = _h3_opening_offense(text)
+        if not hit:
+            break
+        kind, start, end, _clause = hit
+        if kind == "says":
+            span = _h3_desc_span(text)
+            at = _h3_prose_start(text, span)
+            prefix = text[span[0]:at].rstrip()
+            if prefix and prefix[-1] in "—,;:":
+                text = (text[:at] + _h3_settle_clause(text) + ", then "
+                        + text[at:])
+            else:
+                text = (text[:at] + _h3_settle_clause(text, capital=True)
+                        + ". " + text[at:])
+        else:
+            text = text[:start] + _h3_settle_clause(text) + text[end:]
+    return text
+
+
+def _h3_append_after_line_silence(text):
+    """The clause lands at the end of the description field - the slot the
+    encoder reads as the take's remaining time. The field's trailing
+    separator whitespace is put back byte for byte: the soundscape header's
+    regex eats one of the two newlines into the field span, and a single \n
+    is not a field boundary."""
+    span = _h3_desc_span(text)
+    if not span:
+        return text
+    value = text[span[0]:span[1]]
+    stripped = value.rstrip()
+    tail_ws = value[len(stripped):]
+    return (text[:span[0]] + stripped + " " + _h3_silence_clause(text)
+            + tail_ws + text[span[1]:])
+
+
+def _h3_settle_request(text, clause):
+    """The narrow end-contract for one in-progress opening: rewrite ONLY the
+    opening, return the whole brief. The reply still has to pass the detector
+    and the byte guards - a small brain's habit of paraphrasing what it was
+    told to preserve is why the guards exist (the 9.9 echo lesson)."""
+    return [
+        {"role": "system", "content": (
+            "You repair the opening of a video brief. The brief below opens "
+            "with speech already in progress - the flagged clause is "
+            f"\"{clause}\". Rewrite ONLY the opening so the subject's mouth "
+            "is closed at the start and the first spoken word lands after a "
+            "visible settle - a breath, a look, a small motion - roughly a "
+            "second in. Never describe a word, breath or syllable as already "
+            "in progress at the start. Keep EVERYTHING else exactly as it "
+            "is: every beat, the dialogue tags, the soundscape and music "
+            "fields, byte for byte. Return the complete brief and nothing "
+            "else.")},
+        {"role": "user", "content": text},
+    ]
+
+
+def _h3_settle_reply_ok(original, reply):
+    """The reply keeps the brief and loses the offense: description field
+    still present, no opening offense, and everything outside the
+    description value byte-identical - the ask was the opening alone."""
+    if not reply or not isinstance(reply, str):
+        return False
+    if _h3_opening_offense(reply):
+        return False
+    o_span, r_span = _h3_desc_span(original), _h3_desc_span(reply)
+    if not o_span or not r_span:
+        return False
+    if original[:o_span[0]].strip() != reply[:r_span[0]].strip():
+        return False
+    if original[o_span[1]:].strip() != reply[r_span[1]:].strip():
+        return False
+    return True
+
+
+async def repair_h3_speech_in_progress(brief, cid=None):
+    """Move the first word off the opening: one brain call to rewrite ONLY
+    the opening, the detector re-run on the reply, the deterministic rewrite
+    on any failure. The missing-silence case never reaches the brain - an
+    append is not an authoring task. One attempt, never a retry, same 20
+    second budget as the hanging-line closer."""
+    text = str(brief or "")
+    clause = h3_speech_in_progress(text)
+    if clause is None:
+        return text
+    if clause == H3_NO_AFTER_LINE_SILENCE:
+        return _h3_append_after_line_silence(text)
+    rewritten = None
+    try:
+        reply = await asyncio.wait_for(
+            llm_call(_h3_settle_request(text, clause),
+                     timeout=H3_SETTLE_TIMEOUT, cid=cid),
+            timeout=H3_SETTLE_TIMEOUT)
+        if reply:
+            status, data = reply
+            if status == 200 and isinstance(data, dict):
+                choices = data.get("choices") or []
+                if choices:
+                    candidate = (choices[0].get("message") or {}).get("content")
+                    if _h3_settle_reply_ok(text, candidate):
+                        rewritten = candidate
+    except Exception:
+        rewritten = None
+    if rewritten is None:
+        rewritten = _h3_deterministic_settle(text)
+    # The opening fix is not the silence clause's job; backstop it either way.
+    if h3_speech_in_progress(rewritten) == H3_NO_AFTER_LINE_SILENCE:
+        rewritten = _h3_append_after_line_silence(rewritten)
+    return rewritten
+
+
 # ---- the style declaration (brief 9.9) --------------------------------------
 # The OUTPUT FORMAT's style example reads "(live-action, natural real-time
 # motion)", so an Anima or clear-anime still animates as live capture - 92% of
@@ -5563,15 +6209,140 @@ def repair_camera_note(body, hint):
     return body[:idx].rstrip() + _STATIC_CAM_SENTENCE + "\n\n" + body[idx:]
 
 
+# ---- brief 9.41: a selfie still animates AS a selfie ----------------------
+# The still's provenance already carries the signal (a selfie LoRA in the
+# stack, or a caption that says front camera/selfie), but nothing told the
+# DIRECTOR: on 6b2f3036 (2026-08-25) both directed briefs wrote the phone as
+# a prop watched by a second, tripod-locked camera. Detection is
+# provenance-only and gets no setting - the user already chose Selfie Cam
+# for the still.
+H3_SELFIE_LORA_PATTERNS = ("s3lfie", "selfie")
+_H3_SELFIE_LORA_RE = re.compile("|".join(H3_SELFIE_LORA_PATTERNS), re.I)
+_H3_SELFIE_SCENE_RE = re.compile(r"front camera|selfie", re.I)
+
+# The one standing sentence: told to the director after the user's own note,
+# and restated into the brief when the director drops it. {poss} is the
+# subject's possessive pronoun - her/his/their by the 9.37 settle clause's
+# majority rule - so the next pronoun is a format call, not a new constant.
+H3_SELFIE_CAMERA_NOTE = (
+    "The camera is the front camera of the phone in {poss} own outstretched "
+    "hand, at arm's length: handheld, the frame sways gently with {poss} "
+    "arm, and the phone itself is never visible in the shot.")
+
+# The fact, stated however a brief might state it: any of these means the
+# brief honored the note in its own words and is left alone. Closed list -
+# a looser match would start reading inventions as honor.
+_H3_BRIEF_SELFIE_RE = re.compile(
+    r"front camera|selfie|the camera is the phone|phone(?:'s)? camera|"
+    r"into the phone", re.I)
+
+
+def h3_selfie_source(entry):
+    """True when the still being animated came through the selfie chain: a
+    name in info.loras or spec.lora_plan.entries[].name matches the selfie
+    pattern (the file stem - `krea2-s3lfie-r3alism-9` must hit), or the
+    still's caption says front camera/selfie. Missing or odd entries are
+    False, never a raise - provenance is a hint, not a contract."""
+    if not isinstance(entry, dict):
+        return False
+    try:
+        info = entry.get("info")
+        loras = info.get("loras") if isinstance(info, dict) else None
+        names = ([str(x) for x in loras]
+                 if isinstance(loras, (list, tuple)) else [])
+        spec = entry.get("spec")
+        plan = spec.get("lora_plan") if isinstance(spec, dict) else None
+        entries = plan.get("entries") if isinstance(plan, dict) else None
+        if isinstance(entries, (list, tuple)):
+            names += [str(e.get("name")) for e in entries
+                      if isinstance(e, dict) and e.get("name") is not None]
+        if any(_H3_SELFIE_LORA_RE.search(n) for n in names):
+            return True
+        scene = entry.get("scene")
+        return (isinstance(scene, str)
+                and bool(_H3_SELFIE_SCENE_RE.search(scene)))
+    except Exception:
+        return False
+
+
+def _h3_selfie_camera_note(text):
+    """The standing sentence with the pronoun the text's own subject takes -
+    _h3_subject_pronoun, the same helper the 9.37 settle clause uses."""
+    poss = {"she": "her", "he": "his", "they": "their"}[
+        _h3_subject_pronoun(text)]
+    return H3_SELFIE_CAMERA_NOTE.format(poss=poss)
+
+
+def repair_selfie_camera(body, selfie):
+    """When a selfie still's brief drops the camera-is-the-phone fact,
+    restate it - repair_camera_note's sibling, same shape and repair-only
+    policy: the sentence lands inside the field the encoder reads (before
+    overall_soundscape:, at the end when there is no labeled structure). A
+    brief that says it in its own words is left alone, which also makes the
+    repair idempotent - the sentence itself says front camera. selfie=False
+    is a no-op, and the ref2va lane never reaches here: a reference has no
+    frame-zero premise to describe."""
+    if not selfie:
+        return body
+    if _H3_BRIEF_SELFIE_RE.search(body):
+        return body
+    sentence = " " + _h3_selfie_camera_note(body)
+    idx = body.find("overall_soundscape:")
+    if idx < 0:
+        return body.rstrip() + sentence
+    return body[:idx].rstrip() + sentence + "\n\n" + body[idx:]
+
+
+# The one music field (brief 9.37, Reddit item 1). H3_AUDIO_PROMPT used to
+# append its own "non_diegetic_music: none." AFTER the director's "N/A" -
+# two contradictory fields, and "none" is not even the guide's token ("Use
+# N/A when there is no non-diegetic music"). The constant now carries only
+# the two speech rules; this guarantee owns the field instead: exactly one,
+# first occurrence wins, N/A when nobody wrote one. It rides the assembler
+# AND the builders' append sites, because rerolls bypass assembly (the 9.12
+# tag-check precedent).
+_H3_FIELD_HEADER_RE = re.compile(
+    r"(?im)^\s*(?:integrated_multimodal_description|overall_soundscape|"
+    r"non_diegetic_music)\s*:")
+
+
+def _h3_music_field_guarantee(text):
+    """Exactly one non_diegetic_music field: the director's when she wrote
+    one (first occurrence wins), else the guide's no-score token N/A."""
+    text = str(text or "")
+    hits = list(_H3_MUSIC_FIELD_RE.finditer(text))
+    if not hits:
+        body = text.rstrip()
+        return body + "\n\nnon_diegetic_music: N/A" if body else text
+    if len(hits) == 1:
+        return text
+    headers = list(_H3_FIELD_HEADER_RE.finditer(text))
+
+    def field_end(match):
+        later = [h.start() for h in headers if h.start() > match.start()]
+        return min(later) if later else len(text)
+
+    out, pos, trim_tail = [], 0, False
+    for match in hits[1:]:
+        end = field_end(match)
+        out.append(text[pos:match.start()])
+        pos = end
+        trim_tail = trim_tail or end == len(text)
+    out.append(text[pos:])
+    text = "".join(out)
+    return text.rstrip() if trim_tail else text
+
+
 def assemble_h3_prompt(brief, user_script=False, last_frame=False, seconds=None):
     """Deterministic assembly of the official H3 i2va/fl2va structure.
 
     The director is asked for the three labeled fields; a brief that came back
-    as bare prose (small local brains drop labels under pressure) is repaired
-    by wrapping rather than re-asked - one LLM round is expensive and the
+    as bare prose (small local brains drop labels under pressure) is     repaired by wrapping rather than re-asked - one LLM round is expensive and the
     repair is mechanical. A user-pasted script is the user's own words: it
-    gets the alignment header and NOTHING creative - no default soundscape, no
-    music policy the user did not write.
+    gets the alignment header and NOTHING creative - no default soundscape. The
+    no-score music field is not creative: the appended audio contract used to
+    carry it for scripts too (with the wrong token), so the guarantee below
+    covers every path or scripts would lose their random-score protection.
     """
     body = str(brief or "").strip()
     if not user_script:
@@ -5606,8 +6377,7 @@ def assemble_h3_prompt(brief, user_script=False, last_frame=False, seconds=None)
             body += ("\n\noverall_soundscape: The natural ambience of the "
                      "scene and the sounds of the visible actions, "
                      "synchronized.")
-        if not _H3_MUSIC_FIELD_RE.search(body):
-            body += "\n\nnon_diegetic_music: N/A"
+    body = _h3_music_field_guarantee(body)
     if not _H3_HEADER_RE.match(body):
         body = h3_alignment_header(last_frame, seconds) + "\n\n" + body
     return body
@@ -5860,6 +6630,15 @@ def h3_brief_lint(brief, seconds=None):
             f"{len(ids)} speakers ({', '.join(sorted(ids))}) - H3 attributes "
             f"at most {H3_MAX_SPEAKERS} reliably, and the extra line tends to "
             f"come back in a voice belonging to nobody on screen")
+    # 9.37: the opening defect, counted by the evidence files. The missing
+    # after-line silence is appended deterministically before the builders
+    # lint, so it is deliberately not a finding here.
+    opening = h3_speech_in_progress(text)
+    if opening and opening != H3_NO_AFTER_LINE_SILENCE:
+        warnings.append(
+            f"speech-in-progress: the brief opens with speech already "
+            f"underway (\"{opening}\") - the first word lands mid-mouth on "
+            "frame one; the clip needs a settle beat before anyone speaks")
     # the [English] tag is syntax, not speech, so it does not spend the budget
     tagged = _H3_DIALOGUE_RE.findall(text)
     # Quoted speech counts too, but never twice: a <d> line is usually quoted
@@ -6139,11 +6918,12 @@ H3_AUDIO_PROMPT = (
     # both ends. Landing the speech early is what prevents it.
     "All speech must BEGIN and FINISH inside the clip, with the final word "
     "completed before the last second of the duration; never let a line still "
-    "be running when the clip ends.\n"
-    # H3 scores clips with background music unasked, which is most of what makes
-    # a grounded scene feel like an advert. non_diegetic_music is one of the six
-    # field names from H3's own brief format, and the encoder honours it.
-    "non_diegetic_music: none."
+    "be running when the clip ends."
+    # The music field is GONE from this constant (9.37, the Reddit thread
+    # citing the guide: "N/A ... whoever posted none is wrong"). It appended
+    # "non_diegetic_music: none." AFTER the director's own field - two
+    # contradictory fields, with the wrong token. _h3_music_field_guarantee
+    # owns the field now; the two speech rules above stay byte-identical.
 )
 
 
@@ -6238,6 +7018,8 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     brief, lora_triggers = inject_video_lora_triggers(brief, video_loras)
     if H3_AUDIO_PROMPT not in brief:
         brief = brief.rstrip() + "\n\n" + H3_AUDIO_PROMPT
+    # rerolls bypass assembly, so the one-field guarantee rides the append site
+    brief = _h3_music_field_guarantee(brief)
     # Turbo rides FIRST so the creative LoRAs stack on top of the distillation
     # rather than under it, and it contributes no trigger word.
     steps, sampler_name, scheduler, turbo_rows = h3_speed_settings(turbo)
@@ -6477,6 +7259,9 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
         text, lora_triggers = inject_video_lora_triggers(prompt, video_loras)
         if H3_AUDIO_PROMPT not in text:
             text = text.rstrip() + "\n\n" + H3_AUDIO_PROMPT
+        # every shot gets the score switch: the node tokenizes each prompt on
+        # its own, and rerolls bypass assembly (same backstop as build_h3_i2v)
+        text = _h3_music_field_guarantee(text)
         written.append(text)
     brief = f"\n{H3_SHOT_SEPARATOR}\n".join(written)
 
@@ -6647,9 +7432,10 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     video_loras = resolve_h3_video_lora_stack(lora_plan, model_id)
     brief, lora_triggers = inject_video_lora_triggers(brief, video_loras)
     # H3_AUDIO_PROMPT is NOT appended in this lane: it would add instruction
-    # prose plus a second, contradictory non_diegetic_music field to a format
-    # that has no instruction line. Its two load-bearing rules (speech begins
-    # and finishes inside the clip; no unasked score) live in the ref2va
+    # prose to a format that has no instruction line (and until 9.37 it also
+    # tacked on a second, contradictory non_diegetic_music field). Its two
+    # load-bearing rules (speech begins and finishes inside the clip; no
+    # unasked score) live in the ref2va
     # director's OUTPUT CONTRACT.
     mode = h3_speed_mode(turbo)
     if mode is not None and H3_REF2V_MODEL_ID not in mode["variants"]:
@@ -7218,6 +8004,7 @@ BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "zara_edit": build_zara_edit,       # alias: pre-rename ledger entries
             "qwen_edit": build_qwen_edit, "qwen_image": build_qwen_image,
             "face_mint": build_face_mint, "klein_inpaint": build_klein_inpaint,
+            "klein_edit": build_klein_edit,
             "ltx_i2v": build_ltx_i2v, "ltx25_i2v": build_ltx25_i2v,
             "h3_i2v": build_h3_i2v,
             "h3_ref2v": build_h3_ref2v,
@@ -7663,6 +8450,12 @@ class Hub:
                                     job["stage"] = ph
                                     self.broadcast(type="thinking", cid=job["cid"],
                                                    note=ph)
+                            elif t == "execution_cached" and job:
+                                # ComfyUI's one-per-prompt list of the node ids
+                                # it will NOT run - every input unchanged since
+                                # last time. Sensor only (brief 9.33): it rides
+                                # the ledger at finalize; nothing acts on it.
+                                job["_cached_nodes"] = [str(n) for n in data.get("nodes") or []]
                             elif t == "execution_success" and job:
                                 self.pid_done(job, pid)
                             elif t == "status":
@@ -7760,6 +8553,12 @@ class Hub:
                             "bad model/lora/reference name in the request")
             self.broadcast(type="error", job_id=job["id"], cid=job["cid"],
                            message=job["error"])
+        # The cache summary answers "did ComfyUI skip the loaders?" - the
+        # number that decides whether the next lever is prewarming or graph
+        # keying (brief 9.33). Only when node_types is known; an unobserved
+        # job is recorded as unobserved, never as a miss.
+        cache = (cache_summary(job["node_types"], job.get("_cached_nodes"))
+                 if job.get("node_types") else None)
         if job["images"]:
             entry = {"id": job["id"], "ts": job["started"], "template": job["template"],
                      "scene": job["scene"], "full_prompt": job.get("full_prompt", ""),
@@ -7787,6 +8586,8 @@ class Hub:
             # 110s/step anecdote again instead of a measured rate.
             if job.get("_paging_watchdog"):
                 entry["paging_watchdog"] = job["_paging_watchdog"]
+            if cache is not None:
+                entry["cache"] = cache
             self.ledger_append(entry)
         if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
@@ -7820,6 +8621,16 @@ class Hub:
         # overwrite a low predecessor with None (no signal), or one bad night
         # trims every later job forever.
         self.prev_job_free_min = job.get("_vram_free_min")
+        # Once per job, and the no-frame form is the point: it says whether
+        # the running ComfyUI emits execution_cached at all.
+        if cache is not None:
+            if cache["observed"]:
+                print(f"[pixal] cache: {cache['hit']}/{cache['total']} nodes skipped "
+                      f"<- job {job['id']} (ran: {', '.join(cache['ran']) or 'none'})",
+                      flush=True)
+            else:
+                print(f"[pixal] cache: no execution_cached frame <- job {job['id']}",
+                      flush=True)
         print(f"[pixal] job {job['id']} done: {len(job['images'])} img, "
               f"{job['elapsed']}s, err={job['error']}", flush=True)
         # A PiD stage leaves its trio (decoder + PixelDiT TE + autoencoder,
@@ -7946,7 +8757,7 @@ class Hub:
                 return None
             spec["seconds"] = shorter
             return spec, f"at {shorter:g}s instead of {now:g}s"
-        if template in ("qwen_edit", "klein_inpaint", "face_mint"):
+        if template in ("qwen_edit", "klein_inpaint", "klein_edit", "face_mint"):
             # These sample at the source's own size. Halving the working canvas
             # quarters the VAE spike that is almost always the thing that blew.
             now = float((job.get("info") or {}).get("megapixels")
@@ -8026,19 +8837,28 @@ class Hub:
         disrupts a running render. Best effort - a failed flush just means the
         next job pays in slow steps, which is where we already were.
 
-        unload=False trims only torch's reclaimable cache and leaves every
-        model resident - the right move when the next job runs the exact stack
-        that is already loaded (see the warm-rerun path in ensure_vram)."""
-        if unload:
-            self.resident_heavies = {}
-            self.critic_hot = False      # /free evicts the AILab model too
+        unload=False asks for NOTHING. /free has no pure-trim verb:
+        free_memory calls e.reset() (main.py:409), which replaces the whole
+        node-output CacheSet (execution.py:672) - the loaders re-run from
+        disk and the "trim" costs the reload it was meant to avoid - and
+        unload_models is the full flush. The pool trim this path wants runs
+        on ComfyUI's own clock: need_gc is set after EVERY executed prompt
+        (main.py:374) and gc.collect() + soft_empty_cache() follow within
+        the worker's 10s gc_collect_interval (main.py:416-417). So the warm
+        path logs and returns; reclaim_vram's poll is what waits it out."""
+        if not unload:
+            print(f"[pixal] waiting for comfy's own trim ({why})", flush=True)
+            return True
+        self.resident_heavies = {}
+        self.critic_hot = False      # /free evicts the AILab model too
         try:
             async with aiohttp.ClientSession() as s:
                 await s.post(f"{COMFY}/free",
-                             json={"unload_models": unload, "free_memory": True},
+                             # unload_models drops the weights (main.py:404); free_memory
+                             # resets the node-output CacheSet (execution.py:672) - never on the trim.
+                             json={"unload_models": True, "free_memory": True},
                              timeout=aiohttp.ClientTimeout(total=30))
-            print(f"[pixal] {'flushed comfy model cache' if unload else 'trimmed comfy cache'}"
-                  f" ({why})", flush=True)
+            print(f"[pixal] flushed comfy model cache ({why})", flush=True)
             return True
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             print(f"[pixal] cache flush failed ({why}): {exc}", flush=True)
@@ -8059,16 +8879,19 @@ class Hub:
         So: poll. Stop as soon as `target` is cleared, or when free VRAM stops
         climbing (two flat reads = the pool is done), or at the deadline. The
         deadline is the point - this must never become an unbounded wait in
-        front of a render.
+        front of a render. On the trim path (unload=False) no request was
+        sent, so the pages arrive on ComfyUI's own post-prompt GC clock and
+        the deadline stretches to VRAM_TRIM_DEADLINE to wait that out.
 
         Returns the free bytes it settled on (None if the card cannot be read).
         """
         await self.flush_comfy_cache(why, unload)
+        deadline = VRAM_RECLAIM_DEADLINE if unload else VRAM_TRIM_DEADLINE
         # to_thread: each read is an nvidia-smi spawn, and doing that inline
         # every 0.4s stalled the event loop (and SSE) for the whole poll.
         best = await asyncio.to_thread(gpu_free_bytes)
         flat, waited = 0, 0.0
-        while waited < VRAM_RECLAIM_DEADLINE:
+        while waited < deadline:
             await asyncio.sleep(VRAM_RECLAIM_POLL)
             waited += VRAM_RECLAIM_POLL
             free = await asyncio.to_thread(gpu_free_bytes)
@@ -8081,8 +8904,8 @@ class Hub:
             # But with an unmet TARGET, two flat reads are not proof either -
             # cudaMallocAsync pauses mid-trim for longer than 0.8s, and the
             # flushes that "settled" at 1.7GB in 0.8s (2026-08-18) then ran
-            # their render at 0.4GB free. Poll to the deadline; it is 8s, and
-            # a render that starts paged loses minutes.
+            # their render at 0.4GB free. Poll to the deadline; it is seconds,
+            # and a render that starts paged loses minutes.
             if best is not None and free <= best + VRAM_RECLAIM_NOISE:
                 flat += 1
                 best = max(best, free)
@@ -8141,13 +8964,17 @@ class Hub:
         render is fast). Two things keep this one honest: the budget uses
         ComfyUI's torch-aware free number (reclaimable cache counts as free,
         so a warm re-render of the same stack always passes), and it only ever
-        ACTS - flush comfy's cache, then evict the chat brain - when the priced
+        ACTS - rest the chat brain, then flush comfy's cache - when the priced
         stack cannot fit; it narrates in the lane whenever it does.
 
         Video skips the arithmetic and always starts from a reclaimed card.
         Nine of ten ltx25 renders in the log had to make room anyway, three
         OOM'd at ~30GB allocated with the flush already behind them, and a
-        model reload is a rounding error inside a 90-second clip.
+        model reload is a rounding error inside a 90-second clip. One
+        exception (9.39): when the resident stack IS the video stack this
+        job needs and the activations fit, there is nothing dirty to evict
+        and the reload is the whole bill (~100s of a 125-149s H3 clip) -
+        that warm rerun keeps the stack and skips the flush.
         """
         if template in ("vl_review", "vl_look"):
             # The critic's 8B FP16 (~17GB) loads through transformers inside
@@ -8227,14 +9054,21 @@ class Hub:
                 if prev_floor_below_guard(self.prev_job_free_min,
                                           PREV_JOB_FREE_GUARD):
                     # The last job ended inside the guard band: the card ran
-                    # closer to the wall than the price alone can see. Bounded
-                    # escalation - the same trim the warm-rerun path uses,
-                    # unload=False, so no resident stack is evicted (the
-                    # reload IS the bill) and the chat brain is never touched.
-                    await self.reclaim_vram(
-                        f"trimming cache for {template} (last job ended at "
-                        f"{self.prev_job_free_min / 2**30:.1f}GB free)",
-                        target=act + VRAM_FLOOR, unload=False)
+                    # closer to the wall than the price alone can see. A
+                    # resident brain steps aside first - the cheap reload -
+                    # and only its absence gets the bounded escalation: the
+                    # same trim the warm-rerun path uses, unload=False, so no
+                    # resident stack is evicted (the reload IS the bill).
+                    if await free_brain_vram():
+                        self.broadcast(type="text", cid=job["cid"], text=(
+                            "*rested the chat brain for headroom - the last "
+                            "render ended at "
+                            f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
+                    else:
+                        await self.reclaim_vram(
+                            f"trimming cache for {template} (last job ended "
+                            f"at {self.prev_job_free_min / 2**30:.1f}GB free)",
+                            target=act + VRAM_FLOOR, unload=False)
                 return
             if weights > 0 and hot == weights and not video:
                 # Prompt-only rerun: every heavy this graph names is already
@@ -8250,10 +9084,72 @@ class Hub:
                       f"resident, {(free or 0) / 2**30:.1f}GB free for "
                       f"activations", flush=True)
                 return
+            if video and heavy \
+                    and all(name in self.resident_heavies for name in heavy) \
+                    and free >= act + VRAM_FLOOR and not ram_short:
+                # 9.39 - warm video rerun: the resident stack IS the video
+                # stack this clip needs, so there is nothing dirty to evict
+                # and the unconditional flush IS the cost - ~100s of every
+                # 125-149s H3 clip tonight was the 24.9GB stack reloading
+                # after the flush evicted it (ledger 3458c98e / d400350d /
+                # 821ff25e). The dirty-card reasoning behind the flush -
+                # three ltx25 OOMs that started from a still's stack under a
+                # video's - does not apply to the same stack. The test is
+                # set membership, not the still path's hot == weights:
+                # weights is a PEAK (max heavy + light) where hot is a SUM,
+                # so H3's DiT+CLIP pair (36.9GB resident against a 22.5GB
+                # peak) could never satisfy it. Keep resident_heavies as it
+                # stands and go.
+                if prev_floor_below_guard(self.prev_job_free_min,
+                                          PREV_JOB_FREE_GUARD):
+                    # The 9.35 near-miss guard first, exactly as on the
+                    # still fit path: a resident brain steps aside (the
+                    # cheap reload), else the bounded trim - unload=False
+                    # either way, so the resident stack is never evicted.
+                    if await free_brain_vram():
+                        self.broadcast(type="text", cid=job["cid"], text=(
+                            "*rested the chat brain for headroom - the last "
+                            "render ended at "
+                            f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
+                    else:
+                        await self.reclaim_vram(
+                            f"trimming cache for {template} (last job ended "
+                            f"at {self.prev_job_free_min / 2**30:.1f}GB free)",
+                            target=act + VRAM_FLOOR, unload=False)
+                print(f"[pixal] warm video rerun: kept "
+                      f"{weights / 2**30:.1f}GB resident, "
+                      f"{free / 2**30:.1f}GB free for activations",
+                      flush=True)
+                return
             print(f"[pixal] butler: {template} wants {need / 2**30:.1f}GB "
                   f"({(weights - hot) / 2**30:.1f}GB cold weights + "
                   f"{act / 2**30:.1f}GB act), free {free / 2**30:.1f}GB, "
                   f"ram_short={ram_short}", flush=True)
+            # The brain is the cheap reload now (a 4.5GB GGUF, seconds from
+            # page cache); the flush is ~20GB and 15-25s. When resting it
+            # alone makes the fit, that is the whole bill. Video keeps its
+            # unconditional flush - a reload is noise inside a 90-170s clip.
+            brain_bytes = 0 if video else brain_vram_estimate()
+            if brain_should_rest(free, need, brain_bytes):
+                await free_brain_vram()
+                free = await comfy_vram_free_bytes()
+                if free is None:
+                    free = await asyncio.to_thread(gpu_free_bytes)
+                if free is not None and free >= need:
+                    cached = sum(self.resident_heavies.values())
+                    self.resident_heavies = dict(heavy)
+                    self.broadcast(type="text", cid=job["cid"], text=(
+                        "*rested the chat brain instead of clearing "
+                        f"~{cached / 2**30:.0f} GB of cached models - it "
+                        "returns on your next message*"))
+                    print(f"[pixal] butler: rested the brain "
+                          f"(+{brain_bytes / 2**30:.1f}GB) instead of "
+                          f"flushing for {template}", flush=True)
+                    return
+                # Still short with the brain gone: fall through to the flush
+                # as priced. The "rested the chat brain" note below cannot
+                # fire twice - the pidfile went with the kill, so
+                # free_brain_vram returns False there.
             free = await self.reclaim_vram(
                 f"making room for {template}", target=weights + act + VRAM_FLOOR)
             # A flush the driver ignored is not a flush. Job 2b3f4eb2
@@ -8409,6 +9305,15 @@ class Hub:
                 or own_civ.get("base")
             if bm not in (None, "", "Unknown"):
                 meta["base"] = bm
+            # 9.30: the Settings library tab reads what a build weighs (the
+            # catalog already measured it) and links the ones lora-manager
+            # matched to their Civitai page - the by-hash record carries no
+            # modelId, so a miss simply has no link.
+            if entry.get("size"):
+                meta["size"] = entry["size"]
+            if civ.get("modelId"):
+                meta["civitai_url"] = \
+                    f"https://civitai.com/models/{civ['modelId']}"
             if is_new_model(entry, now):
                 meta["is_new"] = True
             model_meta[rel] = meta
@@ -8500,7 +9405,8 @@ class Hub:
                 "vram": vram_profile_state(),
                 "characters": [{"id": c["id"], "name": c["name"], "age": c.get("age"),
                                 "race": c.get("race"), "sex": c.get("sex"),
-                                "has_ref": character_identity_ready(c)}
+                                "has_ref": character_identity_ready(c),
+                                "ref_rev": character_identity_rev(c)}
                                for c in CHARACTERS.values()],
                 "model_roots": [str(r) for r in model_roots()], "defaults": defaults}
 
@@ -9585,6 +10491,20 @@ H3_MOTION_SYSTEM = (
     "line. At most TWO speakers, (S1) and (S2), and across all of them no "
     "more than two and a half spoken words per second of clip - a five second "
     "clip holds about a dozen words in total. Cut the line, not the clip. "
+    # 9.37: the settle beat (ledger 3458c98e/d400350d - stills prompted
+    # "mid-sentence expression" came back as clips that open mid-word). The
+    # mouth's clock is NOT the anti-freeze rule's clock: the world still
+    # moves from frame one; only the first word waits. And the after-line
+    # half is the Reddit thread's gibberish fix: unstated seconds get filled
+    # with mouth noise. Lives in the contract because mid-prompt speech rules
+    # are the ones the 4B skims; h3_speech_in_progress is the floor behind it.
+    "The mouth keeps its own clock: the world moves from frame one, but the "
+    "lips stay CLOSED until the line, and the first spoken word lands only "
+    "after a visible settle - a breath, a look, a small motion, roughly a "
+    "second in. Never describe a word, breath or syllable as already in "
+    "progress at the start. When the line is done the mouth is done: after "
+    "it the lips close and there is no further speech - every unspoken "
+    "second the brief leaves open comes back as mouth noise. "
     # The quality gate has to live HERE. Every content rule about dialogue sits
     # mid-prompt, which is precisely what a small brain skims - the tag syntax
     # lands because the contract checks it and the words did not because the
@@ -9704,7 +10624,18 @@ H3_REF2V_MOTION_SYSTEM = (
     "last second: speech still running when the clip ends is cut off there, "
     "and the piece that did not fit reappears as a stray syllable over the "
     "opening frames. At most TWO speakers, and no more than two and a half "
-    "spoken words per second of clip across both.\n"
+    "spoken words per second of clip across both. "
+    # 9.37's settle beat and after-line silence, same rule as the fl2va
+    # contract's point 2 (the still genre that triggers it - "mid-sentence
+    # expression" phone selfies - feeds this lane through the reference slot
+    # just the same).
+    "The mouth keeps its own clock: the lips stay CLOSED until the line, and "
+    "the first spoken word lands only after a visible settle - a breath, a "
+    "look, a small motion, roughly a second in; never describe a word, "
+    "breath or syllable as already in progress at the start. When the line "
+    "is done the mouth is done: after it the lips close and there is no "
+    "further speech - every unspoken second the brief leaves open comes "
+    "back as mouth noise.\n"
     "3. The tempo is stated in positives only - what moves and at what real "
     "speed, never what fails to happen - and non_diegetic_music carries a "
     "score only when the note asked for one.\n"
@@ -10080,6 +11011,92 @@ def _local_llm_mmproj(model_path):
     return str(cands[0]) if cands else None
 
 
+def _local_llm_port_pids():
+    """Pids of whatever is LISTENING on the brain port, [] on any failure.
+
+    netstat parses by column, never by substring: a port matched in the wrong
+    column - or by prefix, 819 inside 8191 - is a wrong pid, and a wrong pid
+    is the one outcome worse than none. lsof -t answers pids only, and exits
+    1 for "nothing matched", which is not an error here.
+    """
+    try:
+        if _nt():
+            out = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if out.returncode != 0:
+                return []
+            pids = []
+            for line in out.stdout.splitlines():
+                # "  TCP    127.0.0.1:8191    0.0.0.0:0    LISTENING    4242"
+                cols = line.split()
+                if len(cols) == 5 and cols[3] == "LISTENING" and \
+                        cols[1].rsplit(":", 1)[-1] == str(LOCAL_LLM_PORT) and \
+                        cols[4].isdigit():
+                    pids.append(int(cols[4]))
+            return pids
+        out = subprocess.run(
+            ["lsof", "-nP", f"-i:{LOCAL_LLM_PORT}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=15)
+        if out.returncode != 0:
+            return []
+        return [int(x) for x in out.stdout.split()]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+def _process_cmdline(pid):
+    """One process's command line, or None when it cannot be read (process
+    gone, tool missing, query refused). None is the only safe failure answer:
+    the caller substring-matches on this, and a made-up command line is a
+    wrong pid waiting to be killed.
+
+    Get-CimInstance, not wmic - wmic is an optional feature current Windows
+    11 ships without. /proc first on POSIX, ps where /proc does not exist.
+    """
+    try:
+        if _nt():
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}')"
+                 ".CommandLine"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if out.returncode != 0:
+                return None
+            return out.stdout.strip() or None
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+            return raw.replace(b"\x00", b" ").decode(
+                "utf-8", "replace").strip() or None
+        except OSError:
+            out = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                                 capture_output=True, text=True, timeout=15)
+            if out.returncode != 0:
+                return None
+            return out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+def _adopted_brain_pid():
+    """The pid of the brain-port listener when it is OURS, else None.
+
+    The pidfile proves Pixal spawned a brain only while the sidecar that
+    wrote it lives; a restart loses the file but not the child (Jesse,
+    2026-08-25 16:45: re-registered pid-less, 8.3 GB nothing would reclaim).
+    The port holder's command line is the same proof in recoverable form:
+    it names pixal_brain_server.py by absolute path, and only a spawn from
+    THIS tree carries THIS tree's path. Anything else on the port -
+    run_llm.bat, a foreign server serving the very same gguf - keeps None,
+    and so does every lookup failure: a guessed pid kills the wrong process.
+    """
+    ours = os.path.normcase(str(HERE / "pixal_brain_server.py"))
+    for pid in _local_llm_port_pids():
+        cmdline = _process_cmdline(pid)
+        if cmdline and ours in os.path.normcase(cmdline):
+            return pid
+    return None
+
 async def ensure_local_llm(cid=None):
     """No-op unless the chat brain points at the managed port. Returns an error
     string (the honest kind, for the lane) or None when the server is ready.
@@ -10156,13 +11173,21 @@ async def _ensure_local_llm(cid=None):
         # and answering (Jesse, 2026-08-24: the 4B heretic answered the red
         # probe "Red" while every look routed to the critic). Re-register when
         # the served model IS the configured one: same smoke test a fresh
-        # spawn gets, then the gates have their fact. pid stays None - the
-        # pidfile is what licenses reaper/release/free_brain_vram to kill,
-        # and we cannot prove we spawned this one.
+        # spawn gets, then the gates have their fact. The pid is the licence
+        # reaper/release/free_brain_vram kill on, and a missing pidfile no
+        # longer means no proof: the port holder's command line naming OUR
+        # pixal_brain_server.py IS the spawn receipt (the child survives the
+        # sidecar that lost the file), so recover it and free brain works
+        # again. A stranger on the port - even serving the same gguf - keeps
+        # pid None, and so does any failed lookup.
         serving = await _local_llm_serving_model()
         if not serving or os.path.normcase(str(serving)) != os.path.normcase(want):
             return None              # a stranger's server - use as-is, never kill
-        adopted = {"pid": None, "model": want, "gpu_layers": gpu_layers,
+        try:
+            pid = await asyncio.to_thread(_adopted_brain_pid)
+        except Exception:            # a guessed pid kills the wrong process
+            pid = None
+        adopted = {"pid": pid, "model": want, "gpu_layers": gpu_layers,
                    "adopted": True}
         if mmproj and not await _vision_smoke_test():
             adopted.update(mmproj=None, blind_mmproj=mmproj)
@@ -10182,6 +11207,17 @@ async def _ensure_local_llm(cid=None):
     if up and st.get("model") == want and st.get("gpu_layers") == gpu_layers \
             and (st.get("mmproj") == mmproj
                  or st.get("blind_mmproj") == mmproj):
+        # A state adopted BEFORE the pid recovery existed (or while the lookup
+        # failed) still reads pid None; every reuse is a chance to recover it,
+        # so the reaper and free brain stop skipping a brain that is ours.
+        if st.get("adopted") and not st.get("pid"):
+            try:
+                pid = await asyncio.to_thread(_adopted_brain_pid)
+            except Exception:
+                pid = None
+            if pid:
+                st["pid"] = pid
+                LLM_STATE.write_text(json.dumps(st), encoding="utf-8")
         return None                  # ours, right model/eyes/card split
 
     llm_python, python_error = resolve_local_llm_python(full_cfg)
@@ -10220,6 +11256,9 @@ async def _ensure_local_llm(cid=None):
             "--host", "127.0.0.1", "--port", str(LOCAL_LLM_PORT)]
     if mmproj:
         args += ["--clip_model_path", mmproj]
+    spawn_t0 = time.time()         # spawn start: the butler now rests the
+                                   # brain for headroom, so the respawn cost
+                                   # the next chat turn pays gets measured
     try:
         proc = subprocess.Popen(
             args, env=env, stdout=log, stderr=log,
@@ -10241,6 +11280,8 @@ async def _ensure_local_llm(cid=None):
             return (f"the local brain crashed loading {name} - "
                     "inspect llama_server.log")
         if await local_llm_up():
+            print(f"[pixal] brain up in {time.time() - spawn_t0:.1f}s",
+                  flush=True)
             if mmproj and not await _vision_smoke_test():
                 # Up, answering, and blind. Demote to text-only rather than let
                 # the lane keep promising eyes: _delocalize and has_vision_refs
@@ -10481,6 +11522,7 @@ RECIPE_NOTE = {
     "identity_edit": "her identity", "zara_edit": "her identity",
     "realism": "a photographic frame", "realism_ii": "a photographic frame",
     "qwen_image": "a photographic frame", "qwen_edit": "the edit",
+    "klein_edit": "the edit",
     "zimage": "the frame", "anime": "an anime frame", "fantasy": "a fantasy frame",
 }
 
@@ -10533,7 +11575,8 @@ _AFFIRMATIVE = re.compile(
 # upscale/review carry no author's words at all.
 PROSE_TEMPLATES = frozenset({
     "realism", "realism_ii", "fantasy", "anime", "zimage", "anima",
-    "identity_edit", "zara_edit", "qwen_image", "face_mint", "klein_inpaint"})
+    "identity_edit", "zara_edit", "qwen_image", "face_mint", "klein_inpaint",
+    "klein_edit"})
 
 # Server-side machinery that must never reach a text encoder. The brackets are
 # blocks this server itself appends to user turns; the rest is a model printing
@@ -12127,8 +13170,13 @@ _VISUAL_DESIRE = re.compile(
     r"\s*i\s+(?:(?:just\s+)?(?:want|need)|would\s+(?:like|love))\s+"
     r"(?:to\s+(?:see|make|create|render|draw|shoot|build)\b|"
     r"(?:an?|some|the|this|that)\b)", re.I)
+# A demonstrative is only chat when it is the WHOLE subject ("this is
+# great", "that was sitting on my desk"); "This blonde bombshell is posing
+# for Hustler magazine" is a caption, and the old lookahead threw it to
+# conversation on its first word (chat 952084e3, 2026-08-25 - the brain then
+# had to ask for "go").
 _VISUAL_COPULA = re.compile(
-    r"\s*(?!(?:i|we|you|my|our|your|this|that|these|those)\b).+?"
+    r"\s*(?!(?:i|we|you|my|our|your)\b|(?:this|that|these|those)\s+(?:is|are|was|were)\b).+?"
     r"\b(?:is|are|was|were)\s+(?:sitting|standing|lying|kneeling|crouching|"
     r"walking|running|flying|riding|dancing|wearing|holding|carrying|facing|"
     r"looking|leaning|posing|smiling|turning|moving)\b", re.I)
@@ -13603,8 +14651,13 @@ async def settings_get(_req):
                   # run at all - pack plus 659 MB weights - so the Settings
                   # row disables itself honestly instead of offering a
                   # setting that silently does nothing.
+
                   "upscale_2x": bool(cfg["video"].get("upscale_2x", False)),
                   "upscale_2x_available": h3_upscale_available(),
+                  # The 9.38 tags/quotes switch (MiniMax-H3 #76), published
+                  # with its default so an old config still reads "quotes".
+                  "h3_dialogue_tags": cfg["video"].get("h3_dialogue_tags",
+                                                       "quotes"),
                   "engines": [{"id": e["id"], "label": e["label"],
                                "available": e.get("available", True),
                                "models": [{"id": m["id"], "label": m["label"],
@@ -13683,12 +14736,16 @@ async def settings_post(req):
         # Same contract as the upscaler above: "" means "use the recipe default",
         # and anything else is checked against the installed compatible set now,
         # so a deleted or renamed release is refused here rather than failing
-        # every later edit.
+        # every later edit. The whole-frame slot holds BOTH edit families
+        # (9.44): a Qwen build runs qwen_edit, a Klein build routes the same
+        # mask-less edit to klein_edit - either candidate list validates.
         want = edit_cfg["model"].strip().replace("/", "\\")
+        lanes = (recipe_model_candidates("qwen_edit")
+                 + recipe_model_candidates("klein_edit"))
         if want and not any(entry["rel"].replace("/", "\\").lower() == want.lower()
-                            for entry in recipe_model_candidates("qwen_edit")):
+                            for entry in lanes):
             return web.json_response(
-                {"ok": False, "error": f"not an installed Qwen Image Edit model: {want}"},
+                {"ok": False, "error": f"not an installed edit model: {want}"},
                 status=400)
         cfg["edit"]["model"] = want
     if "inpaint_model" in edit_cfg and isinstance(edit_cfg["inpaint_model"], str):
@@ -13743,6 +14800,16 @@ async def settings_post(req):
                 {"ok": False,
                  "error": f"not a bool: {video_cfg['upscale_2x']}"}, status=400)
         cfg["video"]["upscale_2x"] = video_cfg["upscale_2x"]
+    if "h3_dialogue_tags" in video_cfg:
+        # 9.38: tags is the trained form, quotes the #76 workaround - the
+        # same refusal "not a console style" gives, or a typo would stand a
+        # silent fallback ON for every brief.
+        want = video_cfg["h3_dialogue_tags"]
+        if want not in ("tags", "quotes"):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not one of tags|quotes: {want}"}, status=400)
+        cfg["video"]["h3_dialogue_tags"] = want
     if "comfy_editor" in body:
         cfg["comfy_editor"] = bool(body["comfy_editor"])
     if "comfy_console" in body:
@@ -14041,14 +15108,23 @@ async def character_ref_thumb(req):
         return web.json_response({"ok": False, "error": "reference image not found"}, status=404)
     try:
         stat = path.stat()
+    except OSError as exc:
+        return web.json_response(
+            {"ok": False, "error": f"could not preview reference image: {exc}"}, status=415)
+    # no-cache, not max-age: the same URL fronts every reference this anchor
+    # ever has, so the browser must revalidate each time - the mtime-size ETag
+    # makes an unchanged reference a cheap 304 and a new one instant.
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+    headers = {"Cache-Control": "private, no-cache", "ETag": etag}
+    if any(tag.strip() in (etag, "*")
+           for tag in req.headers.get("If-None-Match", "").split(",")):
+        return web.Response(status=304, headers=headers)
+    try:
         data = await asyncio.to_thread(_input_thumbnail_bytes, str(path), stat.st_mtime_ns)
     except (OSError, ValueError) as exc:
         return web.json_response(
             {"ok": False, "error": f"could not preview reference image: {exc}"}, status=415)
-    return web.Response(body=data, content_type="image/webp", headers={
-        "Cache-Control": "private, max-age=3600",
-        "ETag": f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"',
-    })
+    return web.Response(body=data, content_type="image/webp", headers=headers)
 
 
 class _ActionBody:
@@ -14097,9 +15173,13 @@ def _action_receipt(fn, target, payload):
             "status": "queued - NOT finished. Reply with ONE short line." + over}
 
 
-async def animate(req):
-    """One click: still -> selected video engine, with engine-safe preparation."""
-    body = await req.json()
+def prepare_animate(body):
+    """The front of /api/animate, shared with /api/animate/brief (9.36): body
+    validation, engine/model/seconds/fps/shots resolution, the ledger lookup,
+    the source-frame staging and the submit-args build. Returns the locals the
+    rest of the route works on, or a web.json_response error the caller
+    returns untouched. Nothing here is new - it is the route's own first
+    half, lifted so the draft prepares exactly what the render prepares."""
     # A pasted script is the user's own words and bypasses the motion director
     # entirely - the same contract prompt_enhance=off gives stills. A script that
     # separates its shots declares its own shot count.
@@ -14160,6 +15240,18 @@ async def animate(req):
     args = {"seconds": seconds, "model": model_id}
     if fps is not None:
         args["fps"] = fps
+    # 9.38: an explicit seed pins the draw so the tags/quotes A/B runs
+    # same-seed. Validated like held_seed (range [1, 2**62), int-like
+    # strings taken); bools and floats are refused rather than truncated -
+    # a pinned 12 from a 12.5 ask would be a silent fallback. Present but
+    # unusable is a 400, never a quiet re-roll with random dice.
+    if body.get("seed") not in (None, ""):
+        raw = body["seed"]
+        seed = None if isinstance(raw, (bool, float)) else held_seed(body)
+        if seed is None:
+            return web.json_response(
+                {"ok": False, "error": f"not a seed: {raw}"}, status=400)
+        args["seed"] = seed
     try:
         if engine == "h3":
             if variant == H3_REF2V_MODEL_ID:
@@ -14250,6 +15342,85 @@ async def animate(req):
             args["image"] = dst
     except (OSError, ValueError) as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    return {"script": script, "engine": engine, "model_id": model_id,
+            "seconds": seconds, "fps": fps, "lora_plan": lora_plan,
+            "shots": shots, "variant": variant, "entry": entry,
+            "last_entry": last_entry, "args": args}
+
+
+async def look_and_direct(body, prep, cut_plan, cid):
+    """The LOOK and DIRECT stages both animate routes share: read the staged
+    frame (and the bridge's end frame) through the critic when the chat brain
+    cannot see, then make the same direct_motion call the render would make.
+    Returns (brief, directed) at the stage the lane narrates as *the brief:* -
+    post-normalise, pre-assembly - which is exactly the stage where sending
+    the text back as `script` assembles to the same prompt (brief 9.36)."""
+    engine, model_id, seconds, shots = (prep["engine"], prep["model_id"],
+                                        prep["seconds"], prep["shots"])
+    entry, last_entry, args = prep["entry"], prep["last_entry"], prep["args"]
+    label = "motion and sound" if engine == "h3" else "the motion"
+    if shots > 1:
+        label += (f" as one take with {shots - 1} cut"
+                  f"{'s' if shots > 2 else ''}" if cut_plan
+                  else f" across {shots} shots")
+    # LOOK stage: the managed llama.cpp brain has no mmproj, so on the local
+    # preset the attached frame flattens to "[attached image]" and the brief
+    # gets written blind. Read the frame through the critic's VL graph first
+    # and hand the director its inventory as ground truth. Cloud brains with
+    # real vision keep the direct image attach below.
+    look = look_end = ""
+    if f"127.0.0.1:{LOCAL_LLM_PORT}" in load_config()["llm"]["base_url"]:
+        # the staged frame: the prepared first frame on fl2va, the raw
+        # reference copy on ref2va - either way it is in ComfyUI's input
+        staged = args.get("image") or (args.get("refs") or [None])[0]
+        HUB.broadcast(type="thinking", cid=cid, note="looking at the frame")
+        look = await frame_inventory(staged, entry["id"], cid)
+        if args.get("last_image"):
+            HUB.broadcast(type="thinking", cid=cid, note="looking at the end frame")
+            look_end = await frame_inventory(args["last_image"],
+                                             last_entry["id"], cid)
+    HUB.broadcast(type="thinking", cid=cid, note=f"directing {label}")
+    # 9.41: a still from the selfie chain animates AS a selfie - the camera
+    # IS the phone, and the director hears it as one standing sentence after
+    # the user's own words (the whole note when they wrote none). ref2va is
+    # excluded: a reference lane has no frame-zero premise. Scripts never
+    # reach here - they bypass the director entirely.
+    hint = body.get("hint")
+    if (engine == "h3" and prep["variant"] != H3_REF2V_MODEL_ID
+            and h3_selfie_source(entry)):
+        note = _h3_selfie_camera_note(entry.get("scene") or "")
+        own = str(hint).strip() if hint else ""
+        hint = f"{own} {note}" if own else note
+    motion, directed = await direct_motion(entry["scene"], hint,
+                                           engine=engine, shots=shots,
+                                           cut_times=cut_plan[1] if cut_plan else None,
+                                           seconds=seconds,
+                                           # the staged still, which both
+                                           # engines have just written into
+                                           # ComfyUI's input folder (raw
+                                           # reference copy on ref2va)
+                                           frame=args.get("image") or
+                                                 (args.get("refs") or [None])[0],
+                                           look=look,
+                                           last_frame=args.get("last_image"),
+                                           look_end=look_end,
+                                           model=model_id)
+    if cut_plan:
+        motion = normalise_cut_timeline(motion, cut_plan[1])
+    HUB.broadcast(type="thinkingdone", cid=cid)
+    return motion, directed
+
+
+async def animate(req):
+    """One click: still -> selected video engine, with engine-safe preparation."""
+    body = await req.json()
+    prep = prepare_animate(body)
+    if isinstance(prep, web.Response):
+        return prep
+    script = prep["script"]
+    engine, model_id, seconds = prep["engine"], prep["model_id"], prep["seconds"]
+    shots, variant = prep["shots"], prep["variant"]
+    entry, args = prep["entry"], prep["args"]
     cid = body.get("cid") or uuid.uuid4().hex[:8]
     if script:
         motion, directed = script, True     # verbatim - no director round at all
@@ -14262,45 +15433,7 @@ async def animate(req):
         if cut_plan and len(written) == shots:
             motion = compile_cut_script(written, cut_plan[1])
     else:
-        label = "motion and sound" if engine == "h3" else "the motion"
-        if shots > 1:
-            label += (f" as one take with {shots - 1} cut"
-                      f"{'s' if shots > 2 else ''}" if cut_plan
-                      else f" across {shots} shots")
-        # LOOK stage: the managed llama.cpp brain has no mmproj, so on the local
-        # preset the attached frame flattens to "[attached image]" and the brief
-        # gets written blind. Read the frame through the critic's VL graph first
-        # and hand the director its inventory as ground truth. Cloud brains with
-        # real vision keep the direct image attach below.
-        look = look_end = ""
-        if f"127.0.0.1:{LOCAL_LLM_PORT}" in load_config()["llm"]["base_url"]:
-            # the staged frame: the prepared first frame on fl2va, the raw
-            # reference copy on ref2va - either way it is in ComfyUI's input
-            staged = args.get("image") or (args.get("refs") or [None])[0]
-            HUB.broadcast(type="thinking", cid=cid, note="looking at the frame")
-            look = await frame_inventory(staged, entry["id"], cid)
-            if args.get("last_image"):
-                HUB.broadcast(type="thinking", cid=cid, note="looking at the end frame")
-                look_end = await frame_inventory(args["last_image"],
-                                                 last_entry["id"], cid)
-        HUB.broadcast(type="thinking", cid=cid, note=f"directing {label}")
-        motion, directed = await direct_motion(entry["scene"], body.get("hint"),
-                                               engine=engine, shots=shots,
-                                               cut_times=cut_plan[1] if cut_plan else None,
-                                               seconds=seconds,
-                                               # the staged still, which both
-                                               # engines have just written into
-                                               # ComfyUI's input folder (raw
-                                               # reference copy on ref2va)
-                                               frame=args.get("image") or
-                                                     (args.get("refs") or [None])[0],
-                                               look=look,
-                                               last_frame=args.get("last_image"),
-                                               look_end=look_end,
-                                               model=model_id)
-        if cut_plan:
-            motion = normalise_cut_timeline(motion, cut_plan[1])
-        HUB.broadcast(type="thinkingdone", cid=cid)
+        motion, directed = await look_and_direct(body, prep, cut_plan, cid)
         # show the brief in the lane - the user should SEE what their note became
         HUB.broadcast(type="text", cid=cid,
                       text=(f"*the brief:* {motion}" if directed else
@@ -14334,6 +15467,14 @@ async def animate(req):
         # closer. assemble_h3_prompt stays sync, so both run here.
         motion = h3_style_splice(motion, h3_style_for_entry(entry))
         motion = await repair_h3_hanging_dialogue(motion, cid)
+        # 9.37: the settle repair moves the first word off the opening. It
+        # runs after the hanging-line repair and only on the directed path -
+        # a user's verbatim script is theirs.
+        if not script:
+            motion = await repair_h3_speech_in_progress(motion, cid)
+            # 9.41: a selfie still's brief keeps the camera-is-the-phone
+            # fact - restated when the director dropped it.
+            motion = repair_selfie_camera(motion, h3_selfie_source(entry))
     elif template == "h3_ref2v":
         # The six-section trained format, sibling of the fl2va assembly: the
         # DIRECTOR authored the sections (H3_REF2V_MOTION_SYSTEM); the
@@ -14345,14 +15486,64 @@ async def animate(req):
             motion, [{} for _ in args.get("refs") or []],
             user_script=bool(script), style=h3_style_for_entry(entry))
         motion = await repair_h3_hanging_dialogue(motion, cid)
+        if not script:
+            motion = await repair_h3_speech_in_progress(motion, cid)
         if ref_warnings:
             HUB.broadcast(type="text", cid=cid,
                           text="*ref2va: " + "; ".join(ref_warnings) + "*")
+    if engine == "h3":
+        # 9.38: the standing dialogue format is spelled LAST, after every
+        # tag-keyed repair above - and on scripts too, since only the syntax
+        # changes, never the words.
+        motion = h3_spell_dialogue(motion)
     asyncio.create_task(HUB.submit(cid, "chat", template, motion,
                                    args, 1, parent=entry["id"]))
     return web.json_response({"ok": True, "cid": cid, "motion": motion,
                               "engine": engine, "model": model_id,
                               "seconds": seconds, "shots": shots})
+
+
+async def animate_brief(req):
+    """Draft the director's brief WITHOUT spending the clip (brief 9.36).
+
+    Same body as /api/animate minus `script`: the same preparation, the same
+    look, the same direct_motion call with the same arguments - but the brief
+    comes back here instead of riding a queued render. The popup shows it,
+    the user reads and edits it, and committing sends it back as `script`,
+    which the lane then narrates as *your script:*. The thinking notes still
+    broadcast so the lane shows the work, but nothing is queued and no lane
+    line is written."""
+    body = await req.json()
+    prep = prepare_animate(body)
+    if isinstance(prep, web.Response):
+        return prep
+    engine, seconds, shots = prep["engine"], prep["seconds"], prep["shots"]
+    cid = body.get("cid") or uuid.uuid4().hex[:8]
+    cut_plan = h3_cut_plan(shots, seconds) if engine == "h3" else None
+    brief, directed = await look_and_direct(body, prep, cut_plan, cid)
+    if engine == "h3" and directed:
+        # The draft ships back as `script`, and a script is the user's own
+        # words: the render path then skips every directed-only repair (the
+        # assembler's bracket/label fixes, the 9.37 settle beat). So those
+        # repairs run HERE, on the text the user is about to read - what
+        # they see is the finished brief, and committing it verbatim loses
+        # nothing the directed render would have done. The hanging-line
+        # repair runs on both paths and is idempotent, so running it early
+        # only moves it in front of the user's eyes.
+        brief = re.sub(r"\[\s*d\s*\]", "<d>", brief, flags=re.I)
+        brief = re.sub(r"\[\s*/\s*d\s*\]", "</d>", brief, flags=re.I)
+        brief = repair_h3_dialogue_tags(brief)
+        brief = await repair_h3_hanging_dialogue(brief, cid)
+        brief = await repair_h3_speech_in_progress(brief, cid)
+        # 9.41: the same restatement the directed render gets - what the
+        # user reads is what ships. ref2va drafts are excluded explicitly;
+        # the render path excludes them by taking the h3_ref2v branch.
+        if prep["variant"] != H3_REF2V_MODEL_ID:
+            brief = repair_selfie_camera(brief, h3_selfie_source(prep["entry"]))
+    # what the user reads is what ships: the standing spelling, last
+    brief = h3_spell_dialogue(brief)
+    return web.json_response({"ok": True, "brief": brief, "directed": directed,
+                              "shots": shots, "engine": engine})
 
 # ---- trailer orchestration ---------------------------------------------------
 # A minute of MiniMax H3 is a dozen 5s generations, not one: the single-pass
@@ -14959,13 +16150,24 @@ async def edit(req):
                 {"ok": False, "error": "a masked edit cannot take a reference "
                                        "image yet - clear the mask first"}, status=400)
     # The source-only recipes all start from an image in input/ and differ in
-    # what they do with it: qwen_edit follows an instruction, klein_inpaint
-    # redraws only the painted mask, face_mint rewrites the person. Anything
-    # else would have no source to work from. A mask flips the default lane.
-    recipe = str(body.get("recipe") or ("klein_inpaint" if mask else "qwen_edit"))
+    # what they do with it: qwen_edit and klein_edit follow an instruction
+    # whole-frame, klein_inpaint redraws only the painted mask, face_mint
+    # rewrites the person. Anything else would have no source to work from. A
+    # mask flips the default lane to the masked one; without a mask the
+    # configured edit model's family picks the whole-frame lane (9.44).
+    recipe = str(body.get("recipe") or
+                 ("klein_inpaint" if mask else _whole_frame_edit_recipe()))
     if recipe not in SOURCE_ONLY_RECIPE_IDS:
         return web.json_response(
             {"ok": False, "error": f"not an edit recipe: {recipe}"}, status=400)
+    # A reference rides qwen_edit's Plus encoders only. Wherever the route
+    # landed (a Klein pick, an explicit masked recipe), if this lane has no
+    # reference input the SIGS filter below would drop the user's attachment
+    # SILENTLY - refuse instead, the standard the mask guard above sets.
+    if reference and "reference" not in SIGS[recipe]:
+        return web.json_response(
+            {"ok": False, "error": f"a reference image needs the Qwen edit "
+                                   f"lane - {recipe} cannot take one"}, status=400)
     args = {"image": dst}
     if reference:
         args["reference"] = reference
@@ -14977,6 +16179,10 @@ async def edit(req):
     # Recipes accept different knobs; megapixels means nothing to face_mint and
     # denoise means nothing to qwen_edit.
     args = {k: v for k, v in args.items() if k in SIGS[recipe]}
+    # seed is not a builder argument - HUB.submit pops it before the SIGS
+    # filter - so it rides past this one, the same contract generate() has.
+    if body.get("seed") is not None:
+        args["seed"] = body["seed"]
     cid = body.get("cid") or uuid.uuid4().hex[:8]
     asyncio.create_task(HUB.submit(cid, "chat", recipe, instruction,
                                    args, 1, parent=parent))
@@ -15259,12 +16465,64 @@ async def chats_post(req):
         HUB.delete_chat(chat_id)
     return await chats_get(req)
 
+# The fields the composer OWNS on a re-roll (brief 9.42): the stored spec's
+# copies are stripped before _apply_opts re-derives them from the live bundle,
+# so a stale preset's tuning, an old face or its dials can never leak through
+# the overlay. The dial keys are identity_edit's declaration - the only recipe
+# that declares any - exactly the set _apply_opts re-applies. What survives is
+# what the brain derived from the scene (standing, nsfw, ...).
+_REROLL_COMPOSER_OWNED = (
+    "model", "loras", "lora_plan", "aspect", "mp", "overrides", "_style",
+    "character", "ref", "seed",
+) + tuple(d["key"] for d in RECIPE_SPECS["identity_edit"].get("dials", ()))
+
+
 async def reroll(req):
     body = await req.json()
     entry = next((e for e in HUB.ledger_read() if e["id"] == body.get("id")), None)
     if not entry:
         return web.json_response({"ok": False, "error": "no such generation"}, status=404)
     tmpl = entry["template"]
+    # One route, one overlay: a bundle carrying `opts` - the same object the
+    # composer sends /api/chat - re-rolls the card's SCENE under the composer's
+    # whole live state, through the same overlay chat uses, instead of the
+    # hand-copied subset below. The subset knew four of the overlay's eight
+    # fields, so "turn Mia on and re-roll" rolled the plain graph - a stranger
+    # every time (Jesse, 2026-08-25: "pretty sure the graph doesn't auto
+    # adjust"). The gate is the canvas block's own: only a composer-owned
+    # recipe (a truthy aspect) takes live state; source-only graphs and
+    # video/upscale entries fall through to the legacy path untouched.
+    opts = body.get("opts")
+    if isinstance(opts, dict) and RECIPE_SPECS.get(tmpl, {}).get("aspect"):
+        args = dict(entry.get("spec") or {})
+        for key in _REROLL_COMPOSER_OWNED:
+            args.pop(key, None)
+        try:
+            template = _apply_opts(args, opts) or tmpl
+        except ValueError as exc:
+            # A face the user asked for is never silently a stranger, and a
+            # stack that cannot land is never silently the old one - chat
+            # answers exactly this way.
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        # A locked card replays its exact seed - same shot, same dice - instead
+        # of submit's fresh draw. The stored spec never carries a seed (submit
+        # pops it before persisting), so this is the only way one gets back in.
+        # `lock_seed` is the old client's way of asking (kept so a stale bundle
+        # still works); `seed` is the held lock, and it only gets a say when there
+        # is no ledger seed to restore. When lock_seed did restore one, the body's
+        # seed is just the client's echo of that same value - and past 2**53 the
+        # echo arrives rounded (JSON reads big integers as doubles), so letting it
+        # overwrite would trade the ledger's exact seed for a lossy copy of it.
+        restored = body.get("lock_seed") and entry.get("seed") is not None
+        if restored:
+            args["seed"] = entry["seed"]
+        frozen = held_seed(body)
+        if frozen and not restored:
+            args["seed"] = frozen
+        cid = body.get("cid") or uuid.uuid4().hex[:8]
+        asyncio.create_task(HUB.submit(cid, "reroll", template, entry["scene"],
+                                       args, entry.get("count", 1), parent=entry["id"]))
+        return web.json_response({"ok": True, "cid": cid})
     spec = dict(entry.get("spec") or {})
     # The composer is the truth: a re-roll refines with the stack the user is
     # LOOKING at, not the one the card was born with - "I got a good render, I
@@ -15752,9 +17010,15 @@ async def free_chat_model(_req):
     Only ever touches a server WE spawned; the pidfile is the proof. The next
     LLM call brings it straight back.
     """
-    if not _llm_state().get("pid"):
-        return web.json_response({"ok": True, "freed": False,
-                                  "note": "no chat model was started by Pixal"})
+    st = _llm_state()
+    if not st.get("pid"):
+        # A pid-less ADOPTED state is not "nothing is running" - it is a
+        # brain answering on the port that Pixal cannot prove it spawned, and
+        # the old wording read as "there is nothing to free" while it sat on
+        # the card (Jesse, 2026-08-25: 8.3 GB stranded behind that sentence).
+        note = ("the brain is running but Pixal did not start it - it stays"
+                if st.get("adopted") else "no chat model was started by Pixal")
+        return web.json_response({"ok": True, "freed": False, "note": note})
     before = gpu_free_bytes()
     if not await free_brain_vram():
         return web.json_response({"ok": True, "freed": False,
@@ -15862,19 +17126,29 @@ CRITIC_VRAM_NEED = int(20.0 * 2**30)  # 8B FP16 weights + vision tower (~17.5GB)
                                       # + generation activations + margin, in
                                       # DRIVER-free terms - a marginal pass OOMs
                                       # exactly like the unmanaged case did
+BRAIN_KV_SLACK = int(1.5 * 2**30)    # KV cache + llama.cpp scratch, sized for the 4B
 PID_STACK_BYTES = int(4.5 * 2**30)    # PiD decoder + PixelDiT TE + autoencoder (measured)
 
 # reclaim_vram's poll. /free returns before the pages do (cudaMallocAsync trims
 # its pool asynchronously), so the deadline is what makes waiting safe rather
 # than the sleep being long enough - it is a ceiling, not a duration.
 VRAM_RECLAIM_DEADLINE = 8.0
+# The trim path's deadline. The trim sends NO request (flush_comfy_cache):
+# the pool trim arrives from ComfyUI's own post-prompt GC - need_gc after
+# every executed prompt (main.py:374), gc.collect() + soft_empty_cache()
+# within the worker's 10s gc_collect_interval (main.py:352, 416-417).
+# 12s = that interval plus slack.
+VRAM_TRIM_DEADLINE = 12.0
 VRAM_RECLAIM_POLL = 0.4
 VRAM_RECLAIM_NOISE = int(0.05 * 2**30)   # under this, the pool has stopped moving
 
 # Video is where the card gets tight and where a reload is cheapest to absorb:
 # these renders run 90-170s, so paying ~10s to start from a clean card is noise,
 # and starting from a dirty one is how all three ltx25 OOMs happened. Jesse's
-# call, 2026-08-16: anything video flushes first, unconditionally.
+# call, 2026-08-16: anything video flushes first, unconditionally - with one
+# 9.39 carve-out: the warm rerun, where the resident stack already IS this
+# clip's own video stack and the activations fit. There is nothing dirty to
+# evict there, and the flush was ~100s of every H3 clip that night, not noise.
 VIDEO_TEMPLATES = frozenset((
     "ltx_i2v", "ltx25_i2v", "h3_i2v", "h3_multishot", "h3_ref2v",
     "upscale_video", "ltx25_upscale_video",
@@ -15959,8 +17233,42 @@ def paging_rate_trip(durations, skip=PAGING_RATE_SKIP,
             run = 0
     return None
 
-# The last job's free_min below this makes the next job trim torch's
-# reclaimable pool before it queues, however well it was priced. Between
+# The cache sensor (brief 9.33): ComfyUI caches every node output and skips
+# any node whose inputs are unchanged since the previous prompt - checkpoint
+# and LoRA loads, the CLIP text encode, a reference's VAE encode. On a
+# same-seed tweak the sampler and decoder SHOULD be the only work; whether
+# that is true for these graphs was never observed, because the bridge
+# handled progress/executed/executing and dropped execution_cached on the
+# floor. If any per-job value sits on a loader node, every render pays the
+# cold-load bill (warm 27s / flushed 41-54s) on renders that should be warm.
+# Sensor only: the number rides the ledger and console until it has been
+# read - if the cache IS hitting, the next lever is prewarming, not keying.
+def cache_summary(node_types, cached_nodes):
+    """{"observed": bool, "hit": n, "total": n, "skipped": [class types],
+    "ran": [class types]} - class types sorted, deduplicated, as they name
+    the work; ids are meaningless across jobs.
+
+    cached_nodes None means no execution_cached frame arrived: UNOBSERVED,
+    never a miss - the same rule prev_floor_below_guard states for None, or
+    a ComfyUI too old to emit the frame reads as 0% cache hits. Ids ComfyUI
+    reports that node_types does not know (it can name a subgraph node) are
+    not counted and cannot crash the summary.
+    """
+    node_types = node_types or {}
+    total = len(node_types)
+    if cached_nodes is None:
+        return {"observed": False, "hit": 0, "total": total,
+                "skipped": [], "ran": []}
+    known = set(node_types)
+    hits = {nid for nid in (str(n) for n in cached_nodes) if nid in known}
+    skipped = sorted({node_types[nid] for nid in hits})
+    ran = sorted({ct for nid, ct in node_types.items() if nid not in hits})
+    return {"observed": True, "hit": len(hits), "total": total,
+            "skipped": skipped, "ran": ran}
+
+# The last job's free_min below this makes the next job take headroom back
+# before it queues, however well it was priced: rest the chat brain when one
+# is resident (9.35 - the cheap reload), else trim torch's reclaimable pool. Between
 # PAGING_FREE_FLOOR (0.6GB - where the paging detector fires, already the
 # livelock) and VRAM_FLOOR (2.0GB - the slack the pricer reserves), so the
 # near-miss is caught before it becomes either: 27 of the last 126 priced
@@ -15978,6 +17286,18 @@ def prev_floor_below_guard(prev_free_min, guard):
     stale-value bug class busy_elsewhere/forget_residency were written for).
     """
     return prev_free_min is not None and prev_free_min < guard
+
+def brain_should_rest(free, need, brain_bytes):
+    """Would evicting the resident chat brain ALONE make this job fit?
+
+    Pure arithmetic, no I/O: there must be a brain to rest (brain_bytes > 0),
+    the job must not fit as the card stands (free < need), and it must fit
+    once the brain steps aside (free + brain_bytes >= need). None free is no
+    signal, and no signal is never a decision - the prev_floor_below_guard
+    rule."""
+    if free is None:
+        return False
+    return brain_bytes > 0 and free < need and free + brain_bytes >= need
 
 # ComfyUI surfaces the allocator failure as prose, and the exact wording varies
 # by allocator backend - this box runs cudaMallocAsync, which says "Allocation
@@ -16044,6 +17364,10 @@ ACT_PROFILES = {
     # Klein encodes the source TWICE (masked latent + full-frame reference), so
     # its slope is double a single-encode edit's.
     "klein_inpaint": (2.0, 3.0, 0.0),
+    # The whole-frame Klein lane encodes ONCE (the reference latent both guider
+    # branches share) and decodes the full canvas - qwen_edit's shape, not the
+    # masked lane's double encode.
+    "klein_edit": (2.0, 1.5, 0.0),
     # face_mint samples every step at the source's size rather than spiking
     # once at the end - same slope shape as an edit, higher base for Krea 2.
     "face_mint": (2.5, 1.5, 0.0),
@@ -16230,6 +17554,25 @@ async def comfy_vram_free_bytes():
     except (aiohttp.ClientError, asyncio.TimeoutError, KeyError,
             TypeError, ValueError):
         return None
+
+
+
+def brain_vram_estimate():
+    """What the resident chat brain holds on the card, in bytes: its GGUF's
+    size on disk plus BRAIN_KV_SLACK. 0 when there is nothing of ours to
+    rest - the pidfile carries no pid (the pidfile is the licence, same as
+    free_brain_vram), records no model, or the file itself is gone - so a
+    stranger's server is never spent as headroom we cannot actually take."""
+    st = _llm_state()
+    if not st.get("pid"):
+        return 0
+    model = (st.get("model") or "").strip()
+    if not model:
+        return 0
+    try:
+        return Path(model).stat().st_size + BRAIN_KV_SLACK
+    except OSError:
+        return 0
 
 
 async def free_brain_vram():
@@ -17346,6 +18689,7 @@ def main():
     app.router.add_post("/api/settings/rescan", settings_rescan)
     app.router.add_get("/api/update-check", update_check_get)
     app.router.add_post("/api/animate", animate)
+    app.router.add_post("/api/animate/brief", animate_brief)
     app.router.add_post("/api/edit", edit)
     app.router.add_post("/api/input/stage", input_stage)
     app.router.add_post("/api/upscale", upscale)

@@ -50,10 +50,15 @@ GOLDEN = {
                   "the room and sits.\n\noverall_soundscape: The natural "
                   "ambience of the scene and the sounds of the visible "
                   "actions, synchronized.\n\nnon_diegetic_music: N/A",
+    # 9.37 (Reddit item 1) deliberately changed the script path: the appended
+    # audio contract used to carry the no-score field for scripts - with the
+    # wrong token ("none."). The assembler now guarantees exactly one
+    # non_diegetic_music field with the guide's token on EVERY path, so a
+    # script gains "non_diegetic_music: N/A" here.
     "user_script": "For the target video, at 0.00 seconds into the target "
                   "video, <Picture 1> (from [Shot 1]) is fully referenced.\n\n"
                   "[Shot 1] She looks up. (S1) says: <d>[English] Hello "
-                  "there.</d> She smiles.",
+                  "there.</d> She smiles.\n\nnon_diegetic_music: N/A",
     "style_splice": "For the target video, at 0.00 seconds into the target "
                   "video, <Picture 1> (from [Shot 1]) is fully referenced.\n\n"
                   "integrated_multimodal_description: [Shot 1] 2D-animated, "

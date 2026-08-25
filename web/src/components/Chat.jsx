@@ -8,7 +8,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, ArrowUp, ArrowRight, CaretLeft, CaretRight,
          DiceOne, DiceTwo, DiceThree, DiceFour,
          DiceFive, DiceSix, DownloadSimple, LockSimple, Stop, UserCircle, UserCircleCheck,
-         UserCirclePlus, Sparkle, X, Brain } from "@phosphor-icons/react";
+         UserCirclePlus, Sparkle, X, Brain, ArrowsLeftRight } from "@phosphor-icons/react";
 import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 
 // The lobby die: every roll spins it a random 1¼–1¾ turns on a spring curve
@@ -19,7 +19,8 @@ import { VideoPlayer } from "../lib/VideoPlayer.jsx";
 import { renderRichText } from "../lib/richtext.js";
 import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
 import { imgUrl } from "../transport.js";
-import { useJobLive, useStore, dialOverrides, recipeDials } from "../store.js";
+import { useJobLive, useStore, renderIntent, loadPromptEnhance,
+         PROMPT_ENHANCE_KEY } from "../store.js";
 import { ComposerBar, LoraChain, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
 import { CharacterForm } from "./CharacterForm.jsx";
 import { InstallNudge } from "./InstallNudge.jsx";
@@ -127,28 +128,14 @@ const metaFor = (src) => ({
   frames: src.info && src.info.frames,
   audio: src.info && src.info.audio,
   seed: src.seed, elapsed: src.elapsed, ts: src.ts,
+  // an edit / re-roll / upscale names the render it came from - the
+  // lightbox offers the original under a held button
+  parent: src.parent || null,
 });
 
 const CSS_ID = "pixal-chat-css";
 const CONV = "local";
 const MONO = "ui-monospace, Consolas, monospace";
-const PROMPT_ENHANCE_KEY = "pixal-prompt-enhance";
-
-const loadPromptEnhance = () => {
-  try {
-    const saved = localStorage.getItem(PROMPT_ENHANCE_KEY);
-    return saved == null ? true : saved !== "off";
-  } catch { return true; }
-};
-
-// Keep disabled rows in localStorage/UI, but never transmit them as execution
-// candidates. This is also safe during a rolling update: older Pixal servers
-// understood version-1 plans but did not know the later `enabled` field.
-const executableLoraPlan = (plan) => !plan ? null : ({
-  ...plan,
-  entries: (plan.entries || []).filter((entry) => entry.enabled !== false)
-    .map(({ enabled: _enabled, ...entry }) => entry),
-});
 
 // The lobby is CHARACTER-AWARE: {name} is filled from the first (or selected)
 // character anchor on disk; with no anchors it speaks to an empty house and
@@ -282,6 +269,14 @@ export const applyThemeCss = (tk) => {
     .px-lb-btn:focus-visible {
       outline: 1px solid rgba(232,237,240,0.4); outline-offset: 2px;
       border-radius: 8px;
+    }
+    /* segmented capsules, same rule: the pill already says which segment is
+       live, so a click paints no ring; keyboard focus keeps a hairline just
+       inside the pill's own shape. */
+    .px-seg:focus { outline: none; }
+    .px-seg:focus-visible {
+      outline: 1px solid rgba(232,237,240,0.4); outline-offset: -3px;
+      border-radius: 999px;
     }
     /* boot bar, indeterminate leg: before the launcher has been kicked there is
        no elapsed time to be honest about, so it sweeps instead of pretending to
@@ -475,6 +470,17 @@ const Message = memo(({ msg, heroGreeting, onOpen, onIterate, onReroll, onAnimat
 
 const Lightbox = ({ lb, onClose, onNav }) => {
   const [dims, setDims] = useState(null);
+  // Hold-to-compare: an edited, re-rolled or upscaled render shows its
+  // ORIGINAL for as long as the button is held, in the same zoom and pan,
+  // so a one-flaw fix is judged at real size. Pointer or keyboard hold.
+  const history = useStore().history;
+  const [showBefore, setShowBefore] = useState(false);
+  const before = (() => {
+    const pid = lb.meta && lb.meta.parent;
+    if (!pid) return null;
+    const p = history.find((e) => String(e.id) === String(pid));
+    return p && (p.images || []).find((i) => (i.media || "image") === "image") || null;
+  })();
   // Zoom is transform-only (translate+scale about center), so pan/zoom never
   // touches layout and stays on the compositor. `anim` eases click-toggles;
   // wheel and drag snap - a transition under the pointer reads as lag.
@@ -485,7 +491,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
   const cur = lb.images[lb.idx];
   const isVideo = cur.media === "video";
 
-  useEffect(() => { setZoom({ s: 1, tx: 0, ty: 0, anim: false }); }, [lb.idx]);
+  useEffect(() => { setZoom({ s: 1, tx: 0, ty: 0, anim: false }); setShowBefore(false); }, [lb.idx]);
 
   // Pan can never strand the image: at the clamp the scaled edge sits exactly
   // on the unzoomed footprint's edge. offsetWidth/Height are layout sizes,
@@ -561,6 +567,24 @@ const Lightbox = ({ lb, onClose, onNav }) => {
            color: "var(--textTer)", display: "inline-flex",
            transition: `color ${MOTION.hover}`,
          }}><DownloadSimple size={20} weight="duotone" /></a>
+      {before && !isVideo && (
+        <button className="px-lb-btn" aria-label="hold to see the original"
+          title="hold to see the original"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => { e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); setShowBefore(true); }}
+          onPointerUp={() => setShowBefore(false)}
+          onPointerCancel={() => setShowBefore(false)}
+          onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); setShowBefore(true); } }}
+          onKeyUp={(e) => { if (e.key === " " || e.key === "Enter") setShowBefore(false); }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "rgba(232,237,240,0.95)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = showBefore ? "var(--accent)" : "var(--textTer)"; }}
+          style={{
+            position: "absolute", top: 14, right: 96, padding: 8, zIndex: 2,
+            background: "none", border: "none", cursor: "pointer", display: "inline-flex",
+            color: showBefore ? "var(--accent)" : "var(--textTer)",
+            transition: `color ${MOTION.hover}`, touchAction: "none",
+          }}><ArrowsLeftRight size={20} weight="duotone" /></button>
+      )}
       {lb.images.length > 1 && (
         <>
           {/* Phosphor thin carets, the lightbox glyph - never text ‹ › */}
@@ -587,8 +611,8 @@ const Lightbox = ({ lb, onClose, onNav }) => {
                videoStyle={{ maxWidth: m.model || m.scene ? "88vw" : "94vw",
                              maxHeight: "90vh" }} />
       ) : (
-        <img ref={imgRef} src={imgUrl(cur)} draggable={false}
-             onLoad={(e) => setDims(e.target.naturalWidth + "×" + e.target.naturalHeight)}
+        <img ref={imgRef} src={imgUrl(showBefore && before ? before : cur)} draggable={false}
+             onLoad={(e) => { if (!showBefore) setDims(e.target.naturalWidth + "×" + e.target.naturalHeight); }}
              onClick={(e) => {
                e.stopPropagation();
                // the click that ends a pan is a pan, not a zoom toggle
@@ -652,6 +676,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
       )}
       <div style={{ position: "absolute", bottom: 14, right: 20, fontFamily: MONO,
                     fontSize: 10, color: "var(--textTer)" }}>
+        {showBefore && <span style={{ color: "var(--accent)" }}>original{"  ·  "}</span>}
         {zoom.s > 1 && (
           <span style={{ color: "var(--accent)" }}>
             {Math.round(zoom.s * 10) / 10}×{"  ·  "}</span>
@@ -909,88 +934,10 @@ export const Chat = () => {
       // Identity Edit engine/model/LoRA/ref state, not the stale pre-pick object.
       o = store.opts;
     }
-    const character = o.character || "";
-    const loraPlan = store.activeLoraPlan;
-    // The recipe-card extender's overrides for the active recipe (sparse: only
-    // dials moved off the recipe's own number appear here).
-    const dialSet = dialOverrides(o, store.options);
     setCharacterNotice(null);
-    // A held seed counts as composer intent on its own: with no other pick set,
-    // `active` stayed false, no body was built, and the frozen seed never left
-    // the browser.
-    const heldSeed = store.heldSeed;
-    const savedStyle = store.savedStyle;
-    const active = o.style || o.quality || (o.engine !== "auto") || o.model || o.aspect || o.mp ||
-                   o.loras.length || o.refs.length || character || loraPlan || !promptEnhance ||
-                   o.editSource || o.cinematic || heldSeed || savedStyle ||
-                   Object.keys(dialSet).length;
-    let summary = null, body;
-    if (active) {
-      const bits = [];
-      // Leads the line: on an edit turn the rest of the picks are not consulted,
-      // so saying so first stops "Realism · 2:3" reading as what just ran.
-      if (o.editSource) bits.push("Editing " + o.editSource.split("/").pop());
-      // Anime/Fantasy on a Krea 2 model is DIRECTED - it has no graph of its
-      // own, it exists only as craft direction the brain writes into the scene.
-      // With Prompt enhance off the scene is the user's words verbatim, so the
-      // pick never lands; claiming it here made the render look like a bug.
-      const styleLands = promptEnhance || !o.style || o.style === "realism" ||
-        ((store.options?.model_meta || {})[o.model] || {}).family !== "krea2";
-      // A saved style supersedes style/quality entirely, so it leads the line
-      // and they are not mentioned - saying "Realism · Refined" beside a saved
-      // style would name two things when only one of them runs.
-      if (savedStyle) bits.push(savedStyle.name);
-      else if (o.style && styleLands) bits.push(o.style[0].toUpperCase() + o.style.slice(1));
-      else if (o.engine !== "auto") bits.push(prettyTemplate(o.engine));
-      if (!savedStyle && o.quality === "refined") bits.push("Refined");
-      // Cinematic is craft direction the brain writes into the scene, so with
-      // Prompt enhance off it never reaches the render - don't claim it here.
-      if (o.cinematic && promptEnhance) bits.push("Cinematic");
-      if (character) bits.push((store.options && (store.options.characters || [])
-        .find(c => c.id === character)?.name) || character);
-      if (o.model) bits.push(o.model.split("\\").pop().replace(".safetensors", ""));
-      if (o.aspect) bits.push(o.aspect.split(" ")[0] + (o.mp ? "@" + o.mp + "MP" : ""));
-      else if (o.mp) bits.push(o.mp + "MP");
-      // A moved dial is render-affecting, so the note names it like every other
-      // pick - only overrides, never the recipe's own numbers.
-      const liveDials = recipeDials(store.activeRecipeId, store.options)
-        .filter((d) => dialSet[d.key] !== undefined);
-      for (const d of liveDials)
-        bits.push(`${d.label.toLowerCase()} ${dialSet[d.key]}`);
-      if (o.loras.length) bits.push("+" + o.loras.length + " lora");
-      if (o.refs.length) bits.push(o.refs.length + " ref");
-      if (heldSeed) bits.push("seed " + heldSeed + " locked");
-      if (!promptEnhance) bits.push("Prompt enhance off");
-      summary = bits.join(" · ");
-      body = {};
-      // `engine` is the normalized execution route; style/quality remain
-      // creative intent. Send both during the persisted-options migration so
-      // old and new servers queue the same proven graph.
-      if (o.engine && o.engine !== "auto") body.engine = o.engine;
-      // The style id is all the server needs: it reads the FILE for the model,
-      // canvas, LoRA plan and sampler, so a stale mirror in this tab cannot
-      // change what renders.
-      if (savedStyle) body.saved_style = savedStyle.id;
-      if (o.style && styleLands) body.style = o.style;
-      if (o.quality) body.quality = o.quality;
-      if (o.cinematic && promptEnhance) body.cinematic = true;
-      if (character) body.character = character;
-      if (o.model) body.model = o.model;
-      if (o.aspect) body.aspect = o.aspect;
-      if (o.mp) body.mp = o.mp;
-      // The extender's dials ride as sparse overrides, keyed by builder
-      // parameter exactly like the canvas: an untouched dial is absent, so an
-      // untouched composer submits precisely what it did before the dials
-      // became reachable (the byte-identical-graph rule, brief 9.14).
-      for (const d of liveDials) body[d.key] = dialSet[d.key];
-      if (o.loras.length) body.loras = o.loras;
-      if (loraPlan) body.lora_plan = executableLoraPlan(loraPlan);
-      if (o.refs.length) body.refs = o.refs;
-      if (o.editSource) body.edit_source = o.editSource;
-      // The held seed rides every render, not just the re-roll button.
-      if (heldSeed) body.seed = heldSeed;
-      body.prompt_enhance = promptEnhance;
-    }
+    // The one builder (store.js) shapes what the composer is looking at; the
+    // re-roll sends the same body as `opts`, so both routes speak one intent.
+    const { summary, body } = renderIntent(promptEnhance, o);
     store.sendChatMessage(CONV, t,
       summary ? { summary, body } : null);
     setInput("");

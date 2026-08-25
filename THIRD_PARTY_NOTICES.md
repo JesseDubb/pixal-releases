@@ -48,9 +48,12 @@ non-commercial, and the values ported from Anima live in `server.py` and
   model, not on the pictures: the license claims no ownership of Outputs and
   permits their commercial use.
 - [FLUX.2 Klein 9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B)
-  by Black Forest Labs — **FLUX Non-Commercial License v2.1**. It drives the
-  masked-inpaint edit lane: `templates/klein_inpaint.json` is a port of the
-  F4 group of geoahmed's flux2_klein_ultimate_v2.1 workflow, and the `KLEIN_*`
+  by Black Forest Labs — **FLUX Non-Commercial License v2.1**. It drives both
+  Klein edit lanes: the masked-inpaint lane (`templates/klein_inpaint.json`,
+  a port of the F4 group of geoahmed's flux2_klein_ultimate_v2.1 workflow) and
+  the whole-frame instruction lane (`templates/klein_edit.json`, a port of
+  Comfy-Org's shipped image_flux2_klein_image_edit_9b_distilled template),
+  and the `KLEIN_*`
   constants in `server.py` hold its step-distilled schedule. The weights are
   not redistributed here; the Hugging Face repository is gated, and fetching
   them there means accepting the license. The restriction lands on the model,

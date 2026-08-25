@@ -247,45 +247,6 @@
    "title": "Grow Mask (match sampler's grow 15)"
   }
  },
- "ki:maskimg": {
-  "class_type": "MaskToImage",
-  "inputs": {
-   "mask": [
-    "ki:growmask",
-    0
-   ]
-  },
-  "_meta": {
-   "title": "Mask as Image"
-  }
- },
- "ki:maskblur": {
-  "class_type": "ImageBlur",
-  "inputs": {
-   "image": [
-    "ki:maskimg",
-    0
-   ],
-   "blur_radius": 8,
-   "sigma": 6.0
-  },
-  "_meta": {
-   "title": "Feather Seam"
-  }
- },
- "ki:softmask": {
-  "class_type": "ImageToMask",
-  "inputs": {
-   "image": [
-    "ki:maskblur",
-    0
-   ],
-   "channel": "red"
-  },
-  "_meta": {
-   "title": "Soft Composite Mask"
-  }
- },
  "ki:back": {
   "class_type": "ImageScale",
   "inputs": {
@@ -302,40 +263,49 @@
    "title": "Edited Region Back to Native (builder writes the source's own size)"
   }
  },
- "ki:comp": {
-  "class_type": "ImageCompositeMasked",
-  "inputs": {
-   "destination": [
-    "ki:img",
-    0
-   ],
-   "source": [
-    "ki:back",
-    0
-   ],
-   "x": 0,
-   "y": 0,
-   "resize_source": false,
-   "mask": [
-    "ki:softmask",
-    0
-   ]
-  },
-  "_meta": {
-   "title": "Composite Back Over Source (untouched pixels stay original)"
-  }
- },
  "ki:save": {
   "class_type": "SaveImage",
   "inputs": {
    "images": [
-    "ki:comp",
+    "ki:composite",
     0
    ],
    "filename_prefix": "pixal_dm/klein_inpaint"
   },
   "_meta": {
    "title": "Save Image"
+  }
+ },
+ "ki:composite": {
+  "class_type": "KleinEditComposite",
+  "inputs": {
+   "generated_image": [
+    "ki:back",
+    0
+   ],
+   "original_image": [
+    "ki:img",
+    0
+   ],
+   "delta_e_threshold": -1.0,
+   "flow_quality": "medium",
+   "use_occlusion": false,
+   "occlusion_threshold": -1.0,
+   "noise_removal_pct": 0.0,
+   "close_radius_pct": 0.5,
+   "fill_holes": false,
+   "fill_borders": true,
+   "max_islands": 0,
+   "grow_mask_pct": 0.0,
+   "feather_pct": 0.5,
+   "color_match_blend": 1.0,
+   "poisson_blend_edges": true,
+   "custom_mask": [
+    "ki:growmask",
+    0
+   ],
+   "custom_mask_mode": "replace",
+   "enable_debug": false
   }
  }
 }

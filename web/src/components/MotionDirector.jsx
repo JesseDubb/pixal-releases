@@ -25,7 +25,7 @@ import { Disclosure } from "../lib/Disclosure.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
 import { InfoTip } from "./InfoTip.jsx";
-import { imgUrl, thumbUrl, subscribe } from "../transport.js";
+import { imgUrl, thumbUrl, subscribe, animateBrief } from "../transport.js";
 
 const LENGTHS = [
   { s: 3, label: "3s", gloss: "a beat" },
@@ -406,6 +406,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   const firstEngine = engines.find((item) => item.default && item.available !== false)
     || engines.find((item) => item.available !== false) || engines[0];
   const [note, setNote] = useState("");
+  // 9.36: `draft the brief` asks the director for the brief WITHOUT spending
+  // the clip. The answer replaces the note; `drafted` makes it ship verbatim
+  // on action, the way a --- script does. `draftErr` is the refused draft's
+  // own words (the server error), shown where the draft caption was.
+  const [drafting, setDrafting] = useState(false);
+  const [drafted, setDrafted] = useState(false);
+  const [draftErr, setDraftErr] = useState("");
   const [engineId, setEngineId] = useState(firstEngine?.id || "ltx25");
   const activeEngine = engines.find((item) => item.id === engineId) || firstEngine;
   const lengths = activeEngine?.lengths?.length ? activeEngine.lengths : LENGTHS;
@@ -448,9 +455,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   const speedMode = speedModes.find((m) => m.id === speed && m.available !== false)
     || speedModes.find((m) => m.id === defaultSpeed) || speedModes[0] || null;
   // A pasted script wins over the chips - the shots row then shows what will
-  // actually run rather than a count the script is about to override.
-  const isScript = shotsMax > 1 && SHOT_SPLIT.test(note);
-  const activeShots = isScript
+  // actually run rather than a count the script is about to override. A
+  // drafted brief ships verbatim the same way (9.36), but it carries no ---
+  // for countShots to find: its shot count stays the stepper it was drafted
+  // with (moving the stepper clears the draft below).
+  const hasSplit = shotsMax > 1 && SHOT_SPLIT.test(note);
+  const isScript = drafted || hasSplit;
+  const activeShots = hasSplit
     ? Math.min(countShots(note), shotsMax)
     : Math.min(shots, shotsMax);
   const [model, setModel] = useState(
@@ -484,7 +495,7 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // ("bridging is FL2VA-only", server.py); requiring fl2va would be stricter
   // than the server and would block a tokenless finetune it would have run.
   const bridgeEligible = activeEngine?.id === "h3" && activeShots === 1
-    && !isScript && modelBaseId(activeModel?.id) !== "ref2va";
+    && !hasSplit && modelBaseId(activeModel?.id) !== "ref2va";
   // ONE list for ONE control (9.32-C): the 9.21 grouping still decides the
   // ORDER - each base's stock build first, its finetunes behind it, anything
   // baseless at the end - but the family track is gone. The dropdown names
@@ -525,6 +536,18 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
       window.localStorage.setItem(VIDEO_LORA_STORAGE_KEY, JSON.stringify(videoLoraPlans));
     } catch { /* private mode / storage disabled */ }
   }, [videoLoraPlans]);
+
+  // A draft is written for ONE configuration: engine, model, length, shot
+  // count and the end frame are the director's inputs, so moving any of them
+  // stales the brief and it stops shipping as a script. fps, speed, sparse,
+  // upscale and the LoRA chain never reach the director - sampler settings
+  // leave the draft alone.
+  const draftCfg = useRef([engineId, model, secs, shots, endId]);
+  useEffect(() => {
+    const next = [engineId, model, secs, shots, endId];
+    if (draftCfg.current.some((value, i) => value !== next[i])) setDrafted(false);
+    draftCfg.current = next;
+  }, [engineId, model, secs, shots, endId]);
 
   const toggleFineTune = () => setFineTune((open) => {
     try { window.localStorage.setItem(FINE_TUNE_OPEN_KEY, open ? "0" : "1"); }
@@ -594,6 +617,35 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
     return next;
   });
 
+  // The draft rides the commit's own body minus the script slot (transport
+  // keeps the two in lockstep), so the director writes for exactly this
+  // configuration. The answer replaces the note: read it, edit it, then
+  // action ships it as written.
+  const draftBrief = async () => {
+    if (!activeEngine || activeEngine.available === false || !model || drafting)
+      return;
+    setDrafting(true);
+    setDraftErr("");
+    try {
+      const d = await animateBrief(sourceId, note.trim() || null, secs,
+        activeEngine.id, model, showVideoLoraChain ? activeVideoPlan : null,
+        fpsChoices.length ? fps : null, activeShots,
+        speedMode ? speedMode.id : null, bridgeEligible && endId ? endId : null,
+        activeEngine.sparse ? sparse : undefined,
+        activeEngine.upscale_2x ? upscale : undefined);
+      if (d && d.ok) {
+        setNote(typeof d.brief === "string" ? d.brief : "");
+        setDrafted(true);
+      } else {
+        setDraftErr((d && d.error) || "no answer from the server");
+      }
+    } catch (e) {
+      setDraftErr(String(e));
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   const go = (hint) => {
     if (!activeEngine || activeEngine.available === false || !model) return;
     onAction(isScript ? null : hint, secs, activeEngine.id, model,
@@ -617,7 +669,8 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   const tweaks = [];
   if (availableModels.length > 1 && activeModel &&
       activeModel.id !== availableModels[0].id) tweaks.push(activeModel.label);
-  if (isScript) tweaks.push(`${activeShots}-shot script`);
+  if (drafted) tweaks.push("drafted brief");
+  if (hasSplit) tweaks.push(`${activeShots}-shot script`);
   else if (activeShots > 1) tweaks.push(`${activeShots} shots`);
   if (bridgeEligible && endId) tweaks.push("end frame set");
   if (speedMode && speedMode.id !== defaultSpeed) tweaks.push(speedMode.label.toLowerCase());
@@ -670,7 +723,12 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
           <textarea
             ref={taRef} value={note} rows={4}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => {
+              setNote(e.target.value);
+              // an emptied note is no brief at all; typing inside the draft
+              // keeps it drafted - editing is the point (9.36)
+              if (!e.target.value.trim()) setDrafted(false);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(note.trim() || null); }
             }}
@@ -684,7 +742,22 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
               lineHeight: 1.5, padding: SPACE[12],
             }}
           />
-          {isScript && (
+          {drafting ? (
+            <span style={CAPTION}>looking at the frame · directing…</span>
+          ) : draftErr ? (
+            <span style={CAPTION}>{draftErr}</span>
+          ) : drafted ? (
+            <span style={CAPTION}>
+              brief drafted — edit freely, ships as written{" "}
+              <button type="button" onClick={draftBrief}
+                title="ask the director again for this configuration"
+                style={{ background: "none", border: "none", padding: 0,
+                         color: "var(--accent)", fontFamily: FONT,
+                         fontSize: TYPE.label, cursor: "pointer" }}>
+                re-draft
+              </button>
+            </span>
+          ) : hasSplit && (
             <span style={CAPTION}>
               script mode — {activeShots} shot{activeShots > 1 ? "s" : ""} sent verbatim,
               the director stays out of it
@@ -835,13 +908,13 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
 
               {shotsMax > 1 && (
                 <Row label={<>shots <InfoTip size={11} text={"Shots chain end to end: each one starts from the last frame of the take before. Or write the note as a script — shots separated by --- on its own line ship verbatim, and the script sets the count."} /></>}
-                  hint={isScript
+                  hint={hasSplit
                     ? "counted from your script — each shot renders and chains in order"
                     : activeShots === 1
                       ? "one continuous take"
                       : `~${activeShots * secs}s total — each shot continues from the last frame of the one before`}>
                   <Stepper label="shots" value={activeShots} min={1} max={shotsMax}
-                    disabled={isScript} onChange={setShots} />
+                    disabled={hasSplit} onChange={setShots} />
                 </Row>
               )}
 
@@ -1065,6 +1138,22 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         <div style={{ flex: "0 0 auto", padding: `0 ${SPACE[20]}px ${SPACE[20]}px`,
                       display: "flex", alignItems: "center", justifyContent: "flex-end",
                       gap: SPACE[8] }}>
+          {/* 9.36: an ACTION, so it wears the footer's action pill like its
+              neighbours (DESIGN.md: selection and action must look different)
+              - secondary style, and never a selection chip. */}
+          <button type="button" onClick={draftBrief}
+            disabled={drafting || !activeEngine?.available || !model}
+            title="read the brief before the render - the director writes it, you edit it, action ships it as written"
+            style={{
+              height: 36, padding: `0 ${SPACE[16]}px`, cursor: "pointer",
+              display: "inline-flex", alignItems: "center",
+              background: "transparent", border: "1px solid var(--border)",
+              borderRadius: RADIUS.pill, color: "var(--textSec)",
+              fontFamily: FONT, fontSize: 13, whiteSpace: "nowrap",
+              opacity: drafting ? 0.6 : 1,
+            }}>
+            draft the brief
+          </button>
           <button type="button" onClick={() => go(null)}
             disabled={!activeEngine?.available || !model}
             title="no note - the director animates what's already in the frame"

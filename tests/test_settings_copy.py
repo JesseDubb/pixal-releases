@@ -292,6 +292,21 @@ class SettingsCopy(unittest.TestCase):
                 for tip in _tip_texts()),
             "the mask-routing fact is missing from the edit lane's tip")
 
+    def test_the_edit_tip_names_what_each_whole_frame_family_is_for(self):
+        """9.44: the whole-frame row now offers Klein next to Qwen, and the
+        reason to pick one over the other lives in the tip."""
+        self.assertTrue(
+            any(tip and "Klein keeps skin texture" in tip
+                for tip in _tip_texts()),
+            "the Klein whole-frame fact is missing from the edit lane's tip")
+
+    def test_the_whole_frame_picker_folders_both_edit_families(self):
+        """The two families read as families, not one undifferentiated list:
+        Qwen builds folder under familyName("qwen_edit"), Klein builds under
+        familyName("klein") - the picker's existing grouping, no new control."""
+        self.assertIn('familyName("qwen_edit")', SRC)
+        self.assertIn('familyName("klein")', SRC)
+
     def test_tips_stay_keyboard_reachable(self):
         # the ported component carries the focus + label; this guards the port
         self.assertIn("tabIndex={0}", TIP_SRC)
@@ -325,6 +340,53 @@ class SettingsCopy(unittest.TestCase):
             self.assertIn(quote, s6, "HELP.md §6 lost the shipped copy: %r" % quote)
         self.assertNotIn("How the app looks", s6)
         self.assertNotIn("what happens local stays local", s6)
+
+
+class ModelsLibraryTab(unittest.TestCase):
+    """9.30: the Models tab is the read-only library — what you own, what it
+    runs, what it weighs. It sits after Video because it is browsed, not
+    tuned; choosing per lane stays on the medium tabs. Pins: the tab's
+    place, the summary's unprofiled-LoRA count, the three required tips, and
+    the row contract (pretty name, raw path in the tooltip, human reasons,
+    heavier-than-card as advisory)."""
+
+    def test_the_tab_sits_after_video_before_brain(self):
+        tabs = SRC[SRC.index("const TABS = ["):]
+        tabs = tabs[:tabs.index("];")]
+        ids = re.findall(r'\{ id: "(\w+)"', tabs)
+        self.assertEqual(ids, ["general", "image", "video", "models",
+                               "brain", "about"])
+
+    def test_the_summary_line_counts_the_profileless(self):
+        # 141 of 416 on the machine this shipped from — the single most
+        # useful fact the app had never told anyone
+        self.assertIn("have no profile", SRC)
+
+    def test_the_three_required_tips_ship(self):
+        tips = _tip_texts()
+        self.assertTrue(any(t and "architecture, not a brand" in t
+                            for t in tips), "the family tip is missing")
+        self.assertTrue(any(t and "A profile is what Pixal knows" in t
+                            for t in tips), "the profile tip is missing")
+        self.assertTrue(any(t and "offloads to system memory" in t
+                            and "never a block" in t for t in tips),
+                        "the weight-vs-card tip is missing or reads as a block")
+
+    def test_rows_hold_the_row_contract(self):
+        self.assertIn("prettyModel(", SRC)        # never a raw filename
+        self.assertIn("familyName(", SRC)         # family group headings
+        self.assertIn("title={rel", SRC)          # raw relpath is the tooltip
+        # the server reason, said in the user's language
+        self.assertIn("a video model — used by the Animate lanes", SRC)
+        # heavier than the card: the 9.29 advisory, never a block
+        self.assertIn("it will offload and run slowly", SRC)
+        # Civitai where the match is free (brief: thread the field, do it)
+        self.assertIn("civitai_url", SRC)
+
+    def test_the_server_publishes_what_the_rows_read(self):
+        server = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn('meta["size"]', server)
+        self.assertIn('meta["civitai_url"]', server)
 
 
 class H3Upscale2xSection(unittest.TestCase):

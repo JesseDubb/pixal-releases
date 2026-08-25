@@ -11,7 +11,9 @@ export const prettyTemplate = (t) => ({
   zara_edit: "Identity Edit",        // pre-rename ledger entries
   qwen_edit: "Qwen Edit",
   qwen_image: "Qwen Image",
+  face_mint: "New Face",
   klein_inpaint: "Klein Inpaint",
+  klein_edit: "Klein Edit",
   anima: "Anima",
   upscale_image: "Upscale",
   upscale_video: "Upscale",
@@ -106,6 +108,7 @@ export const resolvedModelFamily = (info, template) => {
 // they care which build of it they are on.
 const FAMILY_LABELS = {
   krea2: "Krea 2",
+  klein: "FLUX.2 Klein",
   zimage: "Z-Image",
   qwen_image: "Qwen Image",
   qwen_edit: "Qwen Image Edit",

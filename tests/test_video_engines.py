@@ -1909,7 +1909,11 @@ class H3PromptAssemblyTests(unittest.TestCase):
 
     def test_a_user_script_gets_the_header_and_nothing_creative(self):
         out = server.assemble_h3_prompt("[Shot 1] my own words", user_script=True)
-        self.assertEqual(out, server.H3_I2VA_HEADER + "\n\n[Shot 1] my own words")
+        # 9.37: the no-score music field is not creative - the appended audio
+        # contract used to carry it for scripts (wrong token), so the
+        # assembler now guarantees exactly one on every path
+        self.assertEqual(out, server.H3_I2VA_HEADER + "\n\n[Shot 1] my own words"
+                              "\n\nnon_diegetic_music: N/A")
         self.assertNotIn("overall_soundscape", out)
 
     def test_slug_source_skips_header_and_shot_marker(self):
@@ -1948,7 +1952,8 @@ class H3PromptAssemblyTests(unittest.TestCase):
         script = ("[Shot 1] my words\n\noverall_soundscape: rain\n\n"
                   "(S1) says: [d]exactly as typed</d>")
         out = server.assemble_h3_prompt(script, user_script=True)
-        self.assertTrue(out.endswith(script))
+        self.assertIn(script, out)
+        self.assertTrue(out.endswith("non_diegetic_music: N/A"))
 
 
 class DialogueRepairTests(unittest.TestCase):

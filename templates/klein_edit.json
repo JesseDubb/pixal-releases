@@ -1,0 +1,287 @@
+{
+ "ke:unet": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "Flux\\flux-2-klein-9b_bf16.safetensors",
+   "weight_dtype": "default"
+  },
+  "_meta": {
+   "title": "Load Diffusion Model (FLUX.2 Klein 9B)"
+  }
+ },
+ "ke:clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors",
+   "type": "flux2",
+   "device": "default"
+  },
+  "_meta": {
+   "title": "Load CLIP (Qwen3 8B, flux2)"
+  }
+ },
+ "ke:vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "Flux\\flux2-vae.safetensors"
+  },
+  "_meta": {
+   "title": "Load VAE (Flux2)"
+  }
+ },
+ "ke:img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "example-source.png"
+  },
+  "_meta": {
+   "title": "Load Source"
+  }
+ },
+ "ke:scale": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "ke:img",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 2.0,
+   "resolution_steps": 16
+  },
+  "_meta": {
+   "title": "Sampling Canvas (capped; native passes through untouched)"
+  }
+ },
+ "ke:size": {
+  "class_type": "GetImageSize",
+  "inputs": {
+   "image": [
+    "ke:scale",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Sampling Canvas Size"
+  }
+ },
+ "ke:latent": {
+  "class_type": "EmptyFlux2LatentImage",
+  "inputs": {
+   "width": [
+    "ke:size",
+    0
+   ],
+   "height": [
+    "ke:size",
+    1
+   ],
+   "batch_size": 1
+  },
+  "_meta": {
+   "title": "Empty Sampling Latent (the source arrives via the reference latents)"
+  }
+ },
+ "ke:sched": {
+  "class_type": "Flux2Scheduler",
+  "inputs": {
+   "steps": 4,
+   "width": [
+    "ke:size",
+    0
+   ],
+   "height": [
+    "ke:size",
+    1
+   ]
+  },
+  "_meta": {
+   "title": "Flux2 Scheduler (Klein is 4-step distilled)"
+  }
+ },
+ "ke:reflatent": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "ke:scale",
+    0
+   ],
+   "vae": [
+    "ke:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Encode Source Reference Latent"
+  }
+ },
+ "ke:pos": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "clip": [
+    "ke:clip",
+    0
+   ],
+   "text": "TEMPLATE_PLACEHOLDER_INSTRUCTION"
+  },
+  "_meta": {
+   "title": "Encode Edit Instruction"
+  }
+ },
+ "ke:neg": {
+  "class_type": "ConditioningZeroOut",
+  "inputs": {
+   "conditioning": [
+    "ke:pos",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Zeroed Negative"
+  }
+ },
+ "ke:refpos": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "ke:pos",
+    0
+   ],
+   "latent": [
+    "ke:reflatent",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Reference Latent (positive)"
+  }
+ },
+ "ke:refneg": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "ke:neg",
+    0
+   ],
+   "latent": [
+    "ke:reflatent",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Reference Latent (negative)"
+  }
+ },
+ "ke:guider": {
+  "class_type": "CFGGuider",
+  "inputs": {
+   "model": [
+    "ke:unet",
+    0
+   ],
+   "positive": [
+    "ke:refpos",
+    0
+   ],
+   "negative": [
+    "ke:refneg",
+    0
+   ],
+   "cfg": 1.0
+  },
+  "_meta": {
+   "title": "CFG Guider (cfg 1.0 is the distilled schedule)"
+  }
+ },
+ "ke:noise": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 11111
+  },
+  "_meta": {
+   "title": "Noise (builder writes the render's seed)"
+  }
+ },
+ "ke:sampler_sel": {
+  "class_type": "KSamplerSelect",
+  "inputs": {
+   "sampler_name": "euler"
+  },
+  "_meta": {
+   "title": "Sampler (euler)"
+  }
+ },
+ "ke:sampler": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "ke:noise",
+    0
+   ],
+   "guider": [
+    "ke:guider",
+    0
+   ],
+   "sampler": [
+    "ke:sampler_sel",
+    0
+   ],
+   "sigmas": [
+    "ke:sched",
+    0
+   ],
+   "latent_image": [
+    "ke:latent",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "Sampler Custom Advanced"
+  }
+ },
+ "ke:decode": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "ke:sampler",
+    0
+   ],
+   "vae": [
+    "ke:vae",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "ke:back": {
+  "class_type": "ImageScale",
+  "inputs": {
+   "image": [
+    "ke:decode",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "width": 1024,
+   "height": 1024,
+   "crop": "disabled"
+  },
+  "_meta": {
+   "title": "Whole Frame Back to Native (builder writes the source's own size)"
+  }
+ },
+ "ke:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "ke:back",
+    0
+   ],
+   "filename_prefix": "pixal_dm/klein_edit"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

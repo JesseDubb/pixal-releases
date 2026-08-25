@@ -19,6 +19,8 @@ import {
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
 import { AspectShape } from "../lib/AspectShape.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { MiniSlider } from "../lib/MiniSlider.jsx";
+import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { familyName, variantName } from "../lib/names.js";
 import { inputImages, inputImgUrl, setInputRefType, upload } from "../transport.js";
@@ -250,9 +252,9 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
       boxShadow: "0 10px 28px rgba(0,0,0,0.5)", padding: SPACE[8],
     }}>
       <div style={{
-        margin: `2px 4px ${SPACE[8]}px`, flexShrink: 0,
-        fontSize: TYPE.micro, fontWeight: W.heading,
-        letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--textTer)",
+        margin: `2px 4px ${SPACE[10]}px`, flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: SPACE[8], fontSize: TYPE.ui, fontWeight: W.nav, color: "var(--text)",
       }}>{title}</div>
       <div className="px-scroll" style={{ minHeight: 0, overflowY: "auto" }}>
         {children}
@@ -538,6 +540,9 @@ const LoraThumb = ({ src, size = 44, fill = false, Glyph = Stack }) => {
 // no clamp, no ellipsis; the distinguishing tail of a community LoRA name is
 // exactly what this mode is for. Same thumb, same badges, same filtered set -
 // a view is a density, not a different screen.
+// A list row, not a card: fixed 44px on a hairline, the cover at 32, the name
+// at UI size in text colour - one rhythm for the whole list (Jesse,
+// 2026-08-25: "the spacing is so poor").
 const LoraRow = ({ lora, onClick, reason }) => (
   <button
     type="button"
@@ -548,19 +553,21 @@ const LoraRow = ({ lora, onClick, reason }) => (
             (lora.words || []).join(", ") || lora.name]
              .filter(Boolean).join(" — ")}
     style={{
-      display: "flex", alignItems: "center", gap: SPACE[8], padding: 4,
+      display: "flex", alignItems: "center", gap: SPACE[10],
+      padding: `${SPACE[6]}px ${SPACE[6]}px`, minHeight: 44, boxSizing: "border-box",
       width: "100%", minWidth: 0,
-      border: "1px solid var(--border)", borderRadius: RADIUS.input,
-      background: "var(--bg2)", color: "var(--textSec)", fontFamily: FONT,
-      fontSize: 10, textAlign: "left",
+      border: "none", borderBottom: "1px solid var(--border)",
+      borderRadius: RADIUS.inner,
+      background: "transparent", color: "var(--text)", fontFamily: FONT,
+      fontSize: TYPE.ui, textAlign: "left",
       cursor: reason ? "default" : "pointer",
       opacity: reason ? 0.5 : 1,
-      transition: `border-color ${MOTION.hover}`,
+      transition: `background ${MOTION.hover}`,
     }}
-    onMouseEnter={(e) => { if (!reason) e.currentTarget.style.borderColor = "var(--accent)"; }}
-    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+    onMouseEnter={(e) => { if (!reason) e.currentTarget.style.background = "var(--bg2)"; }}
+    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
   >
-    <LoraThumb src={lora.thumb} size={36} />
+    <LoraThumb src={lora.thumb} size={32} />
     <span style={{ flex: 1, minWidth: 0, lineHeight: 1.3,
                    overflowWrap: "anywhere" }}>
       {lora.title || lora.short || lora.name}
@@ -593,17 +600,17 @@ const LoraTile = ({ lora, onClick, reason }) => (
             (lora.words || []).join(", ") || lora.name]
              .filter(Boolean).join(" — ")}
     style={{
-      display: "flex", flexDirection: "column", gap: 4, padding: 4, minWidth: 0,
-      border: "1px solid var(--border)", borderRadius: RADIUS.input,
-      background: "var(--bg2)", color: "var(--textSec)", fontFamily: FONT,
-      fontSize: 10, textAlign: "left",
+      display: "flex", flexDirection: "column", gap: SPACE[6], padding: 4, minWidth: 0,
+      border: "1px solid transparent", borderRadius: RADIUS.input,
+      background: "transparent", color: "var(--textSec)", fontFamily: FONT,
+      fontSize: TYPE.label, textAlign: "left",
       cursor: reason ? "default" : "pointer",
       opacity: reason ? 0.5 : 1,
       contentVisibility: "auto", containIntrinsicSize: "120px 150px",
       transition: `border-color ${MOTION.hover}`,
     }}
     onMouseEnter={(e) => { if (!reason) e.currentTarget.style.borderColor = "var(--accent)"; }}
-    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; }}
   >
     {/* The badge rides the cover, not the name line: the name's two-line
         clamp is 9.19c's measured compromise, and a chip beside it would fight
@@ -717,6 +724,12 @@ export const AttachmentIcons = ({ opts, setOpts, selectCharacter, removeReferenc
   const entries = opts.refs.map((ref, index) => ({ ref, index }));
   const ordered = [...entries.filter((e) => e.ref.kind !== "identity"),
                    ...entries.filter((e) => e.ref.kind === "identity")];
+  // ?v= makes the hover preview re-fetch when the reference is re-cropped or
+  // replaced; ref_rev is the identity file's mtime riding /api/options,
+  // never its name (the server keeps the filename private).
+  const anchor = opts.character
+    ? ((options && options.characters) || []).find((c) => c.id === opts.character)
+    : null;
   return (
     <span role="list" aria-label="Attached references"
           style={{ display: "inline-flex", alignItems: "center" }}>
@@ -732,9 +745,9 @@ export const AttachmentIcons = ({ opts, setOpts, selectCharacter, removeReferenc
       })}
       {opts.character && (
         <AttachmentIcon Icon={UserCircleCheck} ident
-          label={`identity · ${(options && (options.characters || [])
-            .find((c) => c.id === opts.character)?.name) || opts.character}`}
-          image={`/api/characters/${encodeURIComponent(opts.character)}/ref-thumb`}
+          label={`identity · ${(anchor && anchor.name) || opts.character}`}
+          image={`/api/characters/${encodeURIComponent(opts.character)
+            }/ref-thumb?v=${(anchor && anchor.ref_rev) || 0}`}
           onRemove={() => selectCharacter("")} />
       )}
     </span>
@@ -872,11 +885,13 @@ const loraIncompatible = (lora, profile) => {
 const recipeStageLabel = (stage, meta) => stage?.title || meta?.title ||
   (stage?.slot ? stage.slot.replaceAll("_", " ") : short(stage?.name));
 
-// The one number-dial idiom in the composer. LoRA strengths and the recipe
-// card's advanced dials are the same kind of control, so they share geometry
-// and behaviour - type, arrows, spinner - and the same gesture home: a value
-// back on the recipe's own number clears the override (the store drops it).
-// No second slider idiom for the same kind of number (brief 9.14).
+// The number box for LoRA strengths: type, arrows, spinner, and the gesture
+// home a value back on the recipe's own number clears the override (the
+// store drops it). Brief 9.14 gave the recipe dials this same box; they moved
+// to a snapped MiniSlider on 2026-08-25 (see renderDialRow) because a
+// controlled box that refills with the default cannot be cleared - the two
+// controls now differ on purpose, by what each number is: a strength you
+// type, a dial you drag.
 const StrengthInput = ({ value, onChange, label, step = 0.05, disabled = false,
                          min, max }) => (
   <input type="number" step={step} value={value} aria-label={label}
@@ -1017,11 +1032,19 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   // onDial is the wire the standalone fold used; without it (the style
   // dialog's plan editor) no dial renders at all.
   const allDials = typeof onDial === "function" ? (recipe?.dials || []) : [];
-  const recipeCardDials = allDials.filter((dial) => !dial.choices_from);
+  // A dial names the LoRA card it lives on: `stage` for a number dial (the
+  // identity patch's Likeness and Grounding), `choices_from` for a choice
+  // dial whose options come from that slot's scan (the bypass variant). Only
+  // a dial naming neither falls back to the recipe card - Jesse, 2026-08-25:
+  // "advanced settings should go under the LoRA it is editing, not its own
+  // card at the top of the lora explorer".
+  const dialHome = (dial) => dial.stage || dial.choices_from || "";
+  const recipeCardDials = allDials.filter((dial) => !dialHome(dial));
   const dialsBySlot = new Map();
   for (const dial of allDials) {
-    if (!dial.choices_from) continue;
-    dialsBySlot.set(dial.choices_from, [...(dialsBySlot.get(dial.choices_from) || []), dial]);
+    const home = dialHome(dial);
+    if (!home) continue;
+    dialsBySlot.set(home, [...(dialsBySlot.get(home) || []), dial]);
   }
   // The frozen wire: overrides read from opts.dials[recipeId], written
   // through onDial -> store.setRecipeDial. A dial back on the recipe's own
@@ -1046,7 +1069,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
     const open = {};
     for (const dial of allDials)
       if (dialOverridesMap[dial.key] !== undefined)
-        open[dial.choices_from || "recipe"] = true;
+        open[dialHome(dial) || "recipe"] = true;
     return open;
   });
   const toggleCard = (id) => setOpenCards((open) => ({ ...open, [id]: !open[id] }));
@@ -1059,7 +1082,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
       const next = { ...open };
       for (const dial of allDials) {
         if (dialOverridesMap[dial.key] === undefined) continue;
-        const id = dial.choices_from || "recipe";
+        const id = dialHome(dial) || "recipe";
         if (!next[id]) { next[id] = true; changed = true; }
       }
       return changed ? next : open;
@@ -1260,23 +1283,36 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   // it drops to its own row under the label. Numbers use the LoRA strength
   // box unchanged; the choice uses the shared segmented control's grid
   // variant (its labels must never clip).
+  // A number dial is a snapped slider on its own line under the label (Lumen's
+  // MiniSlider on Pixal's tokens): it only lands on the dial's steps, the
+  // readout sits at the right, and a double-click returns to the recipe's own
+  // number. The number box it replaced refilled with that default the moment
+  // it was emptied, so the value could not be typed over without selecting
+  // it first (Jesse, 2026-08-25: "I cannot erase the damn 4"). Choice dials
+  // keep the segmented control.
+  const dialFormat = (dial) => (v) => {
+    const decimals = Math.max(0, Math.ceil(-Math.log10(dial.step || 1)));
+    return Number(v).toFixed(decimals);
+  };
+  // Label line: sentence case at label size (Jesse, 2026-08-25: "not so
+  // CAPS"), the tip beside it, and when the dial is off the recipe's number
+  // the way home stated quietly at the right - the accent goes on the
+  // readout itself, which is the thing that changed.
   const renderDialRow = (dial) => (
     <div key={dial.key} style={{
-      display: "grid",
-      gridTemplateColumns: dial.kind === "choice" ? "minmax(0,1fr)" : "minmax(0,1fr) auto",
-      gap: SPACE[6], alignItems: "center" }}>
+      display: "grid", gridTemplateColumns: "minmax(0,1fr)",
+      gap: SPACE[8], alignItems: "center" }}>
       <span style={{ minWidth: 0, display: "flex", alignItems: "center",
-                     gap: SPACE[4], flexWrap: "wrap",
-                     fontSize: TYPE.micro, fontWeight: W.label,
-                     textTransform: "uppercase", letterSpacing: "0.08em",
-                     color: "var(--textTer)" }}>
+                     gap: SPACE[6], fontSize: TYPE.label, fontWeight: W.label,
+                     color: "var(--textSec)" }}>
         {dial.label}
         <InfoTip size={12} text={dial.help} />
         {isSet(dial.key) && (
-          <span style={{ fontFamily: "ui-monospace, Consolas, monospace",
-                         fontSize: TYPE.micro, letterSpacing: 0,
-                         textTransform: "none", color: "var(--accent)" }}>
-            · recipe {dialValueLabel(dial, dial.default)}
+          <span title={`double-click the slider to return to ${dialValueLabel(dial, dial.default)}`}
+                style={{ marginLeft: "auto",
+                         fontFamily: "ui-monospace, Consolas, monospace",
+                         fontSize: TYPE.micro, color: "var(--textMut)" }}>
+            recipe {dialValueLabel(dial, dial.default)}
           </span>
         )}
       </span>
@@ -1294,8 +1330,10 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
           </span>
         )
       ) : (
-        <StrengthInput value={resolvedDial(dial)} step={dial.step}
-          min={dial.min} max={dial.max} label={`${dial.label} dial`}
+        <MiniSlider value={resolvedDial(dial)} step={dial.step}
+          min={dial.min} max={dial.max} resetTo={dial.default}
+          emphasis={isSet(dial.key)}
+          format={dialFormat(dial)} ariaLabel={`${dial.label} dial`}
           onChange={(value) => onDial(dial.key, value)} />
       )}
     </div>
@@ -1309,57 +1347,51 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   };
   let sequence = 0;
   const addSearch = (
-    <div>
-      {/* One line of state where two prose lines used to float: the family,
-          then how many of it the filter currently offers - or, while searching
-          or showing all, where the matches are. The 120-cap caveat folds into
-          the same line - a silent truncation reads as "that is everything you
-          have installed", which it is not. */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: SPACE[6],
-                    justifyContent: "space-between" }}>
-        <div style={{ padding: `0 ${SPACE[4]}px ${SPACE[4]}px`,
-                      color: "var(--textTer)", fontSize: TYPE.label }}>
-          {searching ? (searchSummary || "no matches")
-            : showAll ? `everything · ${available.length}`
-            : <>{profileLabel} · {installed.length < installedTotal
-                ? `${installed.length} of ${installedTotal}`
-                : installedTotal}</>}
+    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[10],
+                  marginBottom: SPACE[10] }}>
+      <FilterInput value={filter} onChange={setFilter} autoFocus
+                   icon={<MagnifyingGlass size={13} weight="duotone" />}
+                   placeholder="Search" />
+      {searching && (
+        <div style={{ padding: `0 ${SPACE[4]}px`, color: "var(--textTer)",
+                      fontSize: TYPE.label }}>
+          {searchSummary || "no matches"}
         </div>
-        {/* The compatibility filter, made escapable. The verdict itself is the
-            server's (lora.incompatible, one callable with lora_stack) - this
-            only chooses whether it hides, never what it says. */}
-        <button type="button" onClick={() => setShowAll(!showAll)}
-          title={showAll ? "only LoRAs this profile can run"
-                         : "every installed LoRA, grouped by family"}
-          style={{ background: "none", border: "none", padding: `0 ${SPACE[4]}px`,
-                   color: "var(--accent)", fontFamily: FONT, fontSize: TYPE.label,
-                   cursor: "pointer", whiteSpace: "nowrap" }}>
-          {showAll ? `${profileLabel} only` : "show all"}
-        </button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 58px",
-                    gap: SPACE[6], alignItems: "start", marginTop: SPACE[6] }}>
-        <FilterInput value={filter} onChange={setFilter} autoFocus
-                     icon={<MagnifyingGlass size={13} weight="duotone" />}
-                     placeholder="Search" />
-        <input value={strength} onChange={(e) => setStrength(e.target.value)}
-          aria-label="new LoRA strength" inputMode="decimal"
-          style={{ width: "100%", height: 32, background: "var(--bg2)",
-                   border: "1px solid var(--border)", borderRadius: RADIUS.input,
-                   padding: "0 6px", fontFamily: "ui-monospace, Consolas, monospace",
-                   fontSize: 10, color: "var(--text)", outline: "none",
-                   textAlign: "center" }} />
-      </div>
+      )}
       {/* Density, not a different screen: the same filtered set feeds both
           views, and the choice persists (LORA_PICKER_VIEW_KEY). */}
-      <SegmentedControl variant="grid" size="sm" ariaLabel="LoRA picker view"
+      <SegmentedControl variant="flex" size="md" ariaLabel="LoRA picker view"
         options={[{ v: "grid", label: "grid", title: "Browse by cover" },
                   { v: "list", label: "list", title: "Scan by full name" }]}
-        value={pickerView} onChange={setPickerView}
-        style={{ marginTop: SPACE[6] }} />
+        value={pickerView} onChange={setPickerView} />
     </div>
   );
 
+  // The filter and what it currently offers are ONE chip on the popover's
+  // title row: "Krea 2 · 110" flips to "all · 416". The strength box went -
+  // a LoRA enters at 1.0 and its row is where the number lives (Jesse,
+  // 2026-08-25). What remains stacks on a 10px rhythm: search, then the
+  // view capsule, then the list.
+  const pickerTitle = (
+    <>
+      <span>Add a LoRA</span>
+      <button type="button" onClick={() => setShowAll(!showAll)}
+        title={showAll ? "back to the LoRAs this profile can run"
+                       : "every installed LoRA, grouped by family"}
+        style={{ height: 22, padding: `0 ${SPACE[8]}px`, flexShrink: 0,
+                 border: `1px solid ${showAll ? "var(--accent)" : "var(--border)"}`,
+                 borderRadius: RADIUS.pill,
+                 background: showAll ? "var(--accentMut)" : "transparent",
+                 color: showAll ? "var(--accent)" : "var(--textTer)",
+                 fontFamily: FONT, fontSize: TYPE.label, fontWeight: W.label,
+                 cursor: "pointer", whiteSpace: "nowrap",
+                 transition: `all ${MOTION.state}` }}>
+        {showAll ? `all · ${available.length}`
+         : `${profileLabel} · ${installed.length < installedTotal
+              ? `${installed.length} of ${installedTotal}` : installedTotal}`}
+      </button>
+    </>
+  );
   // Lifted out of the header so it can sit BELOW the rows: adding is the last
   // thing you do to a chain, and stacking it beside reset made the header wrap
   // onto a second line in the rail.
@@ -1374,7 +1406,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
         <Plus size={11} weight="bold" /> add
       </button>
       {adding && (
-        <Pop title="add to editable chain" onClose={() => setAdding(false)} xl
+        <Pop title={pickerTitle} onClose={() => setAdding(false)} xl
              down={rail} alignRight={rail} rail={rail}
              anchorRef={addAnchorRef} boundsRef={sectionRef}>
           {rail && addSearch}
@@ -1395,7 +1427,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
             </Row>
           ))}
           {inactiveStages.length > 0 && (
-            <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[6]}px 0` }} />
+            <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[10]}px 0` }} />
           )}
           {!rail && addSearch}
           {(searching || showAll) ? (
@@ -1426,7 +1458,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                     </div>
                   )}
                   {!collapsed && (pickerView === "list" ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+                    <div style={{ display: "flex", flexDirection: "column" }}>
                       {group.items.map((lora) => (
                         <LoraRow key={lora.name} lora={lora}
                                  reason={loraIncompatible(lora, profile)}
@@ -1434,7 +1466,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                       ))}
                     </div>
                   ) : (
-                    <div style={{ display: "grid", gap: SPACE[6],
+                    <div style={{ display: "grid", gap: SPACE[8],
                                   gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))" }}>
                       {group.items.map((lora) => (
                         <LoraTile key={lora.name} lora={lora}
@@ -1456,14 +1488,14 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
               the profile filter live upstream in installedAll, so they hold
               here without either view re-implementing them. */}
           {pickerView === "list" ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+            <div style={{ display: "flex", flexDirection: "column" }}>
               {installed.map((lora) => (
                 <LoraRow key={lora.name} lora={lora}
                          onClick={() => addInstalled(lora)} />
               ))}
             </div>
           ) : (
-            <div style={{ display: "grid", gap: SPACE[6],
+            <div style={{ display: "grid", gap: SPACE[8],
                           gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))" }}>
               {installed.map((lora) => (
                 <LoraTile key={lora.name} lora={lora}
@@ -1590,6 +1622,9 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
           collapsed card states its overrides; the drawer opens below the
           header, so what is under the cursor never moves mid-click. Pinned
           above the scroll list so the dials stay reachable at any scroll. */}
+      {/* The recipe card heads the chain (Jesse, 2026-08-25: "neat idea") and
+          carries the chain rule as its subline; the tip only appears when it
+          has dials of its own to explain. */}
       {allDials.length > 0 && (
         <div style={{ ...rowBase, display: "flex", flexDirection: "column",
                       alignItems: "stretch", gap: 0, marginBottom: SPACE[8] }}>
@@ -1597,22 +1632,30 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
             <SlidersHorizontal size={14} weight="duotone"
               style={{ color: "var(--accent)", flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: TYPE.ui, color: "var(--textSec)", overflow: "hidden",
-                            textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {/* What you have selected: the graph by name, in the text
+                  colour and body size a selection deserves, with what it
+                  does beneath it - the recipe's own tag, then the chain
+                  rule. The "recipe" word went; the card IS the recipe. */}
+              <div style={{ fontSize: TYPE.body, fontWeight: W.nav, color: "var(--text)",
+                            overflow: "hidden", textOverflow: "ellipsis",
+                            whiteSpace: "nowrap", lineHeight: 1.35 }}>
                 {recipe.label || recipe.id}
               </div>
-              <div style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
-                            color: "var(--textMut)" }}>
-                recipe
+              <div title="model enters at 1 · top applies first"
+                   style={{ fontSize: TYPE.label, color: "var(--textTer)", overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>
+                {recipe.tag || "recipe"}
               </div>
             </div>
             {/* The way home travels with the dials. The 78 words of prose
                 these dials used to carry stay in the InfoTips; what stays
                 visible is the label, the override state, and the recipe's
                 own number to come back to. */}
-            <InfoTip size={12} text={"These override the recipe for this render only. Put a "
-              + "dial back on the recipe's own number, or clear the box, and the "
-              + "override goes away."} />
+            {recipeCardDials.length > 0 && (
+              <InfoTip size={12} text={"These override the recipe for this render only. Put a "
+                + "dial back on the recipe's own number, or double-click a slider, and "
+                + "the override goes away."} />
+            )}
             {!openCards.recipe && recipeCardDials.length > 0 && (
               <span style={{ marginLeft: "auto", minWidth: 0, textAlign: "right",
                              // Wraps rather than truncates: at rail width the
@@ -1645,20 +1688,22 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                          border: "1px solid var(--border)",
                          borderRadius: RADIUS.control, cursor: "pointer",
                          background: "var(--bg2)", color: "var(--textTer)" }}>
-                {openCards.recipe ? <CaretUp size={11} weight="bold" />
-                                  : <CaretDown size={11} weight="bold" />}
+                <AccordionChevron open={!!openCards.recipe} />
               </button>
             )}
           </div>
-          {openCards.recipe && recipeCardDials.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: SPACE[16],
-                          marginTop: SPACE[12] }}>
-              {recipeCardDials.map(renderDialRow)}
-            </div>
+          {recipeCardDials.length > 0 && (
+            <AccordionPanel open={!!openCards.recipe}>
+              <div style={{ display: "flex", flexDirection: "column", gap: SPACE[16],
+                            marginTop: SPACE[12], paddingTop: SPACE[12],
+                            borderTop: "1px solid var(--border)" }}>
+                {recipeCardDials.map(renderDialRow)}
+              </div>
+            </AccordionPanel>
           )}
         </div>
       )}
-      {rail && (
+      {rail && allDials.length === 0 && (
         <div style={{ padding: `0 ${SPACE[8]}px ${SPACE[8]}px`,
                       fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
                       color: "var(--textTer)" }}>
@@ -1711,7 +1756,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
             <div key={`core-${stage.slot}`}
                  style={{ ...rowBase, display: "flex", flexDirection: "column",
                           alignItems: "stretch", gap: 0,
-                          opacity: on ? 0.78 : 0.5,
+                          opacity: on ? 1 : 0.5,
                           background: on ? undefined : "transparent" }}>
               <div style={{ display: "grid",
                             gridTemplateColumns: "24px minmax(0,1fr) 56px auto",
@@ -1757,8 +1802,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                                border: "1px solid var(--border)",
                                borderRadius: RADIUS.control,
                                background: "var(--bg2)", color: "var(--textTer)" }}>
-                      {cardOpen ? <CaretUp size={11} weight="bold" />
-                                : <CaretDown size={11} weight="bold" />}
+                      <AccordionChevron open={cardOpen} />
                     </button>
                   )}
                   <LoraToggle checked={on} disabled={!setCoreEnabled} label={label}
@@ -1770,12 +1814,16 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
               </div>
               {/* The drawer opens BELOW the header row, inside the card, so
                   expanding never moves the header out from under the cursor
-                  mid-click. */}
-              {cardOpen && stageDials.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: SPACE[16],
-                              marginTop: SPACE[12] }}>
-                  {stageDials.map(renderDialRow)}
-                </div>
+                  mid-click. A hairline and a breath of space separate the
+                  LoRA's own row from what fine-tunes it. */}
+              {stageDials.length > 0 && (
+                <AccordionPanel open={cardOpen}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: SPACE[16],
+                                marginTop: SPACE[12], paddingTop: SPACE[12],
+                                borderTop: "1px solid var(--border)" }}>
+                    {stageDials.map(renderDialRow)}
+                  </div>
+                </AccordionPanel>
               )}
             </div>
           );
@@ -2658,7 +2706,7 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                   </div>
                 );
               })}
-              <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[6]}px 0` }} />
+              <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[10]}px 0` }} />
               <Row onClick={() => { setPop(null); onNewCharacter && onNewCharacter(); }}>
                 <UserCirclePlus size={12} weight="duotone" /> new anchor…
               </Row>

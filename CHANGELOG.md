@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.9b — 2026-08-25
+
+Edits keep their skin, and Pixal shows you what you own.
+
+**Klein 9B now edits the whole frame.** Whole-frame edits used to run on
+Qwen, which smooths real skin into plastic. Pick a Klein build as your edit
+model in Settings and "change her earrings" keeps pores, hair and fabric
+intact - and finishes faster. Klein already handled masked edits; now it
+handles both.
+
+**A Models tab in Settings.** Every model you have installed, grouped by
+family, with how much disk it takes and which lanes can use it. A model that
+is too heavy for your card is flagged, not hidden. The number at the top
+tells you how many of your LoRAs Pixal cannot use yet.
+
+**Video dialogue sounds right.** No stray noise before the first word, no
+"I says", and no line repeated to fill the clip. There is a natural pause
+before speaking and after. Animate a selfie and it stays a selfie.
+
+**Re-roll uses everything you have set.** Rolling a card again with a
+character, LoRA changes or dials now applies them, instead of replaying the
+card's old settings.
+
+**Identity dials are sliders.** Likeness and Grounding are snapped sliders
+under the LoRA they belong to. Adding a LoRA is one clean panel. The glass
+logo from the website is in the app.
+
+**Memory comes back when you ask.** "Free brain" works again (a restart had
+put the brain out of its reach, and idle unloading with it). A second video
+clip no longer reloads 25 GB. Trimming no longer clears ComfyUI's cache.
+
+**Small fixes.** The character preview updates when you re-crop. The
+installer puts the vision projector next to the brain so chat can see
+images. A caption starting with "This" renders instead of being treated as
+chat. The edit dialog zooms to the flaw; hold to compare with the original.
+
 ## 1.0.8b — 2026-08-24
 
 Pixal stops keeping models to itself, and stops talking in code.

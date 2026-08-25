@@ -5,6 +5,7 @@
 // ("local") — a DM, not a mailbox.
 import { useCallback, useEffect, useReducer, useSyncExternalStore } from "react";
 import * as transport from "./transport.js";
+import { prettyTemplate } from "./lib/names.js";
 
 const CONV = "local";
 const OPTS_KEY = "pixal-opts-v2";
@@ -418,6 +419,116 @@ export function resolvedDials(opts, options) {
   for (const dial of recipeDials(id, options))
     out[dial.key] = overrides[dial.key] ?? dial.default;
   return out;
+}
+// Prompt enhance is a writer switch, not a render pick, so it lives in its own
+// localStorage key rather than opts. Both readers of renderIntent - the
+// composer's send and the re-roll - read the same switch.
+export const PROMPT_ENHANCE_KEY = "pixal-prompt-enhance";
+
+export function loadPromptEnhance() {
+  try {
+    const saved = localStorage.getItem(PROMPT_ENHANCE_KEY);
+    return saved == null ? true : saved !== "off";
+  } catch { return true; }
+}
+
+// Keep disabled rows in localStorage/UI, but never transmit them as execution
+// candidates. This is also safe during a rolling update: older Pixal servers
+// understood version-1 plans but did not know the later `enabled` field.
+const executableLoraPlan = (plan) => !plan ? null : ({
+  ...plan,
+  entries: (plan.entries || []).filter((entry) => entry.enabled !== false)
+    .map(({ enabled: _enabled, ...entry }) => entry),
+});
+
+// The one render-intent builder, shared by chat and the re-roll (brief 9.42):
+// what the composer is LOOKING at, as the opts body the server overlays. Chat
+// sends it beside the prompt; a re-roll sends the SAME object, so a character,
+// a preset or a style direction refines exactly like a LoRA does. When the
+// composer is saying nothing, both callers send no opts at all - the
+// stale-bundle contract the server keeps.
+export function renderIntent(promptEnhance, o = state.opts) {
+  const options = state.options;
+  const character = o.character || "";
+  const loraPlan = loraPlanFor(o, options);
+  // The recipe-card extender's overrides for the active recipe (sparse: only
+  // dials moved off the recipe's own number appear here).
+  const dialSet = dialOverrides(o, options);
+  // A held seed counts as composer intent on its own: with no other pick set,
+  // `active` stayed false, no body was built, and the frozen seed never left
+  // the browser.
+  const frozen = heldSeed ? heldSeed.seed : 0;
+  const savedStyle = savedStyleFor(o, options);
+  const active = o.style || o.quality || (o.engine !== "auto") || o.model || o.aspect || o.mp ||
+                 o.loras.length || o.refs.length || character || loraPlan || !promptEnhance ||
+                 o.editSource || o.cinematic || frozen || savedStyle ||
+                 Object.keys(dialSet).length;
+  if (!active) return { summary: null, body: null };
+  const bits = [];
+  // Leads the line: on an edit turn the rest of the picks are not consulted,
+  // so saying so first stops "Realism · 2:3" reading as what just ran.
+  if (o.editSource) bits.push("Editing " + o.editSource.split("/").pop());
+  // Anime/Fantasy on a Krea 2 model is DIRECTED - it has no graph of its
+  // own, it exists only as craft direction the brain writes into the scene.
+  // With Prompt enhance off the scene is the user's words verbatim, so the
+  // pick never lands; claiming it here made the render look like a bug.
+  const styleLands = promptEnhance || !o.style || o.style === "realism" ||
+    ((options?.model_meta || {})[o.model] || {}).family !== "krea2";
+  // A saved style supersedes style/quality entirely, so it leads the line
+  // and they are not mentioned - saying "Realism · Refined" beside a saved
+  // style would name two things when only one of them runs.
+  if (savedStyle) bits.push(savedStyle.name);
+  else if (o.style && styleLands) bits.push(o.style[0].toUpperCase() + o.style.slice(1));
+  else if (o.engine !== "auto") bits.push(prettyTemplate(o.engine));
+  if (!savedStyle && o.quality === "refined") bits.push("Refined");
+  // Cinematic is craft direction the brain writes into the scene, so with
+  // Prompt enhance off it never reaches the render - don't claim it here.
+  if (o.cinematic && promptEnhance) bits.push("Cinematic");
+  if (character) bits.push((options && (options.characters || [])
+    .find(c => c.id === character)?.name) || character);
+  if (o.model) bits.push(o.model.split("\\").pop().replace(".safetensors", ""));
+  if (o.aspect) bits.push(o.aspect.split(" ")[0] + (o.mp ? "@" + o.mp + "MP" : ""));
+  else if (o.mp) bits.push(o.mp + "MP");
+  // A moved dial is render-affecting, so the note names it like every other
+  // pick - only overrides, never the recipe's own numbers.
+  const liveDials = recipeDials(activeRecipeId(o, options), options)
+    .filter((d) => dialSet[d.key] !== undefined);
+  for (const d of liveDials)
+    bits.push(`${d.label.toLowerCase()} ${dialSet[d.key]}`);
+  if (o.loras.length) bits.push("+" + o.loras.length + " lora");
+  if (o.refs.length) bits.push(o.refs.length + " ref");
+  if (frozen) bits.push("seed " + frozen + " locked");
+  if (!promptEnhance) bits.push("Prompt enhance off");
+  const summary = bits.join(" · ");
+  const body = {};
+  // `engine` is the normalized execution route; style/quality remain
+  // creative intent. Send both during the persisted-options migration so
+  // old and new servers queue the same proven graph.
+  if (o.engine && o.engine !== "auto") body.engine = o.engine;
+  // The style id is all the server needs: it reads the FILE for the model,
+  // canvas, LoRA plan and sampler, so a stale mirror in this tab cannot
+  // change what renders.
+  if (savedStyle) body.saved_style = savedStyle.id;
+  if (o.style && styleLands) body.style = o.style;
+  if (o.quality) body.quality = o.quality;
+  if (o.cinematic && promptEnhance) body.cinematic = true;
+  if (character) body.character = character;
+  if (o.model) body.model = o.model;
+  if (o.aspect) body.aspect = o.aspect;
+  if (o.mp) body.mp = o.mp;
+  // The extender's dials ride as sparse overrides, keyed by builder
+  // parameter exactly like the canvas: an untouched dial is absent, so an
+  // untouched composer submits precisely what it did before the dials
+  // became reachable (the byte-identical-graph rule, brief 9.14).
+  for (const d of liveDials) body[d.key] = dialSet[d.key];
+  if (o.loras.length) body.loras = o.loras;
+  if (loraPlan) body.lora_plan = executableLoraPlan(loraPlan);
+  if (o.refs.length) body.refs = o.refs;
+  if (o.editSource) body.edit_source = o.editSource;
+  // The held seed rides every render, not just the re-roll button.
+  if (frozen) body.seed = frozen;
+  body.prompt_enhance = promptEnhance;
+  return { summary, body };
 }
 
 function identityCompatibleSelections(options = state.options) {
@@ -1036,13 +1147,16 @@ export const api = {
     emit();
   },
 
-  // The composer is the truth: a re-roll carries the LoRA stack and model the
-  // user is looking at right now. Only the ACTIVE recipe's plan is sent - the
-  // lora_plans map also holds every recipe that was ever active, and only the
-  // active one is kept in sync, so shipping the whole map let a card from
-  // another recipe be re-rolled against a stale plan the user was not looking
-  // at. The server takes what it is sent only if it fits the card's own graph,
-  // so a mismatch falls through to the card's stored plan instead.
+  // The composer is the truth: a re-roll carries the stack the user is looking
+  // at right now. `opts` is the SAME body chat sends (renderIntent), so a
+  // character, a preset or a style direction refines exactly like a LoRA does;
+  // the legacy fields stay for a server that predates the overlay. Only the
+  // ACTIVE recipe's plan is sent - the lora_plans map also holds every recipe
+  // that was ever active, and only the active one is kept in sync, so shipping
+  // the whole map let a card from another recipe be re-rolled against a stale
+  // plan the user was not looking at. The server takes what it is sent only if
+  // it fits the card's own graph, so a mismatch falls through to the card's
+  // stored plan instead.
   async reroll(jobId) {
     const c = cid();
     // A held seed freezes this re-roll too, whichever card it was thrown from -
@@ -1059,10 +1173,12 @@ export const api = {
       // untouched dial reads "follows the recipe" on screen; keeping the card's
       // stored value instead would silently roll a likeness nobody is looking
       // at. A recipe declaring no dials sends none, and the stored ones win.
+      const { body: intent } = renderIntent(loadPromptEnhance());
       const result = await transport.reroll(jobId, c, frozen,
                              plan ? { [rid]: plan } : {}, state.opts.model || "",
                              state.opts.aspect || "", state.opts.mp || 0,
-                             resolvedDials(state.opts, state.options));
+                             resolvedDials(state.opts, state.options),
+                             intent || undefined);
       // The server refuses with {ok:false} when the ledger entry is already
       // gone - surface it like every sibling does, and release the pending
       // seed lock here too: the catch only sees a network throw, so a

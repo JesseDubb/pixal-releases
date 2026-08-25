@@ -1,22 +1,23 @@
-// BlockLogo.jsx — the block P as a chamfered solid, live in Three.js.
+// BlockLogo.jsx — the block P as black glass, live in Three.js. This is the
+// getpixal.com mark (site/index.html, mountMark) brought home, 2026-08-25:
+// onyx glass body with the house recipe (transmission + clearcoat + a touch
+// of iridescence), and the chip breathing between the ComfyUI yellow and a
+// dark neon green - never through white, because chartreuse IS the band.
 //
-// This is the cheap replacement for GlassLogo. Read that file's perf note
-// first: the puck was MEASURED at ~30W of a 5090 while merely on screen, and
-// the cost was NOT polygon count. It was `transmission`, which makes three.js
-// render the whole scene into an offscreen target and rebuild its mipmap chain
-// BEFORE the visible pass, every frame. So the savings here are, in order:
+// The perf note that made the app drop glass still stands and is still
+// honoured: `transmission` was MEASURED at ~30W of a 5090, because three.js
+// renders the whole scene to an offscreen target and rebuilds its mipmaps
+// before every visible pass. That cost is per FRAME DRAWN, and this loop
+// draws almost none: it settles and stops six seconds after the pointer
+// leaves (a stopped loop is a CANCELLED rAF), it goes `calm` while a render
+// samples (NavRail passes it), and the loading screen only shows while
+// ComfyUI boots - nothing is sampling then. On screen and idle it costs
+// nothing; the 30W only exists while a hand is on it.
 //
-//   1. no transmission, no clearcoat, no iridescence - MeshStandardMaterial.
-//      One forward pass instead of two, and a much shorter shader.
-//   2. arcs flattened to 2 segments in block-mark.js instead of
-//      curveSegments:14, and bevelSegments 2 instead of 3-5.
-//   3. no floor, no glow sprite, no pin light - the env map alone lights it.
-//
-// The chamfer survives all of that, because a chamfer reads from SHADING, not
-// from silhouette. What sells it is a smooth normal across the bevel ring and
-// something bright for it to reflect - which is what the baked env is for. The
-// env is generated ONCE at mount (PMREM is a one-off, not a per-frame cost);
-// dropping it and using lights instead looks flatter for no frame-time win.
+// Geometry stays the cheap one: arcs flattened in block-mark.js (steps by
+// size - 6 at the 132px loading mark where facets read, 2 at the rail where
+// they never do), bevelSegments 3/2, no floor, no glow, no pin light. The
+// env is three flat panels baked ONCE at mount (PMREM is a one-off).
 //
 // The four loop gates and the cancelled-rAF discipline are lifted verbatim from
 // GlassLogo, because that part was never the problem - it is the fix.
@@ -24,8 +25,9 @@ import { useEffect, useRef, useState } from "react";
 import { loadThree } from "./three-loader.js";
 import { blockShapes } from "./block-mark.js";
 
-const SIGNAL = 0xd6f32f;
-const BODY = 0xe8e7e1;      // warm off-white: the mark has to read on charcoal
+const BODY = 0x0b0b0e;      // onyx: black glass reads on charcoal by its rim
+const CHIP_HI = 0xf0ff41;   // the comfyui-dark.svg yellow
+const CHIP_LO = 0x66770b;   // the signal, pulled dark
 
 const FRAME_MS = 33;        // 30fps; the drift is too slow for 60 to show
 // Interaction lifts the cap, but NOT to infinity. Jesse's panel runs at 239Hz,
@@ -37,8 +39,12 @@ const SETTLE_MS = 6000;
 // Radians per frame of ambient spin, i.e. what it does when the pointer is
 // nowhere near it. At 30fps, 0.013 is a full turn every ~16s; the old 0.004
 // took ~52s, which read as standing still. Costs nothing - the frame was
-// already being drawn, this only changes how far it turns in it.
+// already being drawn, this only changes how far it turns in it. The site's
+// marks turn faster per place - the loading mark means "busy" - so the drift
+// is a prop and these are its two shipped values.
 const DRIFT = 0.013;
+export const RAIL_DRIFT = 0.045;
+export const BOOT_DRIFT = 0.085;
 
 // Three flat panels, baked once. Cheaper and more controllable than an HDRI,
 // and CSP-safe because nothing is fetched.
@@ -61,7 +67,7 @@ const buildEnvScene = (THREE) => {
   return scene;
 };
 
-export const BlockLogo = ({ size = 46, calm = false }) => {
+export const BlockLogo = ({ size = 46, calm = false, drift = DRIFT }) => {
   const hostRef = useRef(null);
   const calmRef = useRef(calm);
   const syncRef = useRef(null);
@@ -83,7 +89,9 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // Never below 2: on a 1x display the canvas would rasterize at its CSS
+    // size and no MSAA rescues a 54px raster. 2x is supersampling there.
+    renderer.setPixelRatio(Math.min(Math.max(window.devicePixelRatio || 1, 2), 3));
     renderer.setSize(size, size);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -106,29 +114,37 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
     // bevelSize is the chamfer width. Keep it generous relative to depth - a
     // wide shallow chamfer catches the env across a broad band and reads soft,
     // where a narrow one needs segments to avoid looking like a hard facet.
-    const { hull, chip } = blockShapes(THREE, { steps: 2, size: 2.4 });
+    // Facets only read at the loading size; the rail takes the cheap arcs.
+    const fine = size >= 100;
+    const { hull, chip } = blockShapes(THREE, { steps: fine ? 6 : 2, size: 2.4 });
     const extrude = (shape, depth, bevel) => new THREE.ExtrudeGeometry(shape, {
       depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
-      bevelSegments: 2, curveSegments: 1,   // arcs are pre-flattened, see module
+      bevelSegments: fine ? 3 : 2, curveSegments: 1,   // arcs are pre-flattened
     });
 
     const bodyGeo = extrude(hull, 0.34, 0.07);
     bodyGeo.center();
-    // Low metalness on purpose: at 0.18 against a dark env the body sampled as
-    // mid-grey rather than off-white, because a metal has no diffuse term and
-    // there is very little in this env for it to reflect.
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: BODY, roughness: 0.34, metalness: 0.06, envMapIntensity: 1.35,
+    const bodyMat = new THREE.MeshPhysicalMaterial({
+      color: BODY, metalness: 0, roughness: 0.07,
+      transmission: 0.9, thickness: 1.2, ior: 1.5,
+      attenuationColor: new THREE.Color(0x101204), attenuationDistance: 1.6,
+      clearcoat: 1, clearcoatRoughness: 0.05,
+      iridescence: 0.25, iridescenceIOR: 1.3, envMapIntensity: 1.35,
+      // Glass shows its own interior: without DoubleSide the inner walls of
+      // the bubble cutout are culled and the mark reads hollow from most angles.
+      side: THREE.DoubleSide,
     });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     group.add(body);
 
     // The chip is the one bright thing. Unlit and toneMapped:false so ACES
     // cannot desaturate the brand chartreuse toward white - the same fix the
-    // hero mark needed.
+    // hero mark needed. It breathes between its two anchors in draw().
+    const chipHi = new THREE.Color(CHIP_HI), chipLo = new THREE.Color(CHIP_LO);
     const chipGeo = extrude(chip, 0.30, 0.05);
     chipGeo.center();
-    const chipMat = new THREE.MeshBasicMaterial({ color: SIGNAL, toneMapped: false });
+    const chipMat = new THREE.MeshBasicMaterial({
+      color: CHIP_HI, toneMapped: false, side: THREE.DoubleSide });
     const chipMesh = new THREE.Mesh(chipGeo, chipMat);
     // Both geometries are centred on their own bbox, so their front faces land
     // at depth/2 + bevel: 0.24 for the body, 0.20 for the chip. Nudging by 0.04
@@ -137,7 +153,7 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
     chipMesh.position.z = 0.12;
     group.add(chipMesh);
 
-    let rotY = reduced ? -0.4 : -0.45, velY = reduced ? 0 : DRIFT;
+    let rotY = reduced ? -0.4 : -0.45, velY = reduced ? 0 : drift;
     let tiltX = reduced ? -0.1 : 0, tiltY = 0;
     let targetTiltX = tiltX, targetTiltY = 0;
     let near = 0, targetNear = 0;
@@ -180,7 +196,7 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
     renderer.domElement.addEventListener("pointerdown", onDown);
     window.addEventListener("pointerup", onUp);
 
-    const IDLE = reduced ? 0 : DRIFT;
+    const IDLE = reduced ? 0 : drift;
 
     const wanted = (now) => {
       if (dragging) return true;
@@ -212,6 +228,8 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
       group.position.y = reduced ? 0 : Math.sin(t * 1.3) * 0.04;
       group.scale.setScalar(1 + near * 0.07);
       bodyMat.envMapIntensity = 1.5 + near * 0.8;
+      // yellow to a darker neon green on a ~5s cycle, never through white
+      chipMat.color.lerpColors(chipLo, chipHi, 0.5 + 0.5 * Math.sin(t * 1.25));
       renderer.render(scene, camera);
     };
 
@@ -259,7 +277,7 @@ export const BlockLogo = ({ size = 46, calm = false }) => {
       pmrem.dispose(); renderer.dispose();
       host.contains(renderer.domElement) && host.removeChild(renderer.domElement);
     };
-  }, [size, THREE]);
+  }, [size, drift, THREE]);
 
   return (
     <div ref={hostRef} title="Pixal"

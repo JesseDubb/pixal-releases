@@ -42,6 +42,13 @@ export const SegmentedControl = ({
   variant = "flex", size = "md", fill = false, className, style,
 }) => {
   const grid = variant === "grid";
+  // The flex capsule's active state is ONE pill that slides between equal
+  // segments (transitions.dev "tabs sliding" on MOTION.state; Jesse's
+  // reference is Wealthsimple's notification toggle, 2026-08-25). Equal
+  // segments mean no measuring: the pill is 1/n wide and translates by
+  // whole segment widths - a transform, so it never repaints the track.
+  const activeIndex = Math.max(0, options.findIndex((o) => o.v === value));
+  const pad = 3;
   return (
     <div role="radiogroup" aria-label={ariaLabel} className={className}
       style={grid ? {
@@ -50,11 +57,24 @@ export const SegmentedControl = ({
         gap: SPACE[4],
         ...style,
       } : {
-        display: "flex", background: "var(--bg2)",
+        // The box is the segments' own: 1px border + 3px padding around a
+        // row the 8px vertical segment padding makes 32 - 40 outside to
+        // outside at md, the box SegGhost in Settings is built to.
+        position: "relative", display: "flex", background: "var(--bg2)",
         border: "1px solid var(--border)", borderRadius: RADIUS.pill,
         padding: 3,
         ...style,
       }}>
+      {!grid && options.length > 0 && (
+        <span aria-hidden="true" style={{
+          position: "absolute", top: pad, bottom: pad, left: pad,
+          width: `calc((100% - ${pad * 2}px) / ${options.length})`,
+          transform: `translateX(${activeIndex * 100}%)`,
+          background: "var(--bg4)", boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
+          borderRadius: RADIUS.pill, boxSizing: "border-box",
+          transition: `transform ${MOTION.state}`,
+        }} />
+      )}
       {options.map((opt) => {
         const active = value === opt.v;
         const off = !!opt.disabled;
@@ -66,10 +86,11 @@ export const SegmentedControl = ({
         // (the label span below carries the ellipsis): a segment that can
         // shrink must clip, never paint over its neighbour.
         const flexStyle = {
+          position: "relative", zIndex: 1,
           flex: 1, minWidth: 0, overflow: "hidden",
           padding: size === "sm" ? "4px 8px" : "8px 6px",
           fontSize: TYPE.ui, fontWeight: W.nav, fontFamily: FONT,
-          background: active ? "var(--bg4)" : "transparent",
+          background: "transparent",
           color: active ? "var(--text)" : "var(--textMut)",
           opacity: off && !active ? 0.45 : 1,
           border: "none", borderRadius: RADIUS.pill,
@@ -103,7 +124,7 @@ export const SegmentedControl = ({
           transition: `all ${MOTION.state}`, whiteSpace: "nowrap",
         };
         return (
-          <button key={String(opt.v)} type="button" role="radio"
+          <button key={String(opt.v)} type="button" role="radio" className="px-seg"
             aria-checked={active} disabled={off} title={title}
             onClick={() => { if (!off) onChange(opt.v); }}
             {...(opt.buttonProps || {})}

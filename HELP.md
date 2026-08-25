@@ -162,7 +162,10 @@ a restage changes it.
 They are different buttons on purpose:
 
 - **re-roll** renders the same scene again with a new seed. Same words, new
-  dice — use it when the description was right and the draw was wrong.
+  dice — use it when the description was right and the draw was wrong. It
+  keeps the card's scene and takes everything else from the composer — LoRAs,
+  model, canvas, preset, character — so "turn a character on and re-roll"
+  puts their face on the shot you liked.
 - **iterate** does not render anything. It drops a pre-filled line into your
   message box — `iterate on #42: ` — and waits for you to type the change.
   You are telling the brain what to move; it does the small-correction dance
@@ -411,7 +414,7 @@ an example: “she pushes off the hood, turns and laughs — handheld follows
 her”. Write what moves and how the camera behaves. Enter submits;
 Shift+Enter makes a new line.
 
-Two ways to go:
+Three ways to go:
 
 - **action** (the accent button) sends your note. The chat brain turns it
   into a shot-by-shot plan for the engine and you watch the status line work
@@ -419,6 +422,16 @@ Two ways to go:
   "stitching the trailer").
 - **surprise me** sends no note at all — its tooltip: "no note - the director
   animates what's already in the frame".
+- **draft the brief** asks the director for the brief without rendering — the
+  note is replaced by what it wrote, so you can read and edit it before any
+  GPU time is spent. A drafted brief then ships as written, exactly like a
+  script, until you change the engine, model, length, shots or end frame —
+  the brief was written for that configuration.
+
+A still rendered through the selfie chain animates as a selfie — the
+director is told the camera is the phone in the subject's own outstretched
+hand, and there is no setting for it: you already chose Selfie Cam when you
+rendered the still.
 
 ### Script mode
 
@@ -602,8 +615,8 @@ and returns 4×."
 
 ## 6. Settings reference
 
-Open Settings from the rail's gear. Five tabs — **General**, **Image**,
-**Video**, **Brain**, **About** — and every control saves the moment you
+Open Settings from the rail's gear. Six tabs — **General**, **Image**,
+**Video**, **Models**, **Brain**, **About** — and every control saves the moment you
 change it; the strip at the bottom confirms ("saved", "upscaler applied", …).
 The tab you used last is remembered.
 
@@ -701,9 +714,16 @@ tab.
 
 ### Video
 
+
 **Video engine** — "Which engine the Animate popup opens on." **Video
 model** — "Which model the popup opens on." The Animate dialog's defaults
 (see Section 4); each tip notes the popup still switches freely per clip.
+
+**Dialogue format** — "How H3 briefs write spoken lines." **quotes** is the
+default — `(S1) says "…"`, the MiniMax-H3 discussion #76 form; it won the
+same-seed A/B with no opening blip and no cue read aloud. **tags** is
+MiniMax's trained `(S1) says: <d>[English] …</d>`, which some seeds open
+with a half-second of gibberish.
 
 **Upscaler** — "Used by the upscale button on a finished clip." The "video
 clips" engine (VSR, or LTX 2.5 2x); walked in Section 5.
@@ -713,6 +733,21 @@ default." The MiniMax 2× pass runs inside the render — it re-samples the
 render's own latent, so it can never be a button on a finished clip — and
 costs roughly 3× the render time. Greyed until the MMH3 Ultimate Upscale
 pack and its 659 MB weights are installed.
+
+### Models
+
+The library — read-only; choosing per lane stays on the Image and Video
+tabs. The summary line counts what you own ("47 models · 416 LoRAs · 141
+have no profile") beside what the card measured ("The card reads as
+32 GB."); the tip there explains that a LoRA with no profile is skipped at
+render time rather than stacked blindly. Below it, every build you own
+grouped by family — Krea 2, Z-Image, Klein, Qwen Image Edit, Qwen Image,
+Anima, Video, then Other — one line each: the product name (the raw
+filename is the tooltip; a Civitai-matched name links out), the lanes it
+runs, and its weight on disk. A build heavier than the card says so in its
+tooltip — it will offload and run slowly; nothing is blocked. A model
+nothing here can run says why ("a Flux model — no lane here runs it yet"),
+and video models point at the Animate lanes.
 
 ### Brain
 
@@ -1077,7 +1112,8 @@ Model licenses ride on top, and three components in the box carry
 non-commercial terms — the license on the checkpoint, not on your pictures:
 the Anima anime model ("CircleStone Labs Non-Commercial v1.2. The images are
 yours; the checkpoint is not for commercial use."), FLUX.2 Klein (the masked
-inpaint editor; FLUX Non-Commercial License v2.1), and the PiD upscaler
+inpaint editor and the Klein whole-frame editor; FLUX Non-Commercial License
+v2.1), and the PiD upscaler
 ("Non-commercial license"). Everything else follows its own authors' terms;
 `THIRD_PARTY_NOTICES.md` lists what Pixal is aware of.
 
@@ -1088,7 +1124,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.8b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.9b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

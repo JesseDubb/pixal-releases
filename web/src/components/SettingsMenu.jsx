@@ -1,12 +1,14 @@
-// SettingsMenu.jsx — five tabs split by medium (General / Image / Video /
-// Brain / About). The model decisions used to share one Models tab until it
-// grew too crowded to scan (Jesse, 2026-08-22). Every control auto-saves.
+// SettingsMenu.jsx — six tabs (General / Image / Video / Models / Brain /
+// About). The model decisions used to share one Models tab until it grew too
+// crowded to scan, so the choosing split by medium (Jesse, 2026-08-22); the
+// Models tab that came back (9.30) is the other half of that story — the
+// read-only library, everything you own grouped by family. Controls auto-save.
 // Two presentations, same content: `docked` (default path on wide viewports)
 // fills the dock lane beside the rail as a sibling surface card — non-modal,
 // so the theme toggle previews against the live chat; the fallback is the old
 // bottom-left floating panel budding off the rail's settings button.
 // Local-first: everything persists to pixal_dm/config.json via /api/settings.
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 import { Lockup } from "../lib/Lockup.jsx";
@@ -15,7 +17,7 @@ import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, ValueGhost } from "./Skeleton.jsx";
-import { prettyModel } from "../lib/names.js";
+import { familyName, prettyModel, prettyTemplate } from "../lib/names.js";
 import { useStore } from "../store.js";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -197,7 +199,10 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
 // a build heavier than the detected card says so there too - one honest line,
 // advisory only: no badge, no colour, no block. The render-time butler prices
 // the real fit; a null detected_gb or an unknown size says nothing at all.
-const editLaneOptions = (list, detectedGb) => (list || []).map((e) => {
+// `group` folders the row under a family name (9.44): the whole-frame lane
+// lists Qwen and Klein builds together, and the family is the level someone
+// actually chooses at.
+const editLaneOptions = (list, detectedGb, group) => (list || []).map((e) => {
   const gb = e.size ? e.size / 1e9 : 0;
   const heavy = gb > 0 && detectedGb > 0 && gb > detectedGb;
   return {
@@ -206,6 +211,7 @@ const editLaneOptions = (list, detectedGb) => (list || []).map((e) => {
     title: heavy
       ? `${e.name}\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
       : e.name,
+    ...(group ? { group } : {}),
   };
 });
 
@@ -272,6 +278,85 @@ const GroupLabel = ({ children }) => (
   </div>
 );
 
+// ── the library (9.30) ────────────────────────────────────────────────────
+// The Models tab is the read-only inventory: choosing per lane is the Image
+// and Video tabs' job, this one only ever REPORTS. One group per family, in
+// the order a user actually renders with them; everything without a lane
+// (Flux, audio, pipeline parts, unclassified) collapses into Other.
+const LIBRARY_ORDER = ["krea2", "zimage", "klein", "qwen_edit", "qwen_image",
+                       "anima", "video"];
+
+// The server's reason codes, said in the user's language. Keyed by the exact
+// reason model_profile writes; an unknown future reason passes through as-is.
+const HUMAN_REASON = {
+  "video model": "a video model — used by the Animate lanes",
+  "Flux needs its own Pixal pipeline": "a Flux model — no lane here runs it yet",
+  "audio model": "an audio model — no lane here runs it",
+  "auxiliary model, not a standalone image generator":
+    "a pipeline part — never renders on its own",
+  "no compatible Pixal pipeline yet": "no lane here runs it yet",
+};
+
+// One library row: what it is, what it runs, what it weighs — one
+// fixed-height line (nowrap + ellipsis, [[vertical-rhythm]]), the raw relpath
+// and any advisory in the tooltip. A video model is not dead weight — the
+// Animate lanes run it — so it keeps its ink and says where it runs; a model
+// nothing here runs goes quiet and says why. Heavier-than-card follows 9.29:
+// an honest tooltip line, never a badge, a colour, or a block.
+const LibraryRow = ({ rel, name, meta, detectedGb }) => {
+  const [hov, setHov] = useState(false);
+  const family = meta.family || "unknown";
+  const gb = meta.size ? meta.size / 1e9 : 0;
+  const heavy = gb > 0 && detectedGb > 0 && gb > detectedGb;
+  const lanes = (meta.compatible_recipes || []).map(prettyTemplate);
+  const dead = !meta.supported && family !== "video";
+  const state = family === "video"
+    ? HUMAN_REASON["video model"]
+    : (HUMAN_REASON[meta.reason] || meta.reason || "no lane here runs it yet");
+  const shown = lanes.slice(0, 3);
+  const overflow = lanes.length - shown.length;
+  return (
+    <div title={rel + (heavy
+                 ? `\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
+                 : "")}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      style={{ display: "flex", alignItems: "center", gap: SPACE[10], height: 30,
+               padding: `0 ${SPACE[8]}px`, borderRadius: RADIUS.input,
+               background: hov ? "var(--bg2)" : "transparent",
+               transition: `background ${MOTION.hover}` }}>
+      <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
+                     textOverflow: "ellipsis", whiteSpace: "nowrap",
+                     fontFamily: FONT, fontSize: TYPE.ui,
+                     color: dead ? "var(--textTer)" : "var(--textSec)" }}>
+        {meta.civitai_url ? (
+          <a href={meta.civitai_url} target="_blank" rel="noreferrer"
+             style={{ color: "inherit", textDecoration: "none",
+                      borderBottom: `1px solid ${hov ? "var(--textTer)" : "transparent"}`,
+                      transition: `border-color ${MOTION.hover}` }}>
+            {name}
+          </a>
+        ) : name}
+      </span>
+      <span title={lanes.length ? lanes.join(" · ") : undefined}
+        style={{ flexShrink: 0, maxWidth: "45%", display: "flex",
+                 alignItems: "baseline", overflow: "hidden", whiteSpace: "nowrap",
+                 fontFamily: FONT, fontSize: TYPE.label, color: "var(--textTer)" }}>
+        {meta.supported && family !== "video" ? (<>
+          {/* the +N never clips: it is the whole "there is more" signal */}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {shown.join(" · ")}
+          </span>
+          {overflow > 0 && <span style={{ flexShrink: 0 }}>{` +${overflow}`}</span>}
+        </>) : state}
+      </span>
+      <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: TYPE.label,
+                     color: "var(--textTer)", fontVariantNumeric: "tabular-nums" }}>
+        {gb ? `${gb.toFixed(1)} GB` : ""}
+      </span>
+    </div>
+  );
+};
+
 // Two ways to have a brain: any OpenAI-compatible API, or a GGUF on this PC
 // (llama.cpp server the sidecar spawns itself). Quick chips just prefill the
 // inputs - users point at whatever provider they like.
@@ -283,16 +368,19 @@ const QUICK_APIS = [
 const LOCAL_URL = "http://127.0.0.1:8191/v1";
 
 const SETTINGS_TAB_KEY = "pixal.settings.tab";
-// Five rooms (2026-08-22, was three): Models grew too crowded to scan, so the
-// model decisions split by medium. General is the machine (appearance, the
-// ComfyUI box, VRAM, folders), Image and Video each hold their medium's model
-// choices and finishers, Brain is the chat brain and the reviewer, About the
-// credits. A stale saved id (e.g. "models") fails the TABS check where `tab`
-// is initialised and lands on "general".
+// Six rooms (2026-08-22 was three, 9.30 added the library back): the model
+// decisions split by medium when one Models tab grew too crowded to scan.
+// General is the machine (appearance, the ComfyUI box, VRAM, folders), Image
+// and Video each hold their medium's model choices and finishers, Models is
+// the read-only library — browsed, not tuned, so it sits after Video rather
+// than pushing a most-touched tab down — Brain is the chat brain and the
+// reviewer, About the credits. A stale saved id fails the TABS check where
+// `tab` is initialised and lands on "general".
 const TABS = [
   { id: "general", label: "General" },
   { id: "image", label: "Image" },
   { id: "video", label: "Video" },
+  { id: "models", label: "Models" },
   { id: "brain", label: "Brain" },
   { id: "about", label: "About" },
 ];
@@ -583,6 +671,74 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   // card was never read, and the option says nothing at all.
   const detectedGb = (cfg && cfg.vram && cfg.vram.detected_gb) || null;
 
+  // 9.30 (Models tab): the whole library, read from the same /api/options
+  // payload the composer already holds. Grouped by family in the order a
+  // user renders with them, alphabetical by the SHOWN name inside; families
+  // with no lane here collapse into "other". The unprofiled-LoRA count is
+  // the one fact the app never told anyone: files no family claimed, which
+  // render-time stacking skips rather than silently ignores.
+  const lib = (store.options && store.options.models) || [];
+  const libMeta = (store.options && store.options.model_meta) || {};
+  const libLoras = (store.options && store.options.loras) || [];
+  const unprofiled = libLoras.filter((l) => !l.supported).length;
+  const libGroups = [];
+  for (const rel of lib) {
+    const fam = (libMeta[rel] || {}).family;
+    const key = LIBRARY_ORDER.includes(fam) ? fam : "other";
+    let g = libGroups.find((x) => x.key === key);
+    if (!g) { g = { key, rows: [] }; libGroups.push(g); }
+    g.rows.push(rel);
+  }
+  libGroups.sort((a, b) =>
+    (LIBRARY_ORDER.includes(a.key) ? LIBRARY_ORDER.indexOf(a.key) : LIBRARY_ORDER.length) -
+    (LIBRARY_ORDER.includes(b.key) ? LIBRARY_ORDER.indexOf(b.key) : LIBRARY_ORDER.length));
+  // Name every row. Two human candidates exist for a build - the matched
+  // title (Civitai / lora-manager / embedded) and prettyModel's product
+  // name - and neither wins outright: the titles collapse the three Anima
+  // builds to "Anima", prettyModel collapses five Krea 2 builds to "Krea
+  // 2". So a row takes whichever candidate collides LESS inside its own
+  // group, the title on a tie; the raw relpath stays the tooltip, never
+  // the label.
+  for (const g of libGroups) {
+    const cands = g.rows.map((rel) => {
+      const m = libMeta[rel] || {};
+      const fam = m.family || "unknown";
+      // model_profile files H3 under "video"; prettyModel only names its
+      // lanes from the minimax_h3 family, so hand it the same hint the
+      // classifier used (its own "minimax h3\" path prefix).
+      const pmFam = fam === "video" &&
+        rel.replace(/\//g, "\\").toLowerCase().startsWith("minimax h3\\")
+        ? "minimax_h3" : fam;
+      return { rel,
+               title: String(m.title || "").trim(),
+               pretty: String(prettyModel(rel, pmFam) || "") };
+    });
+    const tally = (pick) => cands.reduce((seen, c) => {
+      const k = c[pick].toLowerCase();
+      if (k) seen[k] = (seen[k] || 0) + 1;
+      return seen;
+    }, {});
+    const tSeen = tally("title"), pSeen = tally("pretty");
+    g.names = {};
+    for (const c of cands) {
+      const tLow = c.title.toLowerCase(), pLow = c.pretty.toLowerCase();
+      // A candidate that strictly contains the other says strictly more
+      // ("Minimax" < "MiniMax H3 I2V"; "Anima" < "Anima Turbo v1.0") and
+      // always wins. Otherwise the less-colliding candidate, title on a
+      // tie (the picker convention).
+      const prettyMore = tLow && pLow && pLow.includes(tLow) && pLow !== tLow;
+      const titleMore = tLow && pLow && tLow.includes(pLow) && pLow !== tLow;
+      const tN = c.title ? (tSeen[tLow] || 0) : 99;
+      const pN = c.pretty ? (pSeen[pLow] || 0) : 99;
+      const useTitle = c.title && !prettyMore &&
+        (titleMore || tN < pN || (tN === pN && c.title.length >= c.pretty.length));
+      g.names[c.rel] = useTitle ? c.title : (c.pretty || c.title);
+    }
+    g.rows.sort((a, b) =>
+      g.names[a].toLowerCase().localeCompare(g.names[b].toLowerCase()) ||
+      a.toLowerCase().localeCompare(b.toLowerCase()));
+  }
+
   // `panel` is the whole content, shared by both presentations below.
   const panel = (
     <>
@@ -858,6 +1014,26 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <PickerGhost />
           )}
         </Section>
+        <Section title={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}
+                 gloss="How H3 briefs write spoken lines.">
+          {videoCfg ? (
+            <SegmentedControl className="px-ghost-in" ariaLabel="Dialogue format"
+              value={videoCfg.h3_dialogue_tags || "quotes"}
+              onChange={(id) => {
+                setVideoCfg((v) => ({ ...(v || {}), h3_dialogue_tags: id }));
+                apply({ video: { h3_dialogue_tags: id } },
+                      id === "quotes" ? "plain quotes applied" : "trained tags applied");
+              }}
+              options={[
+                { v: "tags", label: "tags",
+                  title: "MiniMax's trained <d>[Language] …</d> form." },
+                { v: "quotes", label: "quotes",
+                  title: "Plain quotes — the MiniMax-H3 #76 form; won the same-seed A/B." },
+              ]} />
+          ) : (
+            <SegGhost segments={2} />
+          )}
+        </Section>
         <GroupLabel>finishing</GroupLabel>
         <Section title="Upscaler"
                  gloss="Used by the upscale button on a finished clip.">
@@ -984,22 +1160,27 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <PickerGhost />
           )}
         </Section>
-        <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works." /></>}
+        <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}
                  gloss={editCfg ? (
-                   <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
+                   <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
                  ) : (
                    <>Runs instruction edits. <ValueGhost w={128} /></>
                  )}>
           {/* Two named lanes (9.29): whole frame runs when there is no mask,
               masked area when a mask is painted. Until tonight the second one
-              was hard-pinned to KLEIN_MODEL and invisible here. */}
+              was hard-pinned to KLEIN_MODEL and invisible here. The whole-frame
+              row lists both families (9.44): a Klein pick routes mask-less
+              edits to klein_edit, a Qwen pick to qwen_edit. */}
           {editCfg ? (<>
             <Field className="px-ghost-in" label="whole frame">
               <ScrollPicker
                 value={editCfg.model || ""}
                 placeholder="recipe default"
                 emptyLabel="recipe default"
-                options={editLaneOptions(editCfg.installed, detectedGb)}
+                options={[
+                  ...editLaneOptions(editCfg.installed, detectedGb, familyName("qwen_edit")),
+                  ...editLaneOptions(editCfg.inpaint_installed, detectedGb, familyName("klein")),
+                ]}
                 onPick={(name) => {
                   setEditCfg({ ...editCfg, model: name });
                   apply({ edit: { model: name } },
@@ -1130,6 +1311,62 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
         </>)}
 
+        {tab === "models" && (<>
+        {/* 9.30 — the library. Read-only on purpose: it is the surface that
+            finally shows the user what they own and what each thing can and
+            cannot do here; the choosing stays on the medium tabs. */}
+        <GroupLabel>what you own</GroupLabel>
+        <Section title={<>The library <InfoTip text="A profile is what Pixal knows about a file — its family, its variant, and the lanes it can run — and a LoRA without one is skipped at render time rather than stacked blindly." /></>}
+                 gloss={store.options ? (
+                   <span className="px-ghost-in">{`${lib.length} models · ${libLoras.length} LoRAs · ${unprofiled} have no profile`}</span>
+                 ) : (
+                   /* the whole line is late, not just the numbers - a
+                      half-loaded count would read as a real total */
+                   <LineGhost w="70%" />
+                 )}>
+          {store.options && (
+            <span className="px-ghost-in" style={{ fontSize: TYPE.label,
+                         color: "var(--textTer)", lineHeight: 1.5 }}>
+              {detectedGb > 0
+                ? `The card reads as ${Math.round(detectedGb)} GB. `
+                : "Card not read yet — weights are disk size. "}
+              <InfoTip text="A build heavier than the card still runs — it offloads to system memory and crawls — so a row's weight is advisory, never a block." />
+            </span>
+          )}
+        </Section>
+        <Section title={<>By family <InfoTip text="A family is an architecture, not a brand — every build in one shares a text encoder and a VAE, so a LoRA trained for one fits them all." /></>}>
+          {store.options ? (
+            /* Nested px-set: the GroupLabel rhythm (48 above a heading, 12
+               below it) is a .px-set direct-child rule, and the fragments
+               keep the headings as direct children. */
+            <div className="px-set px-ghost-in" style={{ display: "flex",
+                          flexDirection: "column", gap: SPACE[32] }}>
+              {libGroups.map((g) => (
+                <Fragment key={g.key}>
+                  <GroupLabel>{g.key === "other" ? "Other" : familyName(g.key)}</GroupLabel>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {g.rows.map((rel) => (
+                      <LibraryRow key={rel} rel={rel} name={g.names[rel]}
+                        meta={libMeta[rel] || {}} detectedGb={detectedGb} />
+                    ))}
+                  </div>
+                </Fragment>
+              ))}
+              {libGroups.length === 0 && (
+                <div style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>
+                  no models found in your model folders
+                </div>
+              )}
+            </div>
+          ) : (
+            /* one row ghost - the list's height is the user's own data, so
+               no ghost can match it; one 30px row is the smallest honest
+               hold (same call as the brain tab's model list) */
+            <Bar h={30} />
+          )}
+        </Section>
+        </>)}
+
         {tab === "brain" && (<>
         <GroupLabel>chat</GroupLabel>
         <Section title={<>Chat brain <InfoTip text="The AI you talk to — it writes the prompts and drives ComfyUI. Local runs entirely on this PC; Pixal starts and stops it for you." /></>}>
@@ -1227,7 +1464,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             {/* A stored value, not navigation — stays a segmented control. With
                 "brain runs on" below that is two segment rows in this panel,
                 the cap; a third would mean the grouping is wrong. */}
-            <Field label={<>between replies <InfoTip text="Keeping the model loaded means instant replies, but it holds a few GB of VRAM next to your renders. Unloading frees the card; the next reply waits for a reload." /></>}>
+                          <Field label={<>between replies <InfoTip text="Keeping the model loaded means instant replies, but it holds a few GB of VRAM next to your renders. It steps aside when a render needs the room. Unloading frees the card; the next reply waits for a reload." /></>}>
               {cfg ? (
                 <SegmentedControl className="px-ghost-in" ariaLabel="memory policy" value={localKeep}
                   onChange={(keep) => {

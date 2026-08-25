@@ -96,7 +96,7 @@ async function post(path, body) {
 export const chat = (text, cid, opts) => post("/api/chat", { text, cid, opts });
 // `seed` is the held lock (0 = free dice). `lock_seed` stays on the wire for a
 // server that predates it, where it means "replay this card's own seed".
-export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials) =>
+export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials, opts) =>
   post("/api/reroll", { id, cid, seed: seed || 0, lock_seed: !!seed,
                         lora_plans: loraPlans || {}, model: model || "",
                         // absent, never "" - an empty canvas must not read as
@@ -108,7 +108,13 @@ export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials) =>
                         // like the canvas; a recipe declaring none sends none.
                         // Choice dials (brief 9.15's bypass variant) ride the
                         // same spread.
-                        ...(dials || {}) });
+                        ...(dials || {}),
+                        // The composer's whole intent - the same body /api/chat
+                        // gets - so the re-roll is the card's scene under the
+                        // stack the user is LOOKING at (brief 9.42). A server
+                        // that predates it ignores the key and the legacy
+                        // fields above still say their piece.
+                        ...(opts ? { opts } : {}) });
 export const stop = (jobId) => post("/api/stop", { job_id: jobId });
 export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
                         shots, script, speed, lastId, sparse, upscale) =>
@@ -128,6 +134,19 @@ export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
     // 2x upscale is the opposite default: opt-in, because it ~triples the
     // render's time. It rides INSIDE the render job (it re-samples the
     // latent the sampler just produced), never an action on a finished clip.
+    ...(upscale ? { upscale: true } : {}) });
+// 9.36: the brief WITHOUT the render. The body is animate's minus `script`
+// and `cid` (the thinking notes are cid-agnostic in the lane), so the
+// director writes for exactly the configuration the commit would send.
+export const animateBrief = (id, hint, seconds, engine, model, loraPlan, fps,
+                             shots, speed, lastId, sparse, upscale) =>
+  post("/api/animate/brief", { id, hint, seconds, engine, model,
+    ...(loraPlan ? { lora_plan: loraPlan } : {}),
+    ...(fps ? { fps } : {}),
+    ...(shots > 1 ? { shots } : {}),
+    ...(speed ? { speed } : {}),
+    ...(lastId ? { last_id: lastId } : {}),
+    ...(sparse === false ? { sparse: false } : {}),
     ...(upscale ? { upscale: true } : {}) });
 export const review = (id, cid) => post("/api/review", { id, cid });
 

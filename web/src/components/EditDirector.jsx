@@ -6,8 +6,8 @@
 // crop uploads a client-side cutout so the model works the region at full
 // working resolution.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, Crop, Eraser, ImageSquare, PaintBrush,
-         PencilSimple, X } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowUUpLeft, Crop, Eraser, ImageSquare,
+         MagnifyingGlass, PaintBrush, PencilSimple, X } from "@phosphor-icons/react";
 import { upload } from "../transport.js";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W } from "../lib/design-tokens.js";
 import { ModalShell } from "../lib/ModalShell.jsx";
@@ -19,6 +19,21 @@ const EXAMPLES = [
   "change the background to a snowy street",
   "make it night time",
 ];
+// The masked lane is where a render with one flaw gets rescued. Klein repaints
+// only the painted pixels, so the instruction names what should BE there, not
+// what is wrong - "five fingers", never "fix the hand".
+const EXAMPLES_MASK = [
+  "a natural relaxed hand, five fingers",
+  "clean skin, same lighting",
+  "sharp, even eyes looking at camera",
+  "empty background, nothing here",
+  "legible sign that reads OPEN",
+];
+const ZOOM_MAX = 8;
+const BRUSH_MIN = 4, BRUSH_MAX = 128;
+const UNDO_DEPTH = 12;
+const STAGE_HELP = "scroll to zoom · space-drag or middle-drag to pan · "
+                 + "[ ] brush size · ctrl+z undoes a stroke";
 // With a reference attached the instruction points at it as "image 2" — that
 // exact phrase is what the encoder was trained on, so the examples model it.
 const EXAMPLES_REF = [
@@ -57,6 +72,23 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   const maskRef = useRef(null);                    // natural-res mask strokes
   const tintRef = useRef(null);                    // natural-res tint scratch
   const drag = useRef(null);
+  // Zoom and pan. A flaw is forty pixels of a megapixel frame shown at half
+  // height, so the stage zooms around the cursor (wheel) and pans (space-drag
+  // or middle-drag). The transform is a ref, applied straight to the style:
+  // a wheel tick must not re-render the dialog. `zoom` is only the readout.
+  const stageRef = useRef(null);                   // the clipped window
+  const innerRef = useRef(null);                   // the transformed img+canvas
+  const viewT = useRef({ z: 1, tx: 0, ty: 0 });
+  const pan = useRef(null);
+  const spaceHeld = useRef(false);
+  const [zoom, setZoom] = useState(1);
+  const [panning, setPanning] = useState(false);
+  // A brush ring under the pointer; canvas-space coordinates, ref-only.
+  const hover = useRef(null);
+  // Undo is a stack of mask snapshots taken before each stroke - a 2 MP mask
+  // is 8 MB, so the depth is capped rather than unbounded.
+  const undoRef = useRef([]);
+  const [canUndo, setCanUndo] = useState(false);
   useEffect(() => { taRef.current?.focus(); }, []);
 
   const text = instruction.trim();
@@ -65,13 +97,85 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   const laneMissing = masked ? kleinMissing : missing;
 
   // Pointer position in the mask's natural coordinates. The overlay canvas is
-  // the img's box exactly, so one scale factor covers both axes' mapping.
+  // the img's box exactly (the rect is post-transform, so zoom is already in
+  // it), so one scale factor covers both axes' mapping. `scale` also keeps
+  // the brush a screen-pixel size: zoomed in, the stroke gets finer.
   const toNatural = (e) => {
     const box = viewRef.current.getBoundingClientRect();
     const sx = imgDims.w / box.width, sy = imgDims.h / box.height;
     return { x: (e.clientX - box.left) * sx, y: (e.clientY - box.top) * sy,
              scale: (sx + sy) / 2 };
   };
+  // Pointer position in the overlay canvas's own pixels (layout size, never
+  // the zoomed size) plus the screen->canvas ratio for the ring's radius.
+  const toCanvas = (e) => {
+    const view = viewRef.current;
+    const box = view.getBoundingClientRect();
+    const k = view.width / box.width;
+    return { x: (e.clientX - box.left) * k, y: (e.clientY - box.top) * k, k };
+  };
+
+  const applyView = () => {
+    const inner = innerRef.current, stage = stageRef.current;
+    if (!inner || !stage) return;
+    const v = viewT.current;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    // The frame always covers the window: no empty stage past an edge.
+    v.tx = Math.min(0, Math.max(W - W * v.z, v.tx));
+    v.ty = Math.min(0, Math.max(H - H * v.z, v.ty));
+    if (v.z === 1) { v.tx = 0; v.ty = 0; }
+    inner.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.z})`;
+  };
+  const resetView = () => {
+    viewT.current = { z: 1, tx: 0, ty: 0 };
+    applyView();
+    setZoom(1);
+  };
+  // Wheel zooms about the cursor. Registered by hand: React's onWheel is
+  // passive, and a passive listener cannot stop the dialog body scrolling.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !imgDims) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const v = viewT.current;
+      const rect = stage.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      const nz = Math.min(ZOOM_MAX, Math.max(1, v.z * Math.exp(-e.deltaY * 0.0015)));
+      const r = nz / v.z;
+      v.tx = cx - (cx - v.tx) * r;
+      v.ty = cy - (cy - v.ty) * r;
+      v.z = nz;
+      applyView();
+      setZoom(Math.round(nz * 10) / 10);
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, [imgDims]);
+
+  // Keyboard: space holds pan, [ ] size the brush, ctrl+z undoes a stroke.
+  // The textarea keeps its own keys - typing a bracket must stay typing.
+  useEffect(() => {
+    const typing = (e) => /^(TEXTAREA|INPUT)$/.test(e.target?.tagName || "");
+    const down = (e) => {
+      if (e.key === "z" && (e.ctrlKey || e.metaKey) && !typing(e)) {
+        e.preventDefault(); undo(); return;
+      }
+      if (typing(e)) return;
+      if (e.key === " " && !spaceHeld.current) {
+        e.preventDefault(); spaceHeld.current = true; setPanning(true);
+      } else if (e.key === "[" || e.key === "]") {
+        e.preventDefault();
+        setBrush((b) => Math.min(BRUSH_MAX, Math.max(BRUSH_MIN, b + (e.key === "]" ? 4 : -4))));
+      }
+    };
+    const up = (e) => {
+      if (e.key === " ") { spaceHeld.current = false; setPanning(false); pan.current = null; }
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  });
 
   const redraw = () => {
     const view = viewRef.current;
@@ -108,6 +212,16 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
       ctx.lineWidth = 1.5;
       ctx.strokeRect(r.x, r.y, r.w, r.h);
     }
+    // The brush ring: the exact footprint of the next stroke, in canvas
+    // pixels (brush is a screen size, k converts it). Hidden while panning.
+    const h = hover.current;
+    if (h && !pan.current && (tool === "paint" || tool === "erase")) {
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, (brush / 2) * h.k, 0, Math.PI * 2);
+      ctx.strokeStyle = tool === "erase" ? "rgba(255,255,255,0.9)" : "rgba(235,84,84,0.95)";
+      ctx.lineWidth = 1.25 * h.k;
+      ctx.stroke();
+    }
   };
 
   const onImgLoad = () => {
@@ -122,25 +236,57 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     tintRef.current = tn;
   };
 
-  // The on-screen canvas tracks the img's laid-out size; cheap enough to sync
-  // on every render since the dialog is fixed-width.
+  // The on-screen canvas tracks the img's LAID-OUT size - offsetWidth, never
+  // the bounding rect, which grows with the zoom and would make an 8x view an
+  // 8x canvas. CSS scales the overlay with the frame; cheap enough to sync on
+  // every render since the dialog is fixed-width.
   useEffect(() => {
     const img = imgRef.current, view = viewRef.current;
     if (!img || !view || !imgDims) return;
-    const box = img.getBoundingClientRect();
-    view.width = Math.round(box.width);
-    view.height = Math.round(box.height);
+    view.width = Math.max(1, img.offsetWidth);
+    view.height = Math.max(1, img.offsetHeight);
     redraw();
   });
+
+  // "Is anything painted" from a 64px thumbnail, never megapixel image data.
+  const probeMask = () => {
+    const probe = document.createElement("canvas");
+    probe.width = probe.height = 64;
+    probe.getContext("2d").drawImage(maskRef.current, 0, 0, 64, 64);
+    const a = probe.getContext("2d").getImageData(0, 0, 64, 64).data;
+    for (let i = 3; i < a.length; i += 4) if (a[i] > 0) return true;
+    return false;
+  };
+
+  const undo = () => {
+    const snap = undoRef.current.pop();
+    if (!snap || !maskRef.current) return;
+    maskRef.current.getContext("2d").putImageData(snap, 0, 0);
+    setCanUndo(undoRef.current.length > 0);
+    setHasMask(probeMask());
+    redraw();
+  };
 
   const strokeAny = useRef(false);
   const down = (e) => {
     if (!imgDims) return;
     e.preventDefault();
     viewRef.current.setPointerCapture(e.pointerId);
+    // Pan: the middle button, or any button while space is held.
+    if (e.button === 1 || spaceHeld.current) {
+      const v = viewT.current;
+      pan.current = { x: e.clientX, y: e.clientY, tx: v.tx, ty: v.ty };
+      hover.current = null;
+      redraw();
+      return;
+    }
+    if (e.button !== 0) return;
     const p = toNatural(e);
     if (tool === "crop") { drag.current = { x0: p.x, y0: p.y }; return; }
     const ctx = maskRef.current.getContext("2d");
+    undoRef.current.push(ctx.getImageData(0, 0, maskRef.current.width, maskRef.current.height));
+    if (undoRef.current.length > UNDO_DEPTH) undoRef.current.shift();
+    setCanUndo(true);
     ctx.lineCap = ctx.lineJoin = "round";
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = brush * p.scale;
@@ -154,7 +300,17 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     redraw();
   };
   const move = (e) => {
-    if (!drag.current || !imgDims) return;
+    if (!imgDims) return;
+    if (pan.current) {
+      const v = viewT.current, o = pan.current;
+      v.tx = o.tx + (e.clientX - o.x);
+      v.ty = o.ty + (e.clientY - o.y);
+      applyView();
+      return;
+    }
+    // The ring follows the pointer whether or not a stroke is in progress.
+    hover.current = toCanvas(e);
+    if (!drag.current) { redraw(); return; }
     const p = toNatural(e);
     if (tool === "crop") {
       const x = Math.max(0, Math.min(drag.current.x0, p.x));
@@ -170,24 +326,21 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     redraw();
   };
   const up = () => {
+    if (pan.current) { pan.current = null; redraw(); return; }
+    const wasStroke = !!drag.current && tool !== "crop";
     drag.current = null;
-    if (tool === "crop") return;
-    // Erasing can empty the mask again; a 64px thumbnail answers "is anything
-    // painted" without touching megapixel image data.
-    const probe = document.createElement("canvas");
-    probe.width = probe.height = 64;
-    probe.getContext("2d").drawImage(maskRef.current, 0, 0, 64, 64);
-    const a = probe.getContext("2d").getImageData(0, 0, 64, 64).data;
-    let any = false;
-    for (let i = 3; i < a.length; i += 4) if (a[i] > 0) { any = true; break; }
-    setHasMask(any);
+    // Erasing can empty the mask again.
+    if (wasStroke) setHasMask(probeMask());
   };
+  const leave = () => { hover.current = null; redraw(); };
 
   const clearMask = () => {
     if (!maskRef.current) return;
     const ctx = maskRef.current.getContext("2d");
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, maskRef.current.width, maskRef.current.height);
+    undoRef.current = [];
+    setCanUndo(false);
     setHasMask(false);
     redraw();
   };
@@ -284,17 +437,30 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
 
         {imageUrl && (
           <>
-            <div style={{ position: "relative", alignSelf: "center", maxWidth: "100%" }}>
-              <img ref={imgRef} src={imageUrl} alt="edit source" onLoad={onImgLoad}
-                   draggable={false}
-                   style={{ display: "block", maxWidth: "100%", maxHeight: "48vh",
-                            borderRadius: RADIUS.card, userSelect: "none" }} />
-              <canvas ref={viewRef}
-                onPointerDown={down} onPointerMove={move}
-                onPointerUp={up} onPointerCancel={up}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%",
-                         borderRadius: RADIUS.card, touchAction: "none",
-                         cursor: imgDims ? "crosshair" : "default" }} />
+            {/* The stage clips; the inner box carries the zoom transform.
+                Transforms do not affect layout, so the stage keeps the
+                frame's 1x size however far the view is zoomed in. */}
+            <div ref={stageRef} title={STAGE_HELP}
+                 onContextMenu={(e) => e.preventDefault()}
+                 style={{ position: "relative", alignSelf: "center", maxWidth: "100%",
+                          overflow: "hidden", borderRadius: RADIUS.card,
+                          lineHeight: 0 }}>
+              <div ref={innerRef}
+                   style={{ position: "relative", transformOrigin: "0 0",
+                            willChange: zoom > 1 ? "transform" : "auto" }}>
+                <img ref={imgRef} src={imageUrl} alt="edit source" onLoad={onImgLoad}
+                     draggable={false}
+                     style={{ display: "block", maxWidth: "100%", maxHeight: "48vh",
+                              userSelect: "none" }} />
+                <canvas ref={viewRef}
+                  onPointerDown={down} onPointerMove={move}
+                  onPointerUp={up} onPointerCancel={up} onPointerLeave={leave}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%",
+                           touchAction: "none",
+                           cursor: !imgDims ? "default"
+                             : panning ? "grab"
+                             : tool === "crop" ? "crosshair" : "none" }} />
+              </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
                           flexWrap: "wrap" }}>
@@ -315,13 +481,23 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
                        fontSize: 10, color: "var(--textTer)",
                        textTransform: "uppercase", letterSpacing: "0.08em" }}>
                 brush
-                <input type="range" min={8} max={96} value={brush}
+                <input type="range" min={BRUSH_MIN} max={BRUSH_MAX} value={brush}
                        onChange={(e) => setBrush(+e.target.value)}
                        style={{ width: 90, accentColor: "var(--accent)" }} />
               </label>
+              <button type="button" style={{ ...toolBtn(false), opacity: canUndo ? 1 : 0.45 }}
+                      disabled={!canUndo} onClick={undo} title="undo the last stroke (ctrl+z)">
+                <ArrowUUpLeft size={13} weight="bold" /> undo
+              </button>
+              <button type="button" style={{ ...toolBtn(false), fontVariantNumeric: "tabular-nums",
+                                             opacity: zoom > 1 ? 1 : 0.6 }}
+                      disabled={zoom <= 1} onClick={resetView}
+                      title={zoom > 1 ? `back to 1x · ${STAGE_HELP}` : STAGE_HELP}>
+                <MagnifyingGlass size={13} weight="bold" /> {zoom.toFixed(1)}x
+              </button>
               <button type="button" style={toolBtn(false)} onClick={() => {
-                clearMask(); setCrop(null);
-              }} title="clear mask and crop">
+                clearMask(); setCrop(null); resetView();
+              }} title="clear mask, crop and zoom">
                 <ArrowCounterClockwise size={13} weight="bold" /> reset
               </button>
             </div>
@@ -335,7 +511,7 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); }
           }}
           placeholder={masked
-            ? "What should appear where you painted? “clean hoodie sleeve”"
+            ? "What should be there instead? “a natural relaxed hand, five fingers”"
             : "What should change? Say it plainly - the words go to the\n" +
               "editor exactly as typed. “make her jacket red”"}
           className="px-input"
@@ -380,14 +556,14 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
           )}
         </div>
 
-        {!masked && (
-          <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
-                        flexWrap: "wrap" }}>
+        {/* Examples follow the lane: masked = what goes INSIDE the paint. */}
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
+                      flexWrap: "wrap" }}>
             <span style={{ width: "100%", fontSize: 10, color: "var(--textTer)",
                            textTransform: "uppercase", letterSpacing: "0.08em" }}>
               for example
             </span>
-            {(refImg ? EXAMPLES_REF : EXAMPLES).map((item) => (
+            {(masked ? EXAMPLES_MASK : refImg ? EXAMPLES_REF : EXAMPLES).map((item) => (
               <button key={item} type="button" onClick={() => setInstruction(item)}
                 style={{
                   padding: `${SPACE[4]}px ${SPACE[10]}px`, cursor: "pointer",
@@ -397,8 +573,7 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
                   transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
                 }}>{item}</button>
             ))}
-          </div>
-        )}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
           <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
                          whiteSpace: "nowrap", overflow: "hidden",

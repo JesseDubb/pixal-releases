@@ -1,12 +1,13 @@
 """Brief 9.17a — Settings splits by medium (structure only).
 
 Asserts the information architecture of web/src/components/SettingsMenu.jsx
-without a JS runtime: the five-tab set, which setting keys each tab's block
-reaches (no control dropped in the move), the unknown-saved-tab fallback to
-"general", the frozen /api/settings write surface (the wire must not change
-in this brief), the navigation-vs-setting control split in the brain panel,
-the whole-row bound on the brain model list, and that HELP.md section 6
-describes the same tabs the UI now ships.
+without a JS runtime: the six-tab set (9.30 re-added Models as the read-only
+library — browsed, not tuned, after Video), which setting keys each tab's
+block reaches (no control dropped in the move), the unknown-saved-tab
+fallback to "general", the frozen /api/settings write surface (the wire
+must not change in this brief), the navigation-vs-setting control split in
+the brain panel, the whole-row bound on the brain model list, and that
+HELP.md section 6 describes the same tabs the UI now ships.
 """
 
 import re
@@ -18,7 +19,7 @@ SRC = (ROOT / "web" / "src" / "components" / "SettingsMenu.jsx").read_text(encod
 HELP = (ROOT / "HELP.md").read_text(encoding="utf-8")
 
 EXPECTED_TABS = [("general", "General"), ("image", "Image"), ("video", "Video"),
-                 ("brain", "Brain"), ("about", "About")]
+                 ("models", "Models"), ("brain", "Brain"), ("about", "About")]
 
 
 def _tab_blocks(src):
@@ -49,6 +50,9 @@ TAB_KEYS = {
     "video": ["default_engine", "default_model", "video_mode", "upscale_2x"],
     "brain": ["base_url", "local_model", "local_keep", "local_gpu_layers",
               "api_key", "critic: { model", "onClick={test}"],
+    # 9.30's library is read-only: an empty reach is the contract - a control
+    # appearing under models means choosing leaked back into the inventory.
+    "models": [],
     "about": [],
 }
 
@@ -65,9 +69,15 @@ class SettingsTabs(unittest.TestCase):
         assert ids == EXPECTED_TABS
 
 
-    def test_no_models_tab_remains(self):
-        assert '{tab === "models"' not in SRC
+    def test_the_models_tab_is_the_read_only_library(self):
+        # 9.30: Models is back as the inventory (what you own, what it runs,
+        # what it weighs) - every tab and ONLY these tabs render a block
+        assert '{tab === "models"' in SRC
         assert set(BLOCKS) == {t for t, _ in EXPECTED_TABS}
+        # read-only: nothing under models saves, posts, or applies a setting
+        for verb in ("apply({", "method: \"POST\"", "onPick=", "onChange="):
+            assert verb not in BLOCKS["models"], \
+                f"choosing leaked into the library: {verb}"
 
 
     def test_every_setting_reachable_after_the_move(self):
@@ -87,12 +97,12 @@ class SettingsTabs(unittest.TestCase):
 
     def test_unknown_saved_tab_falls_back_to_general(self):
         # the restore guard: a saved id that is not a current tab cannot restore,
-        # so a stale "models" (or any retired id) lands on "general"
+        # so any retired id lands on "general". A pre-split saved "models"
+        # restores to 9.30's library instead - same name, same purpose.
         assert 'TABS.some((t) => t.id === saved) ? saved : "general"' in SRC
         m = re.search(r"const TABS = \[(.*?)\];", SRC, re.S)
         ids = {i for i, _ in re.findall(r'\{ id: "(\w+)", label: "(\w+)" \}', m.group(1))}
         assert "general" in ids
-        assert "models" not in ids
 
 
     def test_settings_wire_is_frozen(self):
@@ -132,8 +142,6 @@ class SettingsTabs(unittest.TestCase):
 
     def test_help_settings_section_matches_the_new_tabs(self):
         s6 = HELP.split("## 6. Settings reference")[1].split("## 7.")[0]
-        for heading in ["### General", "### Image", "### Video", "### Brain", "### About"]:
+        for heading in ["### General", "### Image", "### Video", "### Models",
+                        "### Brain", "### About"]:
             assert heading in s6, f"HELP.md §6 missing {heading}"
-        flat = re.sub(r"\s+", " ", HELP)
-        assert "Settings → Models" not in flat
-        assert "### Models" not in HELP

@@ -15,7 +15,14 @@
     "wherever it sits.  Paths are matched lowercased with forward slashes.",
     "",
     "`stray` names the file when it is on disk somewhere Pixal will not look:",
-    "the tidy step moves those into `dest`, and nothing else is ever moved."
+    "the tidy step moves those into `dest`, and nothing else is ever moved.",
+    "",
+    "`beside`: \"<sibling dest>\" pins a file to the FOLDER its sibling was",
+    "found in (the sibling's own `dest` folder when the sibling is nowhere, so",
+    "a fresh install changes nothing). It counts as installed only in that",
+    "folder; a match anywhere else is a stray the tidy moves there. For files",
+    "server.py discovers by the model's own folder, never by a fixed path -",
+    "the chat brain's mmproj projector is the one case."
   ],
 
   "comfyui": {
@@ -167,6 +174,7 @@
         {"repo": "unsloth/Qwen3-VL-4B-Instruct-GGUF",
          "path": "mmproj-F16.gguf",
          "dest": "LLM/GGUF/qwen3-vl-4b-heretic.mmproj-f16.gguf",
+         "beside": "LLM/GGUF/qwen3-vl-4b-heretic-Q8_0.gguf",
          "bytes": 836180640,
          "sha256": "1b9f4e92f0fbda14d7d7b58baed86039b8a980fe503d9d6a9393f25c0028f1fc",
          "why": "the brain's eyes. The heretic repo publishes no projector, so the chat model shipped blind and every attached reference flattened to a placeholder before it reached the model. Discovery is by folder, so this must land beside the gguf above.",

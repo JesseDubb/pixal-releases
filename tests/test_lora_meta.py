@@ -152,8 +152,11 @@ class PickerViewPreference(unittest.TestCase):
         block = _add_search()
         self.assertIn("<SegmentedControl", block,
                       "the view switch is not the shared segmented control")
-        self.assertIn('variant="grid"', block,
-                      "the view switch is the grid variant - its labels never clip")
+        # The flex capsule with its sliding pill (Jesse's Wealthsimple
+        # reference, 2026-08-25). Two four-letter labels cannot clip at any
+        # rail width, so the grid variant's no-clip guarantee buys nothing here.
+        self.assertIn('variant="flex"', block,
+                      "the view switch is the sliding-pill capsule")
         self.assertIn("value={pickerView}", block)
         self.assertIn("onChange={setPickerView}", block)
         self.assertIn("ariaLabel=", block,
@@ -419,7 +422,10 @@ class FilterOffKeepsIncompatibleVisible(unittest.TestCase):
         block = _flat(_add_search())
         self.assertIn("setShowAll", block,
                       "nothing in the popup turns the filter off")
-        self.assertIn('"show all"', block,
+        # The switch is the filter chip on the popover's title row: it states
+        # the filter and its count ("Krea 2 · 110") and flips to "all · N"
+        # (2026-08-25) - the state IS the label.
+        self.assertIn("`all · ${available.length}`", block,
                       "the off switch does not say what it does")
 
     def test_grouped_entries_render_disabled_dimmed_with_reason(self):

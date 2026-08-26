@@ -19,8 +19,15 @@ Current build: **1.0.10b** (channel `stable`). Both values live in `PIXAL_VERSIO
   controls, and grab-handle reordering for editable stages.
 - Krea 2 realism, a two-pass Realism II profile, Z-Image Base fantasy and anime profiles, general Z-Image Base/Turbo generation, and Anima — a 2B anime model on its own graph.
 - Character anchors and Krea 2 identity edits from a reference image.
-- Instruction editing of any finished frame with Qwen-Image-Edit ("make her
-  jacket red"), launched from a job card or the history grid.
+- Instruction editing of any finished frame ("make her jacket red"), launched
+  from a job card or the history grid. Two lanes by mask: a whole-frame edit on
+  FLUX.2 Klein 9B (keeps skin texture; Qwen-Image-Edit and FireRed remain as
+  picker options) and a masked edit that redraws only what you painted.
+- Settings → Models: every installed model grouped by family, with its weight
+  on disk, the lanes it can run, and an honest state when it cannot.
+- Settings → Clean up: Free VRAM, Free brain, Free RAM, Reset desktop and Free
+  all, each reporting the gigabytes it gave back - and a butler that frees
+  idle weights and rests the chat brain before a render that would not fit.
 - Two separate first-frame animation engines: MiniMax H3 with native audio and
   LTX 2.3, both launched from a finished still.
 - Chat as the studio's hands: with a remote chat brain, "animate this", "review
@@ -405,6 +412,7 @@ by Pixal and installed by you, in Manager.
 | Krea 2 still recipes | `RES4LYF` |
 | GGUF Z-Image/LTX models and text encoders | `ComfyUI-GGUF` |
 | Identity Edit | `comfyui-krea2edit` |
+| Klein whole-frame and masked edits | core ComfyUI (FLUX.2 nodes) |
 | Qwen Image Edit (GGUF builds) | `ComfyUI-GGUF` |
 | Realism II tiled finish | `ComfyUI_UltimateSDUpscale` |
 | Realism II color correction | `ComfyUI-post-processing-nodes` |
@@ -482,13 +490,32 @@ over a base under the NVIDIA Open Model License). The licence disclaims ownershi
 of what the model produces, so the images are yours; the checkpoints are the part
 you may not use commercially.
 
-### Qwen Image Edit
+### Editing: Klein and Qwen
 
-The **edit** action on a finished still opens a one-line instruction box and
-routes to Qwen-Image-Edit. It is an editor, not a style: it never appears in the
-composer's model picker and has no text-to-image path. The instruction is sent
-verbatim — Prompt Enhance and the chat brain are deliberately bypassed, because
-the model is trained on direct edit commands.
+The **edit** action on a finished still opens a one-line instruction box. It is
+an editor, not a style: it never appears in the composer's model picker and has
+no text-to-image path. The instruction is sent verbatim — Prompt Enhance and
+the chat brain are deliberately bypassed, because these models are trained on
+direct edit commands.
+
+Two lanes, chosen by whether you painted a mask:
+
+- **Whole frame** runs on the build picked in Settings → Image → whole frame.
+  The default is **FLUX.2 Klein 9B** (`Flux\flux-2-klein-9b_int8_convrot.safetensors`,
+  its Qwen3 8B text encoder and the flux2 VAE): a port of ComfyUI's shipped
+  `image_flux2_klein_image_edit_9b_distilled` template — one encode feeding
+  both `ReferenceLatent`s, an empty Flux2 latent, `Flux2Scheduler` at 4 steps,
+  cfg 1.0 — which keeps skin, hair and fabric where the Qwen lanes smooth them.
+  A build that is not step-distilled (Flux2 Klein 9B True) samples at 20 steps
+  and says so on the job card. Klein is under the FLUX Non-Commercial License.
+- **Masked** always runs on Klein: `VAEEncodeForInpaint` restricts sampling to
+  the painted region and the result is composited back over the untouched
+  source, so unmasked pixels never change.
+
+Qwen-Image-Edit (2511 and FireRed) stay available in the whole-frame picker;
+the rest of this section is about that lane.
+
+#### Qwen Image Edit
 
 It needs `diffusion_models\Qwen\qwen-image-edit-2511-Q6_K.gguf` (or another
 Qwen-Image-Edit build), the `Qwen\qwen_2.5_vl_7b_fp8_scaled.safetensors` text
@@ -653,9 +680,13 @@ in the lane after two consecutive steps over 120s, rather than leaving you to
 guess.
 
 The usual culprit is the local chat model — llama.cpp holding a 4B GGUF was
-measured at 7.2 GB once its KV cache had grown. **Settings → Compute → free chat
-model** hands that back; the next message reloads it. This is deliberately a
-separate button from **free VRAM**, which never touches the chat brain.
+measured at 7.2 GB once its KV cache had grown, and a warmed Qwen3-VL 4B
+sits at about 8 GB. **Settings → Clean up → Free brain** hands that back and
+says how much; the next message reloads it. This is deliberately a separate
+button from **Free VRAM**, which never touches the chat brain, and **Free
+all** runs every button in turn. **Brain idles after** in the same section
+unloads the brain on its own after a quiet spell, and the butler rests it
+before any render that would not otherwise fit.
 
 Pixal also says this up front: the Animate dialog flags H3 whenever the active
 VRAM profile is under 24 GB — the flag is advisory (the render still runs), and
@@ -739,7 +770,7 @@ The empty `chats` and `characters` directories are retained with `.gitkeep`; per
 
 Starting Pixal starts ComfyUI, and that window is a dashboard rather than a wall of text: the boot as a phase list calibrated against the last good boot on this machine, a card meter, and the sampler's own progress once it is up. Keys: `E` opens the errors log, `L` the full transcript, `V` toggles the raw ComfyUI output, `Q` stops ComfyUI. Closing the window still stops ComfyUI, exactly as before — an open window means something is still on the card.
 
-Settings → Compute → *ComfyUI's console window* → **plain console** puts the unwrapped launcher back. That is the escape hatch, not a preference: the plain console is ComfyUI's raw output with no file behind it, so the logs above only exist while meters are on.
+Settings → Compute → *ComfyUI's console window* → **Plain console** puts the unwrapped launcher back. That is the escape hatch, not a preference: the plain console is ComfyUI's raw output with no file behind it, so the logs above only exist while meters are on.
 
 Model licenses and usage terms belong to their respective authors and are not granted by this repository. You are responsible for obtaining the assets you use and complying with their licenses.
 

@@ -1506,7 +1506,7 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
     async def test_our_own_brain_is_adopted_with_its_real_pid(self):
         # 2026-08-25 16:45: the card idled at 10.2 GB and nothing would
         # reclaim it - the holder was OUR pixal_brain_server.py re-registered
-        # pid-less after a sidecar restart, and "free brain" refused it. The
+        # pid-less after a sidecar restart, and "Free brain" refused it. The
         # port-holder's command line is the proof of ownership the pidfile
         # used to be: our script from our tree gets its real pid recorded.
         script = server.HERE / "pixal_brain_server.py"
@@ -1626,7 +1626,10 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
         state.unlink.assert_not_called()
 
     async def test_nothing_to_free_is_not_an_error(self):
-        with patch.object(server, "_llm_state", return_value={}):
+        # The cmdline lookup is stubbed empty: without it this test would ask
+        # the DEV BOX whether a real brain is listening (LIVE-MACHINE RULE).
+        with patch.object(server, "_llm_state", return_value={}), \
+             patch.object(server, "_adopted_brain_pid", return_value=None):
             resp = await server.free_chat_model(None)
         body = json.loads(resp.text)
         self.assertTrue(body["ok"])
@@ -1646,6 +1649,88 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
         kill.assert_called_once_with(4242)
         self.assertTrue(json.loads(resp.text)["freed"])
 
+    async def test_a_lost_pidfile_recovers_the_proven_brain_by_its_cmdline(self):
+        """9.46 live: a doomed spawn unlinks the pidfile on its way out, and
+        the button then said "no chat model was started by Pixal" about OUR
+        live brain. The port holder's cmdline is the receipt; the unload
+        records it and spends it."""
+        kills = []
+        def fake_kill(pid):
+            kills.append(pid)
+            return True
+        state = Mock()
+        with patch.object(server, "_llm_state",
+                          side_effect=[{}, {"pid": 4242, "model": None,
+                                            "adopted": True}]), \
+             patch.object(server, "_llm_kill", side_effect=fake_kill), \
+             patch.object(server, "_adopted_brain_pid", return_value=4242), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=False)), \
+             patch.object(server, "gpu_free_bytes",
+                          side_effect=[10 * 2**30, 14 * 2**30]), \
+             patch.object(server, "LLM_STATE", state):
+            resp = await server.free_chat_model(None)
+        body = json.loads(resp.text)
+        self.assertTrue(body["freed"])
+        self.assertEqual(body["freed_gb"], 4.0)
+        self.assertEqual(kills, [4242])
+        written = json.loads(state.write_text.call_args[0][0])
+        self.assertEqual(written["pid"], 4242)
+        self.assertTrue(written["adopted"])
+
+    async def test_a_stale_pid_recovers_the_proven_brain_and_kills_it(self):
+        """9.46 live: a transient probe miss disowned the running brain, the
+        pidfile went stale (dead pid), and /api/llm/free said "already gone"
+        about a brain still holding the card. The port holder's cmdline is
+        the same spawn receipt the adopt branch uses - the unload spends the
+        PROVEN pid, never a guess, and the state records the recovery."""
+        kills = []
+        def fake_kill(pid):
+            kills.append(pid)
+            return pid == 4242              # the stale pid is dead; ours is not
+        state = Mock()
+        with patch.object(server, "_llm_state",
+                          return_value={"pid": 9999, "model": "brain.gguf"}), \
+             patch.object(server, "_llm_kill", side_effect=fake_kill), \
+             patch.object(server, "_adopted_brain_pid", return_value=4242), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(side_effect=[True, False])), \
+             patch.object(server, "gpu_free_bytes",
+                          side_effect=[10 * 2**30, 14 * 2**30]), \
+             patch.object(server, "LLM_STATE", state):
+            resp = await server.free_chat_model(None)
+        body = json.loads(resp.text)
+        self.assertTrue(body["freed"])
+        self.assertEqual(body["freed_gb"], 4.0)
+        self.assertEqual(kills, [9999, 4242])
+        written = json.loads(state.write_text.call_args[0][0])
+        self.assertEqual(written["pid"], 4242)
+        self.assertTrue(written["adopted"])
+        state.unlink.assert_called_once()      # port closed - the deed is done
+
+    async def test_a_stale_pid_with_a_stranger_on_the_port_spends_nothing(self):
+        """The same stale pidfile, but the port holder is not ours: the kill
+        stays refused and the state is never rewritten over a stranger."""
+        kills = []
+        def fake_kill(pid):
+            kills.append(pid)
+            return False
+        state = Mock()
+        with patch.object(server, "_llm_state",
+                          return_value={"pid": 9999, "model": "brain.gguf"}), \
+             patch.object(server, "_llm_kill", side_effect=fake_kill), \
+             patch.object(server, "_adopted_brain_pid", return_value=None), \
+             patch.object(server, "local_llm_port_open",
+                          AsyncMock(return_value=True)), \
+             patch.object(server, "LLM_STATE", state):
+            resp = await server.free_chat_model(None)
+        body = json.loads(resp.text)
+        self.assertFalse(body["freed"])
+        self.assertIn("already gone", body["note"])
+        self.assertEqual(kills, [9999])          # never a second, guessed pid
+        state.write_text.assert_not_called()
+        state.unlink.assert_not_called()         # a live server is not stale
+
     async def test_an_adopted_brain_pixal_did_not_start_says_it_stays(self):
         # pid-less adopted state = a brain IS listening but was not provably
         # spawned by Pixal. "no chat model was started by Pixal" read as
@@ -1653,7 +1738,8 @@ class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
         # a refusal has to say what is actually true.
         with patch.object(server, "_llm_state",
                           return_value={"pid": None, "adopted": True,
-                                        "model": "brain.gguf"}):
+                                        "model": "brain.gguf"}), \
+             patch.object(server, "_adopted_brain_pid", return_value=None):
             resp = await server.free_chat_model(None)
         body = json.loads(resp.text)
         self.assertTrue(body["ok"])

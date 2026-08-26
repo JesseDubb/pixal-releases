@@ -243,6 +243,9 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   const [notes, setNotes] = useState("");
   const [wardrobe, setWardrobe] = useState("");
   const [wardOpen, setWardOpen] = useState(false);
+  // 9.51: the reference's clothes leak into scenes; on = the server re-renders
+  // a new reference in a plain grey tee and keeps the upload beside it.
+  const [neutral, setNeutral] = useState(false);
   const [ref, setRef] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -272,6 +275,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
         setStyle(ch.style || "");
         setNotes(ch.notes || "");
         setWardrobe(ch.wardrobe_lock || "");
+        setNeutral(ch.neutral_wardrobe === true);
         // A custom lock is the one thing worth un-hiding on open: they wrote
         // it once, so they should see it is still in force.
         if (ch.wardrobe_lock) setWardOpen(true);
@@ -390,6 +394,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
     if (age.trim()) ch.age = parseInt(age, 10) || age.trim();
     if (race.trim()) ch.race = race.trim();
     if (wardrobe.trim()) ch.wardrobe_lock = wardrobe.trim();
+    ch.neutral_wardrobe = neutral;
     // The id is what makes this an EDIT rather than a second anchor: without it
     // the server re-slugs the name, and a renamed character forks in two.
     if (editId) ch.id = editId;
@@ -477,6 +482,21 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                 </div>
               </Field></div>
             </div>
+            <Field label="neutral wardrobe"
+                   hint="re-renders the reference in a plain grey tee, same face - for a loud outfit; a tight crop leaks least">
+              <div style={{ display: "flex", gap: SPACE[6] }}>
+                {[["on", true], ["off", false]].map(([label, v]) => (
+                  <button key={label} type="button" onClick={() => setNeutral(v)}
+                    style={{
+                      flex: 1, height: 30, fontSize: TYPE.label, cursor: "pointer",
+                      borderRadius: RADIUS.input, border: "1px solid",
+                      borderColor: neutral === v ? "var(--accent)" : "var(--border)",
+                      background: neutral === v ? "var(--accentMut)" : "transparent",
+                      color: neutral === v ? "var(--accent)" : "var(--textSec)",
+                    }}>{label}</button>
+                ))}
+              </div>
+            </Field>
             <Field label="style" hint="how they read at a glance">
               <input style={inputStyle} value={style} onChange={(e) => setStyle(e.target.value)}
                      placeholder="short black bob, silver rings, oversized work jackets" />

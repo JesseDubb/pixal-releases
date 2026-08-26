@@ -185,7 +185,13 @@ class _FinalizeHub:
     def ledger_append(self, entry):
         self.ledgered.append(entry)
 
+    def ledger_read(self):
+        # No history on this stub: the 9.48 full-card tell finds no
+        # baseline and stays silent.
+        return []
+
     finalize = server.Hub.finalize
+    lane_median_elapsed = server.Hub.lane_median_elapsed
 
 
 class PagingWatchdogLedgerTests(unittest.TestCase):

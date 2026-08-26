@@ -400,3 +400,63 @@ class ChatPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+class OneReplyPerTurn(unittest.TestCase):
+    """Chat 952084e3 (2026-08-25): on a conversation-scored turn the brain
+    called generate AND printed the scene; the gate refused the call, the
+    prose had already gone out, and the next round - no calls now - wrapped
+    the same scene again as "here's the prompt I'd render". Two replies, one
+    turn, the whole scene twice. The wrapper is the machinery; it yields."""
+
+    SCENE = ("A blonde woman in a cropped leather jacket stands centre frame "
+             "under a single hard spotlight, one hand on her hip, chin lifted, "
+             "the studio backdrop falling away into black behind her, dust in "
+             "the beam, a faint smile just starting at the corner of her mouth.")
+
+    def _replay(self, rounds, user_text="what do you think of that idea"):
+        said, submitted = [], []
+        queue = list(rounds)
+
+        async def fake_submit(cid, src, template, scene, spec, count=1, parent=None,
+                              flags=None, verbatim=False):
+            submitted.append(scene)
+            return {"id": "test1234", "error": None}
+
+        async def fake_llm(messages, tools=None, cid=None):
+            msg = queue.pop(0) if queue else {"role": "assistant", "content": ""}
+            return 200, {"choices": [{"message": msg}]}
+
+        real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
+        server.HUB.submit, server.llm_call = fake_submit, fake_llm
+        server.HUB.broadcast = lambda **kw: (
+            said.append(kw.get("text")) if kw.get("type") == "text" else None)
+        try:
+            asyncio.run(server._kimi_reply(
+                "testcid", {"role": "user", "content": user_text}, [],
+                {"prompt_enhance": True}))
+        finally:
+            server.HUB.submit, server.llm_call, server.HUB.broadcast = real
+        return [t for t in said if t], submitted
+
+    def test_a_refused_generate_call_does_not_speak_the_scene_twice(self):
+        call = {"id": "c1", "type": "function",
+                "function": {"name": "generate",
+                             "arguments": '{"prompt": "' + self.SCENE + '"}'}}
+        texts, submitted = self._replay([
+            {"role": "assistant", "content": self.SCENE + " Render it and I'll fire it.",
+             "tool_calls": [call]},
+            {"role": "assistant", "content": self.SCENE},
+        ])
+        joined = "\n".join(texts)
+        self.assertEqual(joined.count("single hard spotlight"), 1, texts)
+        self.assertEqual(joined.count("Want me to run it?"), 1, texts)
+        self.assertEqual(submitted, [])
+
+    def test_a_scene_spoken_once_still_gets_the_full_offer(self):
+        """The control: no prior scene this turn, the wrapper is unchanged."""
+        texts, _ = self._replay([{"role": "assistant", "content": self.SCENE}])
+        joined = "\n".join(texts)
+        self.assertIn("here", joined)
+        self.assertEqual(joined.count("single hard spotlight"), 1)
+        self.assertIn("Want me to run it?", joined)

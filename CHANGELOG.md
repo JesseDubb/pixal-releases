@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.10b — 2026-08-25
+
+Pixal manages the card, and says what it did.
+
+**A Clean up section in Settings.** Under "this machine": Free VRAM, Free
+brain, Free RAM, Reset desktop, and Free all. Each button reports the
+gigabytes it actually gave back. Reset desktop restarts Explorer and the
+Windows compositor (which quietly hoard video memory) behind an admin
+prompt. "Brain idles after" lets you choose when the chat brain unloads.
+
+**The butler watches the whole card.** Before a render that will not fit,
+Pixal now frees weights no recent job used, rests the chat brain if that is
+still not enough, and names the desktop when it is the one holding memory -
+each with a short line saying what it did. A render that still ran on a
+full card says so, with how much slower it was than usual.
+
+**An undistilled Klein runs at its own pace.** A Klein build that is not
+step-distilled (Flux2 Klein 9B True) now samples at 20 steps instead of the
+distill's 4, and the job card says so. Expect about five times longer.
+
+**Settings buttons read like buttons.** Every choice and action in Settings
+starts with a capital letter. Headings and field names are unchanged.
+
+**Small fixes.** The canvas popover no longer jumps when you pick a size in
+a windowed Pixal. Chat no longer repeats a scene twice on one turn. A
+character can optionally get a neutral-wardrobe reference (off by default:
+in testing, the plain tee leaked into scenes as much as the original outfit
+did - a tight head crop is still the best reference). The installer's tidy
+step works on case-sensitive drives.
+
 ## 1.0.9b — 2026-08-25
 
 Edits keep their skin, and Pixal shows you what you own.

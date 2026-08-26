@@ -44,6 +44,7 @@ TAB_KEYS = {
     "general": ["setTheme", "comfy_url", "comfy_editor", "comfy_console",
                 "vram_profile", "explicit", "extra_model_roots",
                 "/api/comfy/free", "/api/comfy/restart", "/api/llm/free",
+                "/api/ram/free", "/api/desktop/reset", "local_idle_minutes",
                 "/api/settings/rescan"],
     "image": ["zimage", "edit: { model", "image_mode", "image_model",
               "identity_finish"],

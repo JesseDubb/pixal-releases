@@ -1404,18 +1404,24 @@ class _StubHub:
     """Just enough Hub for ensure_vram: state + spies, the real method."""
     queue_remaining = 0
 
-    def __init__(self, resident=None, critic_hot=False):
+    def __init__(self, resident=None, critic_hot=False, last_used=None,
+                 job_seq=0):
         self.jobs = {}
         self.resident_heavies = dict(resident or {})
         self.critic_hot = critic_hot
         self.prev_job_free_min = None
+        # 9.48's watch state: which lane used what, and the priced-job clock.
+        self.model_last_used = dict(last_used or {})
+        self.job_seq = job_seq
         self.flushed = False
         self.texts = []
 
-    async def flush_comfy_cache(self, why, unload=True):
+    async def flush_comfy_cache(self, why, unload=True, free_memory=True):
         self.flushed = True
+        self.flush_free_memory = free_memory
         if unload:
             self.resident_heavies = {}
+            self.model_last_used = {}
             self.critic_hot = False
         return True
 
@@ -1427,6 +1433,12 @@ class _StubHub:
     reclaim_vram = server.Hub.reclaim_vram
     busy_elsewhere = server.Hub.busy_elsewhere
     forget_residency = server.Hub.forget_residency
+    evict_idle_lane = server.Hub.evict_idle_lane
+    rest_brain_for_render = server.Hub.rest_brain_for_render
+    note_desktop_weight = server.Hub.note_desktop_weight
+    idle_lane_weights = server.Hub.idle_lane_weights
+    idle_lane_template = server.Hub.idle_lane_template
+    _mark_used = server.Hub._mark_used
 
 
 class VramButlerBehavior(unittest.TestCase):
@@ -1449,6 +1461,9 @@ class VramButlerBehavior(unittest.TestCase):
         self.assertEqual(hub.texts, [])
 
     def test_switching_stacks_on_a_full_card_flushes(self):
+        # 9.48's order ahead of the flush it always ran: the abandoned lane
+        # (no usage record - it predates the watch) goes first as a SOFT
+        # unload, then, still short, the hard flush clears the deck.
         hub = _StubHub(resident={"Krea 2\\old.safetensors": 12 * 2**30})
         g = {"u": {"class_type": "UNETLoader",
                    "inputs": {"unet_name": "ZiT\\new.safetensors"}}}
@@ -1466,6 +1481,8 @@ class VramButlerBehavior(unittest.TestCase):
             # path goes straight to the flush it always ran.
             st.enter_context(patch.object(
                 server, "brain_vram_estimate", return_value=0))
+            st.enter_context(patch.object(
+                server, "gpu_process_table", return_value=[]))
             brain = st.enter_context(patch.object(
                 server, "free_brain_vram", AsyncMock(return_value=True)))
             st.enter_context(patch.object(
@@ -1474,7 +1491,10 @@ class VramButlerBehavior(unittest.TestCase):
         self.assertTrue(hub.flushed)
         brain.assert_not_awaited()          # the flush alone made room
         self.assertTrue(job.get("model_switch"))
-        self.assertEqual(len(hub.texts), 1)
+        self.assertEqual(hub.texts,
+                         ["*freed 12 GB of idle lane weights*",
+                          "*making room - this render stages ~13GB: "
+                          "cleared cached models*"])
 
     def test_a_stack_too_big_for_the_flush_rests_the_brain(self):
         hub = _StubHub(resident={})
@@ -1489,6 +1509,8 @@ class VramButlerBehavior(unittest.TestCase):
                 server, "gpu_free_bytes", return_value=24 * 2**30))
             st.enter_context(patch.object(
                 server, "ram_free_bytes", return_value=32 * 2**30))
+            st.enter_context(patch.object(
+                server, "gpu_process_table", return_value=[]))
             brain = st.enter_context(patch.object(
                 server, "free_brain_vram", AsyncMock(return_value=True)))
             st.enter_context(patch.object(
@@ -1529,7 +1551,7 @@ class VramButlerBehavior(unittest.TestCase):
 
     def test_a_warm_critic_on_a_starved_card_is_not_trusted(self):
         """critic_hot only ever proved the model loaded ONCE. It survived
-        ComfyUI restarts and the Settings "free VRAM" button, and a heavy
+        ComfyUI restarts and the Settings "Free VRAM" button, and a heavy
         render between two looks evicts the critic without clearing it - so a
         starved card must still get reclaimed even when the flag says warm."""
         hub = _StubHub(resident={}, critic_hot=True)
@@ -1726,36 +1748,6 @@ class VramPrevFloorTrim(unittest.TestCase):
         self.assertEqual(hub.texts, [])
 
 
-class BrainShouldRest(unittest.TestCase):
-    """9.35's pure decision: the brain is now the cheap reload (~5.5GB
-    resident, seconds from page cache) and the flush is the expensive one
-    (~20GB, 15-25s) - so a short job rests the brain FIRST, but only when
-    that alone closes the gap. No I/O: numbers in, a bool out."""
-
-    GB = 2**30
-
-    def test_a_job_that_fits_already_never_rests_the_brain(self):
-        self.assertFalse(server.brain_should_rest(
-            20 * self.GB, 15 * self.GB, 6 * self.GB))
-
-    def test_a_job_that_fits_only_with_the_brain_gone_rests_it(self):
-        self.assertTrue(server.brain_should_rest(
-            10 * self.GB, 15 * self.GB, 6 * self.GB))
-
-    def test_a_job_short_even_without_the_brain_keeps_it(self):
-        # resting would be pure cost - the flush still has to run
-        self.assertFalse(server.brain_should_rest(
-            8 * self.GB, 15 * self.GB, 6 * self.GB))
-
-    def test_no_free_reading_is_no_signal_and_never_a_decision(self):
-        self.assertFalse(server.brain_should_rest(
-            None, 15 * self.GB, 6 * self.GB))
-
-    def test_no_resident_brain_is_nothing_to_rest(self):
-        self.assertFalse(server.brain_should_rest(
-            10 * self.GB, 15 * self.GB, 0))
-
-
 class BrainVramEstimate(unittest.TestCase):
     """The estimate the butler spends before flushing: the resident GGUF's
     bytes plus BRAIN_KV_SLACK - and 0 whenever there is nothing of ours to
@@ -1786,17 +1778,23 @@ class BrainVramEstimate(unittest.TestCase):
 
 
 class VramButlerBrainRest(unittest.TestCase):
-    """9.35's reorder wired into the cold path. zimage is unprofiled, so the
-    graph below prices at 12GB weights + 1GB act + 2GB floor = 15GB need.
-    When resting the brain alone closes that gap there is no /free post at
-    all; when the rest still falls short the flush runs as priced, and the
-    'rested the chat brain' note cannot fire a second time."""
+    """9.48's fixed order wired into the cold path: idle lane weights first,
+    the brain second (it respawns on the next chat message). zimage is
+    unprofiled, so the graph below prices at 12GB weights + 1GB act + 2GB
+    floor = 15GB need. The resident old lane is stamped as used one job
+    ago, so step 1's N=2 rule protects it and the brain is the lever under
+    test: when the rest alone closes the gap there is no /free post at all;
+    when it falls short the flush runs as priced, and the note cannot fire
+    a second time."""
 
     GRAPH = {"u": {"class_type": "UNETLoader",
                    "inputs": {"unet_name": "ZiT\\new.safetensors"}}}
+    # The old lane ran 1 job ago - in play, so the watch cannot evict it.
+    LAST_USED = {"Krea 2\\old.safetensors": (2, "realism_ii", 12 * 2**30)}
 
     def run_butler(self, free_reads, brain_gb, brain_kills, gpu_free_gb=13):
-        hub = _StubHub(resident={"Krea 2\\old.safetensors": 12 * 2**30})
+        hub = _StubHub(resident={"Krea 2\\old.safetensors": 12 * 2**30},
+                       last_used=dict(self.LAST_USED), job_seq=2)
         job = {"id": "b1", "cid": "c"}
         with ExitStack() as st:
             st.enter_context(patch.object(
@@ -1811,6 +1809,8 @@ class VramButlerBrainRest(unittest.TestCase):
             st.enter_context(patch.object(
                 server, "ram_free_bytes", return_value=32 * 2**30))
             st.enter_context(patch.object(
+                server, "gpu_process_table", return_value=[]))
+            st.enter_context(patch.object(
                 server, "brain_vram_estimate",
                 return_value=brain_gb * 2**30))
             hub.brain = st.enter_context(patch.object(
@@ -1822,18 +1822,16 @@ class VramButlerBrainRest(unittest.TestCase):
         return hub, job
 
     def test_a_short_job_rests_the_brain_instead_of_flushing(self):
-        # 10GB free, need 15GB, a 6GB brain: 10 < 15 but 10 + 6 >= 15, and
-        # the post-rest read lands at 16GB - the job fits, the flush is
-        # skipped, so NO /free post ever leaves the stub.
+        # 10GB free, need 15GB, a 6GB brain: the rest closes the gap, the
+        # post-rest read lands at 16GB - the job fits, the flush is skipped,
+        # so NO /free post ever leaves the stub.
         hub, job = self.run_butler([10, 16], 6, [True])
         hub.brain.assert_awaited_once()
         self.assertFalse(hub.flushed)
         self.assertEqual(hub.resident_heavies,
                          {"ZiT\\new.safetensors": 12 * 2**30})
         self.assertEqual(hub.texts,
-                         ["*rested the chat brain instead of clearing ~12 GB "
-                          "of cached models - it returns on your next "
-                          "message*"])
+                         ["*brain rested for the render (6.0 GB)*"])
         self.assertNotIn("model_switch", job)
 
     def test_a_rest_that_falls_short_still_flushes_without_repeating(self):
@@ -1845,9 +1843,11 @@ class VramButlerBrainRest(unittest.TestCase):
         self.assertEqual(hub.brain.await_count, 2)
         self.assertTrue(hub.flushed)
         self.assertTrue(job.get("model_switch"))
-        self.assertEqual(len(hub.texts), 1)
-        self.assertIn("cleared cached models", hub.texts[0])
-        self.assertNotIn("rested the chat brain", hub.texts[0])
+        self.assertEqual(hub.texts, [
+            "*brain rested for the render (6.0 GB)*",
+            "*making room - this render stages ~13GB: cleared cached models. "
+            "Still tight (13.0GB free) - something outside Pixal holds the "
+            "rest, so this one may crawl*"])
 
 
 class WarmVideoRerun(unittest.TestCase):
@@ -1879,8 +1879,10 @@ class WarmVideoRerun(unittest.TestCase):
     HEAVY = dict(RESIDENT)      # what dict(heavy) re-records after a flush
 
     def run_butler(self, resident, free_gb, ram_gb=32, prev_min=None,
-                   brain_alive=False, template="h3_i2v"):
-        hub = _StubHub(resident=resident)
+                   brain_alive=False, template="h3_i2v", last_used=None,
+                 job_seq=0):
+        hub = _StubHub(resident=resident, last_used=last_used,
+                       job_seq=job_seq)
         hub.prev_job_free_min = prev_min
         job = {"id": "v1", "cid": "c"}
         with ExitStack() as st:
@@ -1894,6 +1896,8 @@ class WarmVideoRerun(unittest.TestCase):
                 server, "gpu_free_bytes", return_value=25 * 2**30))
             st.enter_context(patch.object(
                 server, "gpu_hogs", return_value=[]))
+            st.enter_context(patch.object(
+                server, "gpu_process_table", return_value=[]))
             st.enter_context(patch.object(
                 server, "ram_free_bytes", return_value=ram_gb * 2**30))
             hub.brain = st.enter_context(patch.object(
@@ -1960,10 +1964,14 @@ class WarmVideoRerun(unittest.TestCase):
     def test_a_near_miss_last_job_rests_the_brain_on_the_warm_path(self):
         # The 9.35 guard applies ahead of the keep-and-return, the same
         # way it does for stills: rest the cheap reload, keep the weights.
+        # The extra is stamped as this-lane usage (9.48): with nothing idle
+        # to evict, the guard's escalation reaches the brain as before.
         warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
         hub, job = self.run_butler(warm, free_gb=8,
                                    prev_min=int(0.9 * 2**30),
-                                   brain_alive=True)
+                                   brain_alive=True,
+                                   last_used={"H3\\extra.safetensors":
+                                              (0, "h3_i2v", 1 * 2**30)})
         hub.brain.assert_awaited_once()
         self.assertFalse(hub.flushed)           # rest, not trim
         self.assertEqual(hub.resident_heavies, warm)
@@ -1974,7 +1982,9 @@ class WarmVideoRerun(unittest.TestCase):
     def test_a_near_miss_without_a_brain_trims_without_unloading(self):
         warm = {**self.RESIDENT, "H3\\extra.safetensors": 1 * 2**30}
         hub, job = self.run_butler(warm, free_gb=8,
-                                   prev_min=int(0.9 * 2**30))
+                                   prev_min=int(0.9 * 2**30),
+                                   last_used={"H3\\extra.safetensors":
+                                              (0, "h3_i2v", 1 * 2**30)})
         hub.brain.assert_awaited_once()         # it is always asked first
         self.assertTrue(hub.flushed)            # ...so the trim happened
         self.assertEqual(hub.resident_heavies,  # ...but unload=False: the
@@ -1997,7 +2007,13 @@ class _FinalizeHub:
     def ledger_append(self, entry):
         self.ledgered.append(entry)
 
+    def ledger_read(self):
+        # No history on this stub: the full-card tell finds no baseline and
+        # stays silent, which is what the vram-handoff tests need.
+        return []
+
     finalize = server.Hub.finalize
+    lane_median_elapsed = server.Hub.lane_median_elapsed
 
 
 class FinalizeVramHandoff(unittest.TestCase):
@@ -2581,6 +2597,88 @@ class KleinEditTests(unittest.TestCase):
                                              "qwen_edit", "edit")):
             self.build(pick=patch.object(server, "pick_recipe_model", pick))
         pick.assert_called_once_with(None, "klein_edit")
+
+
+class KleinScheduleTests(unittest.TestCase):
+    """9.52: a Klein build names its own schedule. The official distill IS its
+    4-step schedule, so KLEIN_SCHEDULES pairs the schedule to the build by
+    filename - an undistilled build (Klein True, the step-distillation trained
+    back out) sampled at the distill's 4 steps just looks like mud."""
+
+    TRUE = "Flux\\Flux2-Klein-9B-True-V1-int8mixedrow.safetensors"
+
+    def build_edit(self, rel, size=(4608, 6912)):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            from PIL import Image
+            Image.new("RGB", size, (9, 9, 9)).save(root / "input" / "s.png")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "pick_recipe_model",
+                              return_value=model(rel, "klein", "edit")), \
+                 patch.object(server, "_pick_catalog_asset",
+                              side_effect=lambda kind, names, *a: names[0]):
+                return server.build_klein_edit("remove her earrings", 5, "s.png")
+
+    def build_inpaint(self, rel, size=(4608, 6912)):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            from PIL import Image
+            Image.new("RGBA", size, (9, 9, 9, 255)).save(root / "input" / "s.png")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "pick_recipe_model",
+                              return_value=model(rel, "klein", "edit")), \
+                 patch.object(server, "_pick_catalog_asset",
+                              side_effect=lambda kind, names, *a: names[0]):
+                return server.build_klein_inpaint("make the top red", 5, "s.png")
+
+    def test_the_true_build_resolves_to_its_20_step_row(self):
+        row = server.klein_schedule(model(self.TRUE, "klein", "edit"))
+        self.assertEqual(row["label"], "Klein True (undistilled)")
+        self.assertEqual(row["steps"], 20)
+        self.assertEqual(row["cfg"], 1.0)
+
+    def test_anything_else_falls_through_to_the_distill(self):
+        for rel in (server.KLEIN_MODEL,
+                    "Flux\\flux-2-klein-9b_bf16.safetensors",
+                    "Flux\\DarkBeast-Klein9b-V2-BFS-FP8.safetensors"):
+            row = server.klein_schedule(model(rel, "klein", "edit"))
+            self.assertEqual(row["steps"], 4, rel)
+            self.assertEqual(row["cfg"], 1.0, rel)
+
+    def test_an_empty_pick_is_the_distill(self):
+        self.assertEqual(server.klein_schedule(None)["steps"], 4)
+        self.assertEqual(server.klein_schedule({})["steps"], 4)
+
+    def test_the_whole_frame_lane_sets_scheduler_and_guider_from_the_row(self):
+        g, _scene, info = self.build_edit(self.TRUE)
+        self.assertEqual(g["ke:sched"]["inputs"]["steps"], 20)
+        self.assertEqual(g["ke:guider"]["inputs"]["cfg"], 1.0)
+        # the card says why this render took five times longer
+        self.assertIn("sampled at", info["size"])
+        self.assertIn("20 steps", info["size"])
+
+    def test_the_whole_frame_distill_keeps_4_steps_and_a_quiet_card(self):
+        g, _scene, info = self.build_edit(server.KLEIN_MODEL)
+        self.assertEqual(g["ke:sched"]["inputs"]["steps"], 4)
+        self.assertEqual(g["ke:guider"]["inputs"]["cfg"], 1.0)
+        self.assertIn("sampled at", info["size"])
+        self.assertNotIn("steps", info["size"])
+
+    def test_the_masked_lane_sets_its_sampler_from_the_row(self):
+        g, _scene, info = self.build_inpaint(self.TRUE)
+        self.assertEqual(g["ki:sampler"]["inputs"]["steps"], 20)
+        self.assertEqual(g["ki:sampler"]["inputs"]["cfg"], 1.0)
+        self.assertIn("sampled at", info["size"])
+        self.assertIn("20 steps", info["size"])
+
+    def test_the_masked_distill_keeps_4_steps_and_a_quiet_card(self):
+        g, _scene, info = self.build_inpaint(server.KLEIN_MODEL)
+        self.assertEqual(g["ki:sampler"]["inputs"]["steps"], 4)
+        self.assertEqual(g["ki:sampler"]["inputs"]["cfg"], 1.0)
+        self.assertIn("sampled at", info["size"])
+        self.assertNotIn("steps", info["size"])
 
 
 class EditRoutingTests(unittest.TestCase):

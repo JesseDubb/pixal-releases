@@ -485,7 +485,11 @@ def tidy(cdir, moves, sid):
     models = Path(cdir) / "models"
     done, skipped = [], []
     for mv in moves:
-        src = models / mv["from"].replace("/", os.sep)
+        # "from" is the inventory key - lowercased - which only resolves on a
+        # case-insensitive filesystem. The survey carries the real absolute
+        # path as "src"; prefer it, or Linux (CI, a WSL ComfyUI) never finds
+        # the file and the move silently does not happen.
+        src = Path(mv["src"]) if mv.get("src") else             models / mv["from"].replace("/", os.sep)
         dst = models / mv["to"].replace("/", os.sep)
         if not src.is_file():
             continue
@@ -812,7 +816,7 @@ def survey(cdir):
                     full, at = _satisfied(f.get("satisfied_by"), files)
                     if full:
                         row.update(state="stray", at=at)
-                        moves.append({"from": at, "to": dest,
+                        moves.append({"from": at, "to": dest, "src": str(full),
                                       "name": Path(at).name})
                     else:
                         row.update(state="missing", at="")
@@ -832,6 +836,7 @@ def survey(cdir):
                 if stray:
                     row.update(state="stray", at=stray[0][0])
                     moves.append({"from": stray[0][0], "to": f["dest"],
+                                  "src": str(stray[0][1]),
                                   "name": Path(stray[0][0]).name})
                 else:
                     row.update(state="missing", at="")

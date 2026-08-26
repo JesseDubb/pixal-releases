@@ -274,12 +274,30 @@ class SettingsCopy(unittest.TestCase):
                              "a tip is hiding inside the visible gloss")
     def test_edit_section_names_both_lanes(self):
         """9.29: the masked lane was invisible in Settings while the job card
-        named Klein 9B. Both lanes get a named row in the one section."""
+        named Klein 9B. Both lanes get a named row in the one section. (The
+        labels are JSX fragments since 9.52 hung the undistilled tip off
+        them, so the name is matched inside the fragment.)"""
         for props, block in _sections():
             if "Edit model" in props.get("title", ""):
                 labels = [fp.get("label") for fp in _field_props(block)]
-                self.assertIn('"whole frame"', labels)
-                self.assertIn('"masked area"', labels)
+                self.assertTrue(any(l and "whole frame" in l for l in labels))
+                self.assertTrue(any(l and "masked area" in l for l in labels))
+                break
+        else:
+            self.fail("the Edit model section is gone")
+
+    def test_both_edit_pickers_warn_about_an_undistilled_build(self):
+        """9.52: a Klein True pick in either lane runs ~20 steps, not the
+        distill's 4 - the five-times-longer render has to explain itself
+        where the pick is made."""
+        for props, block in _sections():
+            if "Edit model" in props.get("title", ""):
+                labels = [fp.get("label", "") for fp in _field_props(block)]
+                hits = [l for l in labels
+                        if "An undistilled build runs ~20 steps" in l
+                        and "five times longer" in l]
+                self.assertEqual(len(hits), 2,
+                                 "both edit pickers need the undistilled tip")
                 break
         else:
             self.fail("the Edit model section is gone")
@@ -330,6 +348,7 @@ class SettingsCopy(unittest.TestCase):
         s6 = re.sub(r"\s+", " ", s6)
         for quote in ["System follows Windows.",
                       "Another rig's address borrows its GPU",
+                      "A full card is a slow render.",
                       "Sharper drop-in; can over-sharpen on one pass.",
                       "Model enlarges; PiD repaints.",
                       "Suggests fixes for what you made.",
@@ -340,6 +359,121 @@ class SettingsCopy(unittest.TestCase):
             self.assertIn(quote, s6, "HELP.md §6 lost the shipped copy: %r" % quote)
         self.assertNotIn("How the app looks", s6)
         self.assertNotIn("what happens local stays local", s6)
+
+
+class CtaSentenceCase(unittest.TestCase):
+    """9.45: every segment option label and every button in SettingsMenu is
+    sentence case with a capital first letter - "Auto", "Allow", "Never",
+    "Open the graph editor", "Rescan folders". Jesse, 2026-08-25, on the
+    Appearance row reading right while the rest stayed lowercase: "looks
+    weird being lowercase always in CTAs." The case lives in the strings,
+    never in CSS (this suite reads the strings), so this walks the source:
+    every label literal inside a SegmentedControl options array - quotes and
+    template literals both, the VRAM row's `Auto${...}` is how the lowercase
+    one hid from a plain grep - and every literal <Btn> text. A label may
+    legitimately start caseless: a digit ("2×") or an interpolation
+    ("${t} GB"); a dynamic text ({q.label}) has no literal to pin. So the
+    assertion is that no CTA literal starts with a lowercase letter - the
+    next lowercase CTA fails here instead of reaching Jesse. Field labels,
+    GroupLabel headings, InfoTip prose and sublines are out of scope on
+    purpose: nouns and prose, not CTAs."""
+
+    @staticmethod
+    def _segment_option_labels():
+        for m in re.finditer(r"<SegmentedControl\s", SRC):
+            props = _props(SRC[m.start():_tag_end(SRC, m.start())])
+            if "options" not in props:
+                continue
+            for lm in re.finditer(r'label:\s*"((?:[^"\\]|\\.)*)"',
+                                  props["options"]):
+                yield lm.group(1)
+            for lm in re.finditer(r"label:\s*`([^`]*)`", props["options"]):
+                yield lm.group(1)
+
+    @staticmethod
+    def _button_texts():
+        for m in re.finditer(r"<Btn\s", SRC):
+            end = _tag_end(SRC, m.start())
+            text = SRC[end:SRC.index("</Btn>", end)].strip()
+            if text and not text.startswith("{"):
+                yield " ".join(text.split())
+
+    def test_every_cta_starts_with_a_capital(self):
+        ctas = list(self._segment_option_labels()) + list(self._button_texts())
+        self.assertGreater(len(ctas), 20, "the CTA sweep went blind")
+        offenders = [s for s in ctas if s[0].islower()]
+        self.assertEqual(offenders, [],
+                         "CTA labels starting lowercase: %s" % offenders)
+
+
+class CleanUpSection(unittest.TestCase):
+    """9.46: Clean up gives memory back and says how much. Five actions in
+    the pinned order, every toast naming the GB it actually freed; the
+    brain's idle window is the one setting; everything sleeps while a
+    render is in flight. The wording is Jesse's - these are pins, not
+    suggestions."""
+
+    @staticmethod
+    def _block():
+        for props, block in _sections():
+            if "Clean up" in props.get("title", ""):
+                return props, block
+        raise AssertionError("the Clean up section is gone")
+
+    def test_the_section_carries_its_tip_and_gloss(self):
+        props, _ = self._block()
+        self.assertIn("Nothing hands memory back until asked. "
+                      "Each button says what it freed.", props["title"])
+        self.assertEqual(props.get("gloss"), '"A full card is a slow render."')
+
+    def test_the_five_actions_in_their_order(self):
+        _, block = self._block()
+        labels = []
+        for m in re.finditer(r"<Btn\s", block):
+            end = _tag_end(block, m.start())
+            text = block[end:block.index("</Btn>", end)].strip()
+            labels.append(" ".join(text.split()))
+        self.assertEqual(labels, ["Free VRAM", "Free brain", "Free RAM",
+                                  "Reset desktop", "Free all"])
+
+    def test_every_action_reports_what_it_freed(self):
+        # the single buttons name the resource; Free all toasts the total
+        self.assertIn("`${label}: ${n} GB back`", SRC)
+        self.assertIn("`${Math.round(total * 10) / 10} GB back`", SRC)
+        # a declined UAC is the user's own choice and says exactly that
+        self.assertIn('"Desktop reset cancelled"', SRC)
+
+    def test_the_reset_desktop_tip_carries_the_warning(self):
+        self.assertIn("Restarts Explorer and the Windows compositor, which "
+                      "hoard video memory. One screen flash, Explorer "
+                      "windows close, admin prompt; an idle ComfyUI may "
+                      "restart.", SRC)
+
+    def test_the_brain_idle_window_is_the_one_setting(self):
+        _, block = self._block()
+        self.assertIn("Brain idles after", block)
+        for label in ['"5 min"', '"10 min"', '"30 min"', '"Never"']:
+            self.assertIn("label: %s" % label, block)
+        self.assertIn("apply({ llm: { local_idle_minutes: v } }", block)
+        self.assertIn("A warmed brain holds ~8 GB. Idle, it unloads; the "
+                      "next message wakes it in seconds.", block)
+
+    def test_the_buttons_sleep_while_a_render_is_in_flight(self):
+        _, block = self._block()
+        self.assertIn("renderBusy", block)
+        self.assertIn('"wait for the render"', block)
+        self.assertIn("store.liveJobs", SRC)
+
+    def test_the_frees_moved_out_of_compute(self):
+        # Compute keeps the address, Restart, and the boot behaviour - the
+        # flush buttons live in Clean up now.
+        for props, block in _sections():
+            if "Compute" in props.get("title", ""):
+                self.assertNotIn("/api/comfy/free", block)
+                self.assertNotIn("/api/llm/free", block)
+                self.assertIn("/api/comfy/restart", block)
+                return
+        self.fail("the Compute section is gone")
 
 
 class ModelsLibraryTab(unittest.TestCase):

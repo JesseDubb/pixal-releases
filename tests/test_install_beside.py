@@ -94,9 +94,12 @@ class BesideSurveyTests(_Base):
         # The row names where it must end up - the wizard's summary stays honest.
         self.assertEqual(proj["dest"],
                          "text_encoders/Qwen/" + PROJ_NAME)
+        # "src" is the REAL path (the inventory key is lowercased, and a
+        # case-sensitive filesystem - CI on Linux - cannot resolve it).
         self.assertEqual(found["moves"],
                          [{"from": "llm/gguf/" + PROJ_NAME,
                            "to": "text_encoders/Qwen/" + PROJ_NAME,
+                           "src": str(cdir / "models" / "LLM" / "GGUF" / PROJ_NAME),
                            "name": PROJ_NAME}])
 
     def test_a_fresh_install_resolves_to_the_catalog_dest(self):

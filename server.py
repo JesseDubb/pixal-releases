@@ -11,6 +11,7 @@ Open: http://127.0.0.1:8190
 import asyncio
 import collections
 import copy
+import csv
 import errno
 import io
 import hashlib
@@ -381,7 +382,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.9b"
+PIXAL_VERSION = "1.0.10b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -1701,15 +1702,29 @@ EDIT_ACCELERATORS = (
 # FLUX.2 Klein 9B: two edit lanes. The masked-inpaint lane's graph is ported
 # from the F4 group of geoahmed's flux2_klein_ultimate_v2.1 workflow; the
 # whole-frame lane's from Comfy-Org's shipped
-# image_flux2_klein_image_edit_9b_distilled template. Klein is step-distilled, so
-# 4 steps at cfg 1.0 is its native schedule, not a speed hack. License is
-# the FLUX Non-Commercial License v2.1 - surface it like PiD's, never ship it
-# silently.
+# image_flux2_klein_image_edit_9b_distilled template. The official build is
+# step-distilled, so 4 steps at cfg 1.0 is its native schedule, not a speed
+# hack - other builds carry their own, paired by name in KLEIN_SCHEDULES
+# below. License is the FLUX Non-Commercial License v2.1 - surface it like
+# PiD's, never ship it silently.
 # int8 convrot over bf16 at Jesse's call (2026-08-12 same-seed A/B: parity
 # quality, his pick, ~9GB lighter and faster). The bf16 stays on disk.
 KLEIN_MODEL = "Flux\\flux-2-klein-9b_int8_convrot.safetensors"
 KLEIN_CLIP = "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors"
 KLEIN_VAE = "Flux\\flux2-vae.safetensors"
+# One row per Klein BUILD, most specific first - the same shape and spirit as
+# EDIT_ACCELERATORS above. A sampling schedule is trained against one set of
+# weights, so it is paired to the build by name and is never a bare step
+# count: the official distill IS its 4-step schedule, and an undistilled
+# build sampled at 4 steps just looks like mud (Klein True's card: 10-25
+# steps for edits, cfg 1.0, euler/simple; 20 sits mid-range). Empty tokens
+# match everything, so the distill row must stay last as the fall-through.
+KLEIN_SCHEDULES = (
+    {"tokens": ("true",), "label": "Klein True (undistilled)",
+     "steps": 20, "cfg": 1.0},
+    {"tokens": (), "label": "Klein 4-step distill",
+     "steps": 4, "cfg": 1.0},
+)
 # The sampling canvas is capped even though the OUTPUT stays native. This graph
 # VAE-encodes the source TWICE (masked latent + full-frame reference latent), so
 # an edit on an upscaled frame prices at double the canvas - a 4x upscale asked
@@ -3686,6 +3701,20 @@ def build_qwen_edit(scene, seed, image=None, megapixels=None, steps=None, cfg=No
     return g, instruction, info
 
 
+def klein_schedule(model_entry):
+    """The KLEIN_SCHEDULES row that belongs to this Klein build.
+
+    Matched on the filename, most specific first, the distill last as the
+    fall-through - the same shape as edit_accelerator, and for the same
+    reason: a compatible release should drop in as data, not as code."""
+    name = str((model_entry or {}).get("rel") or (model_entry or {}).get("name") or "")
+    low = name.replace("/", "\\").lower()
+    for spec in KLEIN_SCHEDULES:
+        if all(token in low for token in spec["tokens"]):
+            return spec
+    return KLEIN_SCHEDULES[-1]
+
+
 def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
     """Masked inpaint of an existing frame (FLUX.2 Klein 9B).
 
@@ -3710,7 +3739,10 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
     2026-08-12; the tiled decode's 512px tiles added seams on top).
 
     Klein is step-distilled: 4 steps at cfg 1.0 IS the schedule, not a speed
-    trick, which also makes the zeroed negative the correct one."""
+    trick, which also makes the zeroed negative the correct one. That schedule
+    belongs to the BUILD, though: klein_schedule pairs the picked model to its
+    KLEIN_SCHEDULES row by filename, and an undistilled build like Klein True
+    runs its own 20 steps at the same cfg 1.0."""
     src = input_ref_name(image)
     if not src:
         raise ValueError("Klein Inpaint needs a source image in ComfyUI/input")
@@ -3727,6 +3759,11 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
         model or load_config()["edit"].get("inpaint_model") or None,
         "klein_inpaint")
     set_unet_loader(g, "ki:unet", model_entry)
+    # The schedule belongs to the build, not the lane: an undistilled build
+    # sampled at the distill's 4 steps looks like mud.
+    schedule = klein_schedule(model_entry)
+    g["ki:sampler"]["inputs"]["steps"] = schedule["steps"]
+    g["ki:sampler"]["inputs"]["cfg"] = schedule["cfg"]
     clip = _pick_catalog_asset("text_encoders", (KLEIN_CLIP,),
                                "its Qwen3 8B text encoder", "Klein Inpaint")
     set_clip_loader(g, "ki:clip", clip, "flux2")
@@ -3771,9 +3808,13 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
         info["canvas_mp"] = (canvas[0] * canvas[1]) / 1e6
         info["size"] = f"{native[0]}x{native[1]}"
         if tuple(canvas) != tuple(native):
-            # Say it plainly on the job card: sampled small, returned full size.
-            info["size"] = (f"{native[0]}x{native[1]} "
-                            f"(sampled at {canvas[0]}x{canvas[1]})")
+            # Say it plainly on the job card: sampled small, returned full size -
+            # and at how many steps, when the build is not the 4-step distill,
+            # so a five-times-longer render explains itself.
+            sampled = f"sampled at {canvas[0]}x{canvas[1]}"
+            if schedule["steps"] != 4:
+                sampled += f" · {schedule['steps']} steps"
+            info["size"] = f"{native[0]}x{native[1]} ({sampled})"
     return g, instruction, info
 
 
@@ -3797,10 +3838,13 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
     expanded; the multi-reference variant is a follow-up). The spine: the
     scaled source is VAE-encoded ONCE and that latent feeds BOTH
     ReferenceLatents - positive from the instruction, negative from the zeroed
-    instruction - the sampler starts from an EMPTY Flux2 latent, and a 4-step
+    instruction - the sampler starts from an EMPTY Flux2 latent, and a
     Flux2Scheduler at cfg 1.0 drives SamplerCustomAdvanced. 4 steps at cfg 1.0
-    IS Klein's distilled schedule, not a speed trick, which also makes the
-    zeroed negative the correct one.
+    IS the distilled build's schedule, not a speed trick, which also makes the
+    zeroed negative the correct one - but the schedule belongs to the BUILD:
+    klein_schedule pairs the picked model to its KLEIN_SCHEDULES row by
+    filename, and an undistilled build like Klein True runs its own 20 steps
+    at the same cfg 1.0.
 
     Unlike the masked lane there is no composite: nothing restricts the edit
     to a painted region, so the whole-frame decode IS the output (scaled back
@@ -3830,6 +3874,11 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
     model_entry = pick_recipe_model(
         model or _configured_edit_model("klein"), "klein_edit")
     set_unet_loader(g, "ke:unet", model_entry)
+    # Same pairing as the masked lane: the build names its schedule, and the
+    # Flux2Scheduler/CFGGuider pair carries it.
+    schedule = klein_schedule(model_entry)
+    g["ke:sched"]["inputs"]["steps"] = schedule["steps"]
+    g["ke:guider"]["inputs"]["cfg"] = schedule["cfg"]
     clip = _pick_catalog_asset("text_encoders", (KLEIN_CLIP,),
                                "its Qwen3 8B text encoder", "Klein Edit")
     set_clip_loader(g, "ke:clip", clip, "flux2")
@@ -3872,9 +3921,13 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
         info["canvas_mp"] = (canvas[0] * canvas[1]) / 1e6
         info["size"] = f"{native[0]}x{native[1]}"
         if tuple(canvas) != tuple(native):
-            # Say it plainly on the job card: sampled small, returned full size.
-            info["size"] = (f"{native[0]}x{native[1]} "
-                            f"(sampled at {canvas[0]}x{canvas[1]})")
+            # Say it plainly on the job card: sampled small, returned full size -
+            # and at how many steps, when the build is not the 4-step distill,
+            # so a five-times-longer render explains itself.
+            sampled = f"sampled at {canvas[0]}x{canvas[1]}"
+            if schedule["steps"] != 4:
+                sampled += f" · {schedule['steps']} steps"
+            info["size"] = f"{native[0]}x{native[1]} ({sampled})"
     return g, instruction, info
 
 
@@ -8044,6 +8097,14 @@ class Hub:
                                      # job was never sampled), never zero.
         self.critic_hot = False      # the 8B VL critic is warm in ComfyUI's process
                                      # (keep_model_loaded) - cleared on every flush
+        self.job_seq = 0             # monotonic priced-job counter - the clock
+                                     # model_last_used is read against
+        self.model_last_used = {}    # model file -> (job_seq, template, bytes):
+                                     # which lane used what, most recent last
+                                     # (9.48). Cleared whenever the weights it
+                                     # describes leave the card (flush,
+                                     # restart) - a stale entry would evict
+                                     # nothing and toast a number nobody freed.
         self.scan = None                     # startup catalog scan state (for late joiners)
         CHATS_DIR.mkdir(exist_ok=True)       # multi-chat: lane + LLM convo per chat
         self.chats = {}
@@ -8589,6 +8650,8 @@ class Hub:
             if cache is not None:
                 entry["cache"] = cache
             self.ledger_append(entry)
+        if job.get("_neutralize_for"):
+            finish_reference_neutralise(job)      # 9.51: the neutral frame lands
         if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
             # text later, because the very next line replaces that text with
@@ -8600,6 +8663,19 @@ class Hub:
             # retry will get, not the one the failure left behind.
             job["error"] = "ran out of VRAM - clearing the card and retrying"
             asyncio.create_task(self.retry_after_oom(job))
+        # 9.48's post-hoc tell: the watch acts before the render; this says
+        # what happened when it was not enough. A free_min under a gigabyte
+        # is the measured signature of a render that sampled through WDDM
+        # paging (the 16:19 identity renders: 130s against a 27s usual) -
+        # Jesse should never again wonder why 2 minutes.
+        free_min = job.get("_vram_free_min")
+        if job["images"] and free_min is not None \
+                and free_min < FULL_CARD_FREE_MIN:
+            usual = self.lane_median_elapsed(job["template"], exclude=job["id"])
+            if usual and job["elapsed"] - usual >= 1:
+                self.broadcast(type="text", cid=job["cid"], text=(
+                    f"*rendered at a full card - {job['elapsed'] - usual:.0f} "
+                    "s slower than usual*"))
         self.broadcast(type="jobdone", job_id=job["id"], cid=job["cid"],
                        elapsed=job["elapsed"], images=len(job["images"]),
                        error=job["error"])
@@ -8832,7 +8908,7 @@ class Hub:
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             print(f"[pixal] could not drop queued siblings: {exc}", flush=True)
 
-    async def flush_comfy_cache(self, why, unload=True):
+    async def flush_comfy_cache(self, why, unload=True, free_memory=True):
         """Ask ComfyUI to drop cached models; between-prompts, so never
         disrupts a running render. Best effort - a failed flush just means the
         next job pays in slow steps, which is where we already were.
@@ -8846,17 +8922,24 @@ class Hub:
         (main.py:374) and gc.collect() + soft_empty_cache() follow within
         the worker's 10s gc_collect_interval (main.py:416-417). So the warm
         path logs and returns; reclaim_vram's poll is what waits it out."""
+        
+        # free_memory=False with unload=True is the SOFT unload (9.48's idle
+        # lane eviction): the weights go, the node-output CacheSet survives -
+        # the lane being dropped is not the lane about to run, so paying the
+        # CacheSet reset the comfy-free-flags note warns about would tax the
+        # next rerun of either lane for nothing.
         if not unload:
             print(f"[pixal] waiting for comfy's own trim ({why})", flush=True)
             return True
         self.resident_heavies = {}
+        self.model_last_used = {}    # the weights it describes just left too
         self.critic_hot = False      # /free evicts the AILab model too
         try:
             async with aiohttp.ClientSession() as s:
                 await s.post(f"{COMFY}/free",
                              # unload_models drops the weights (main.py:404); free_memory
                              # resets the node-output CacheSet (execution.py:672) - never on the trim.
-                             json={"unload_models": True, "free_memory": True},
+                             json={"unload_models": True, "free_memory": free_memory},
                              timeout=aiohttp.ClientTimeout(total=30))
             print(f"[pixal] flushed comfy model cache ({why})", flush=True)
             return True
@@ -8951,6 +9034,122 @@ class Hub:
             print(f"[pixal] residency forgotten ({why})", flush=True)
         self.resident_heavies = {}
         self.critic_hot = False
+        self.model_last_used = {}    # the weights it describes are gone too
+    def _mark_used(self, heavy, template, seq):
+        """Stamp every weight this graph names with the job that priced it -
+        the usage record idle_lane_weights reads a left-behind lane from."""
+        for name, b in heavy.items():
+            self.model_last_used[name] = (seq, template, b)
+
+    def idle_lane_weights(self, heavy, seq):
+        """{model file: bytes} believed on the card that THIS graph does not
+        need and no recent job touched - the lane Jesse left behind (9.48).
+
+        N=2 (IDLE_LANE_JOBS): a lane either of the last two jobs used is
+        still in play - ping-ponging between lanes must never evict the
+        other side. A resident weight with no usage record reads as idle:
+        it predates the watch, which is exactly the case the watch exists
+        for."""
+        out = {}
+        for name, b in self.resident_heavies.items():
+            if name in heavy:
+                continue
+            used = self.model_last_used.get(name)
+            if used is None or seq - used[0] > IDLE_LANE_JOBS:
+                out[name] = b
+        for name, (used_seq, _tpl, b) in self.model_last_used.items():
+            if name not in heavy and name not in out \
+                    and seq - used_seq > IDLE_LANE_JOBS:
+                out[name] = b
+        return out
+
+    def idle_lane_template(self, idle):
+        """The template that last used the idle stack - the toast's lane word."""
+        best = None
+        for name in idle:
+            used = self.model_last_used.get(name)
+            if used and (best is None or used[0] > best[0]):
+                best = used
+        return best[1] if best else None
+
+    async def evict_idle_lane(self, template, heavy, job):
+        """Watch step 1: soft-unload a lane left behind, toast what it freed.
+
+        unload_models WITHOUT free_memory: the weights go, the node-output
+        CacheSet survives (the comfy-free-flags note prices that reset as a
+        full reload - never on a trim). Stock ComfyUI unloads all-or-nothing,
+        so when this job's own stack is resident it goes too and reloads -
+        narrated as a model switch; 41-54s measured against the 130s of
+        sampling through the page storm (2026-08-25 16:19). True when weights
+        left the card: the caller's hot credit and residency claims are then
+        void."""
+        seq = job.get("_seq", self.job_seq)
+        idle = self.idle_lane_weights(heavy, seq)
+        idle_bytes = sum(idle.values())
+        if idle_bytes < IDLE_LANE_MIN:
+            return False
+        lane = _lane_word(self.idle_lane_template(idle))
+        table = await asyncio.to_thread(gpu_process_table)
+        comfy_gb = next((r["gb"] for r in table if r["role"] == "comfy"), None)
+        if comfy_gb is not None:
+            # The counter is the physical truth; never toast more than it sees.
+            idle_bytes = min(idle_bytes, int(comfy_gb * 2**30))
+        if idle_bytes < IDLE_LANE_MIN:
+            return False
+        if not await self.flush_comfy_cache(
+                f"idle {lane} weights for {template}", free_memory=False):
+            return False
+        self._mark_used(heavy, template, seq)   # the flush cleared the ledger
+        job["model_switch"] = True   # weights went; the lane should say "loading"
+        self.broadcast(type="text", cid=job["cid"], text=(
+            f"*freed {idle_bytes / 2**30:.0f} GB of idle {lane} weights*"))
+        print(f"[pixal] butler: evicted idle {lane} weights "
+              f"({idle_bytes / 2**30:.1f}GB) for {template}", flush=True)
+        return True
+
+    async def rest_brain_for_render(self, job):
+        """Watch step 2: rest the chat brain so the render starts from real
+        headroom; it respawns on the next chat message. No growth rule - a
+        warmed Qwen3-VL 4B's ~8GB is its normal size, not a leak. Rests only
+        when something proves a brain is resident (the GGUF estimate, or the
+        table's brain row for an adopted one): a no-brain card never pays
+        the pidfile dance. True when a brain actually died."""
+        est = brain_vram_estimate()
+        table = None
+        if est <= 0:
+            table = await asyncio.to_thread(gpu_process_table)
+            if not any(r["role"] == "brain" for r in table):
+                return False
+        if not await free_brain_vram():
+            return False
+        if table is None:
+            table = await asyncio.to_thread(gpu_process_table)
+        brain_gb = next((r["gb"] for r in table if r["role"] == "brain"), None)
+        gb = brain_gb if brain_gb is not None else est / 2**30
+        self.broadcast(type="text", cid=job["cid"], text=(
+            f"*brain rested for the render ({gb:.1f} GB)*"))
+        print(f"[pixal] butler: rested the brain ({gb:.1f}GB) for the render",
+              flush=True)
+        return True
+
+    async def note_desktop_weight(self, job):
+        """Watch step 3: the desktop is never touched automatically (the
+        reset is an admin prompt on the user's own machine) - but when
+        dwm+explorer hold real memory, the lane names it and the fix."""
+        table = await asyncio.to_thread(gpu_process_table)
+        desktop = sum(r["gb"] for r in table if r["role"] == "desktop")
+        if desktop * 2**30 >= DESKTOP_WATCH_BYTES:
+            self.broadcast(type="text", cid=job["cid"], text=(
+                f"*desktop holds {desktop:.1f} GB - Clean up → Reset desktop*"))
+
+    def lane_median_elapsed(self, template, exclude=None):
+        """Median elapsed seconds for `template` in the ledger - 'usual' for
+        the full-card tell. The current job is excluded: it is the anomaly,
+        not the baseline."""
+        vals = [e["elapsed"] for e in self.ledger_read()
+                if e.get("template") == template and e.get("id") != exclude
+                and isinstance(e.get("elapsed"), (int, float))]
+        return statistics.median(vals) if vals else None
 
     async def ensure_vram(self, template, g, job, info=None):
         """The VRAM butler: make the card fit the job BEFORE it queues.
@@ -9026,6 +9225,12 @@ class Hub:
                 if self.busy_elsewhere(job):
                     return   # still busy at the deadline - old behavior
             heavy, weights = graph_weight_bill(g)
+            # The watch's usage clock: every priced job stamps the weights it
+            # names, so a lane nothing has touched for more than
+            # IDLE_LANE_JOBS jobs reads as left behind.
+            self.job_seq += 1
+            job["_seq"] = self.job_seq
+            self._mark_used(heavy, template, self.job_seq)
             act = graph_activation_bytes(template, g, info)
             # Kept so an OOM retry can solve for a size that actually fits
             # instead of guessing a percentage. The graph is a local in submit
@@ -9059,7 +9264,13 @@ class Hub:
                     # and only its absence gets the bounded escalation: the
                     # same trim the warm-rerun path uses, unload=False, so no
                     # resident stack is evicted (the reload IS the bill).
-                    if await free_brain_vram():
+                    if await self.evict_idle_lane(template, heavy, job):
+                        # 9.48: an idle lane steps aside before the brain
+                        # does - the bounded trim below cannot touch resident
+                        # weights, and the last job just proved the card is
+                        # at the wall.
+                        self.resident_heavies = dict(heavy)
+                    elif await free_brain_vram():
                         self.broadcast(type="text", cid=job["cid"], text=(
                             "*rested the chat brain for headroom - the last "
                             "render ended at "
@@ -9080,6 +9291,24 @@ class Hub:
                 free = await self.reclaim_vram(
                     f"trimming cache for {template} (stack already resident)",
                     target=act + VRAM_FLOOR, unload=False)
+                if free is not None and free < act + VRAM_FLOOR:
+                    # 9.48: the trim could not make activation headroom, so
+                    # this rerun would leave < VRAM_FLOOR free - the 16:19
+                    # identity renders paged at 0.7GB free min in exactly
+                    # this state. The watch takes its fixed order: an idle
+                    # lane goes (this stack reloads - 41-54s measured
+                    # against 130s of paging), else the brain steps aside.
+                    if await self.evict_idle_lane(template, heavy, job):
+                        self.resident_heavies = dict(heavy)
+                        print(f"[pixal] butler: idle lane evicted - "
+                              f"{template} reloads instead of paging",
+                              flush=True)
+                        return
+                    await self.rest_brain_for_render(job)
+                    await self.note_desktop_weight(job)
+                    free = await comfy_vram_free_bytes()
+                    if free is None:
+                        free = await asyncio.to_thread(gpu_free_bytes)
                 print(f"[pixal] warm rerun: kept {weights / 2**30:.1f}GB "
                       f"resident, {(free or 0) / 2**30:.1f}GB free for "
                       f"activations", flush=True)
@@ -9106,7 +9335,13 @@ class Hub:
                     # still fit path: a resident brain steps aside (the
                     # cheap reload), else the bounded trim - unload=False
                     # either way, so the resident stack is never evicted.
-                    if await free_brain_vram():
+                    if await self.evict_idle_lane(template, heavy, job):
+                        # 9.48: an idle lane steps aside before the brain
+                        # does - the bounded trim below cannot touch resident
+                        # weights, and the last job just proved the card is
+                        # at the wall.
+                        self.resident_heavies = dict(heavy)
+                    elif await free_brain_vram():
                         self.broadcast(type="text", cid=job["cid"], text=(
                             "*rested the chat brain for headroom - the last "
                             "render ended at "
@@ -9125,31 +9360,31 @@ class Hub:
                   f"({(weights - hot) / 2**30:.1f}GB cold weights + "
                   f"{act / 2**30:.1f}GB act), free {free / 2**30:.1f}GB, "
                   f"ram_short={ram_short}", flush=True)
-            # The brain is the cheap reload now (a 4.5GB GGUF, seconds from
-            # page cache); the flush is ~20GB and 15-25s. When resting it
-            # alone makes the fit, that is the whole bill. Video keeps its
-            # unconditional flush - a reload is noise inside a 90-170s clip.
-            brain_bytes = 0 if video else brain_vram_estimate()
-            if brain_should_rest(free, need, brain_bytes):
-                await free_brain_vram()
+            # 9.48 - the standing watch takes its fixed order ahead of the
+            # flush: idle lane weights first (the soft unload - the 16:19
+            # edit lane held 21GB the priced path never saw), the brain
+            # second (it respawns on the next chat message), the desktop
+            # named and never touched. The old order - the brain only when
+            # that alone closed the gap - died with brain_should_rest: the
+            # headroom a rest buys is worth its seconds-long respawn even
+            # when the flush still runs. What the watch could not make fit
+            # gets the flush below.
+            if await self.evict_idle_lane(template, heavy, job):
+                hot = 0
+                need = weights + act + VRAM_FLOOR
                 free = await comfy_vram_free_bytes()
                 if free is None:
                     free = await asyncio.to_thread(gpu_free_bytes)
-                if free is not None and free >= need:
-                    cached = sum(self.resident_heavies.values())
-                    self.resident_heavies = dict(heavy)
-                    self.broadcast(type="text", cid=job["cid"], text=(
-                        "*rested the chat brain instead of clearing "
-                        f"~{cached / 2**30:.0f} GB of cached models - it "
-                        "returns on your next message*"))
-                    print(f"[pixal] butler: rested the brain "
-                          f"(+{brain_bytes / 2**30:.1f}GB) instead of "
-                          f"flushing for {template}", flush=True)
-                    return
-                # Still short with the brain gone: fall through to the flush
-                # as priced. The "rested the chat brain" note below cannot
-                # fire twice - the pidfile went with the kill, so
-                # free_brain_vram returns False there.
+            if free is not None and free < need \
+                    and await self.rest_brain_for_render(job):
+                free = await comfy_vram_free_bytes()
+                if free is None:
+                    free = await asyncio.to_thread(gpu_free_bytes)
+            await self.note_desktop_weight(job)
+            if free is not None and free >= need and not ram_short:
+                # The watch made room without the flush.
+                self.resident_heavies = dict(heavy)
+                return
             free = await self.reclaim_vram(
                 f"making room for {template}", target=weights + act + VRAM_FLOOR)
             # A flush the driver ignored is not a flush. Job 2b3f4eb2
@@ -13587,6 +13822,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     # generous: the composer already pins the model, and the loras it may use
     # arrive in the constraints block.
     listings = 0
+    spoke_scene = False   # a scene-shaped reply already broadcast this turn (9.43)
     for m in convo:                      # base64 refs are for THIS turn; don't resend them forever
         if isinstance(m.get("content"), list):
             m["content"] = [{"type": "text", "text": "[reference image]"}
@@ -13806,11 +14042,16 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                 # actually is: the user should not have to guess that typing
                 # "show me" is what turns this into a picture.
                 if looks_like_scene:
+                    # One reply per turn (chat 952084e3, 2026-08-25): when the
+                    # brain already spoke this scene in the round whose
+                    # generate call the gate refused, the wrapper is the
+                    # machinery and it yields - only the offer goes out.
+                    offer = ("Want me to run it? Say \u201cgo\u201d, or tell me "
+                             "what to change.")
                     HUB.broadcast(type="text", cid=cid, text=(
+                        offer if spoke_scene else
                         "Got it \u2014 here\u2019s the prompt I\u2019d render:\n\n"
-                        + scene_text +
-                        "\n\nWant me to run it? Say \u201cgo\u201d, or tell me "
-                        "what to change."))
+                        + scene_text + "\n\n" + offer))
                     return
                 HUB.broadcast(type="text", cid=cid, text=chat_speech(scene_text, opts))
                 return
@@ -13819,6 +14060,8 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
             # It called the tool AND printed the tool's name; only the call counts.
             if said and not scene_is_command(said):
                 HUB.broadcast(type="text", cid=cid, text=said)
+                if len(said.split()) >= 30:
+                    spoke_scene = True   # the no-calls branch must not say it again
             for call in calls:
                 fn, args = call["function"]["name"], call["function"].get("arguments") or "{}"
                 try:
@@ -14938,11 +15181,101 @@ async def characters_post(req):
     ch["id"] = re.sub(r"[^a-z0-9]+", "_", (ch.get("id") or ch["name"]).lower()).strip("_")
     if not ch["id"]:
         return web.json_response({"ok": False, "error": "bad id"}, status=400)
+    # 9.51: the reference's clothes leak into every scene the identity lane
+    # renders (Jesse, 2026-08-25: a mesh shirt turning up on a beach). With
+    # the toggle on - the default - a NEW reference is re-rendered in a plain
+    # grey tee on a plain background by the Klein whole-frame lane, and the
+    # neutral frame becomes identity_ref; the upload stays beside it as
+    # identity_ref_original so the toggle can come off without a re-upload.
+    prior = CHARACTERS.get(ch["id"]) or {}
+    # Default OFF (proof, 2026-08-25 23:10): the neutral grey tee leaked into
+    # the scene exactly as the mesh shirt had - any visible garment leaks, so
+    # this is an opt-in for loud references until the neutral is garment-free
+    # (a head-and-neck crop on a plain background, the follow-up).
+    neutral = ch.get("neutral_wardrobe") is True
+    ch["neutral_wardrobe"] = neutral
+    queued = None
+    if neutral:
+        if ref == prior.get("identity_ref") and prior.get("identity_ref_original"):
+            ch["identity_ref_original"] = prior["identity_ref_original"]   # already neutral
+        elif ref != prior.get("identity_ref_original"):
+            ch["identity_ref_original"] = ref
+            queued = True
+        else:
+            ch["identity_ref_original"] = ref                              # same upload, redo
+            queued = True
+    else:
+        original = ch.get("identity_ref_original") or prior.get("identity_ref_original")
+        if original and (CDIR / "input" / original).is_file() and ref == prior.get("identity_ref"):
+            ch["identity_ref"] = original      # toggle off: the upload comes back
+        ch.pop("identity_ref_original", None)
     CHAR_DIR.mkdir(exist_ok=True)
     (CHAR_DIR / f"{ch['id']}.json").write_text(json.dumps(ch, ensure_ascii=False, indent=1),
                                               encoding="utf-8")
     CHARACTERS[ch["id"]] = ch
-    return web.json_response({"ok": True, "id": ch["id"]})
+    note = None
+    if queued:
+        note = await queue_reference_neutralise(ch, body.get("cid"))
+    return web.json_response({"ok": True, "id": ch["id"], **({"note": note} if note else {})})
+
+
+NEUTRAL_WARDROBE_INSTRUCTION = (
+    "change {pos} clothing to a plain grey crew-neck t-shirt; plain neutral grey "
+    "studio background; keep {pos} face, hair, skin and expression exactly the same")
+
+
+def neutral_wardrobe_instruction(sex):
+    pos = {"male": "his", "female": "her"}.get(str(sex or "").lower(), "their")
+    return NEUTRAL_WARDROBE_INSTRUCTION.format(pos=pos)
+
+
+async def queue_reference_neutralise(ch, cid=None):
+    """Queue the Klein whole-frame edit that strips a reference's outfit.
+    Returns a note for the caller when nothing could be queued - the
+    character is saved either way, on its original reference."""
+    cid = cid or uuid.uuid4().hex[:8]
+    try:
+        job = await HUB.submit(cid, "chat", "klein_edit",
+                               neutral_wardrobe_instruction(ch.get("sex")),
+                               {"image": ch["identity_ref"]}, 1,
+                               flags={"_neutralize_for": ch["id"]})
+    except Exception as exc:
+        return f"the reference could not be neutralised ({exc}) - kept as uploaded"
+    if job.get("error"):
+        return f"the reference could not be neutralised ({job['error']}) - kept as uploaded"
+    return None
+
+
+def finish_reference_neutralise(job):
+    """finalize hook: the neutral frame becomes the character's identity_ref."""
+    cid_char = job.get("_neutralize_for")
+    ch = CHARACTERS.get(cid_char)
+    if not ch:
+        return
+    if job.get("error") or not job.get("images"):
+        HUB.broadcast(type="text", cid=job["cid"], text=(
+            f"*{ch.get('name', cid_char)}'s reference could not be neutralised - "
+            f"kept as uploaded*"))
+        return
+    img = job["images"][0]
+    src = CDIR / "output" / img.get("subfolder", "") / img["filename"]
+    dst_name = f"pixal_neutral_{cid_char}.png"
+    try:
+        shutil.copyfile(src, CDIR / "input" / dst_name)
+    except OSError as exc:
+        HUB.broadcast(type="text", cid=job["cid"], text=(
+            f"*{ch.get('name', cid_char)}'s neutral reference could not be staged "
+            f"({exc}) - kept as uploaded*"))
+        return
+    ch["identity_ref"] = dst_name
+    try:
+        (CHAR_DIR / f"{cid_char}.json").write_text(
+            json.dumps(ch, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    HUB.broadcast(type="text", cid=job["cid"], text=(
+        f"*{ch.get('name', cid_char)}'s reference is neutralised - a plain tee, "
+        f"same face*"))
 
 
 async def styles_post(req):
@@ -16983,6 +17316,7 @@ async def comfy_free(req):
     body = await req.json() if req.can_read_body else {}
     payload = {"unload_models": bool(body.get("unload_models", True)),
                "free_memory": bool(body.get("free_memory", True))}
+    before = await asyncio.to_thread(gpu_free_bytes)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(f"{COMFY}/free", json=payload, timeout=30) as r:
@@ -16994,7 +17328,13 @@ async def comfy_free(req):
         # unsaid, the next job would be credited with weights this call just
         # evicted and would price its own 20GB reload as free.
         HUB.forget_residency("settings freed vram")
-    return web.json_response({"ok": ok})
+    # The Settings toast says what the card actually handed back; one read
+    # right after the POST would under-report it (the pool trims async), so
+    # the number waits for the driver to settle.
+    after = await settled_gpu_free_bytes() if ok else before
+    freed = (after - before) if (before is not None and after is not None) else None
+    return web.json_response({"ok": ok,
+                              "freed_gb": round(freed / 2**30, 1) if freed else None})
 
 
 async def free_chat_model(_req):
@@ -17012,13 +17352,28 @@ async def free_chat_model(_req):
     """
     st = _llm_state()
     if not st.get("pid"):
-        # A pid-less ADOPTED state is not "nothing is running" - it is a
-        # brain answering on the port that Pixal cannot prove it spawned, and
-        # the old wording read as "there is nothing to free" while it sat on
-        # the card (Jesse, 2026-08-25: 8.3 GB stranded behind that sentence).
-        note = ("the brain is running but Pixal did not start it - it stays"
-                if st.get("adopted") else "no chat model was started by Pixal")
-        return web.json_response({"ok": True, "freed": False, "note": note})
+        # A pid-less state is not "nothing is running". A pidfile can be lost
+        # while OUR brain keeps answering (a doomed spawn unlinks it on its way
+        # out - measured live 2026-08-25 - and free_brain_vram's docstring has
+        # the older lost-file story), and the cmdline receipt is the adopt
+        # branch's own proof: when the port holder names our wrapper, this IS
+        # the brain Pixal started, state or no state, and the button must work.
+        try:
+            proven = await asyncio.to_thread(_adopted_brain_pid)
+        except Exception:                # a guessed pid kills the wrong process
+            proven = None
+        if proven:
+            st = {"pid": proven, "model": st.get("model"), "adopted": True}
+            LLM_STATE.write_text(json.dumps(st), encoding="utf-8")
+        else:
+            # A pid-less ADOPTED state is not "nothing is running" - it is a
+            # brain answering on the port that Pixal cannot prove it spawned,
+            # and the old wording read as "there is nothing to free" while it
+            # sat on the card (Jesse, 2026-08-25: 8.3 GB stranded behind that
+            # sentence).
+            note = ("the brain is running but Pixal did not start it - it stays"
+                    if st.get("adopted") else "no chat model was started by Pixal")
+            return web.json_response({"ok": True, "freed": False, "note": note})
     before = gpu_free_bytes()
     if not await free_brain_vram():
         return web.json_response({"ok": True, "freed": False,
@@ -17027,6 +17382,185 @@ async def free_chat_model(_req):
     freed = (after - before) if (before is not None and after is not None) else None
     return web.json_response({"ok": True, "freed": True,
                               "freed_gb": round(freed / 2**30, 1) if freed else None})
+
+
+def _comfy_local_pids():
+    """Pids of the ComfyUI on THIS box: the launcher we spawned (COMFY_BOOT)
+    and the python holding the port - the launcher sits between us and it, so
+    either handle alone can miss the process that actually holds the RAM.
+    Remote compute yields nothing; that is someone else's box."""
+    pids = []
+    proc = COMFY_BOOT.get("proc")
+    if proc is not None and proc.poll() is None:
+        pids.append(proc.pid)
+    if comfy_is_local():
+        pid = comfy_listener_pid()
+        if pid and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
+def _trim_working_sets(pids):
+    """EmptyWorkingSet on each pid: hand every page the process is not
+    touching back to the machine (a soft trim - what it needs again it
+    faults back in). Best effort: a process that refuses the handle is
+    skipped, never fatal. Windows only; the caller gates on _nt()."""
+    import ctypes
+    PROCESS_SET_QUOTA = 0x0100
+    PROCESS_QUERY_INFORMATION = 0x0400
+    kernel32 = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+    for pid in pids:
+        handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_QUERY_INFORMATION,
+                                      False, pid)
+        if not handle:
+            continue
+        try:
+            psapi.EmptyWorkingSet(handle)
+        finally:
+            kernel32.CloseHandle(handle)
+
+
+def _powershell(script, timeout):
+    """Run a PowerShell snippet, -EncodedCommand so quoting never corrupts it.
+
+    Every other spawn here (nvidia-smi, netstat) is a flat argv; a -Command
+    string carrying both quote styles plus a regex is where CommandLineToArgvW
+    eats a backslash. UTF-16LE base64 sidesteps the whole class. Returns the
+    CompletedProcess; raises nothing itself."""
+    import base64
+    enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-EncodedCommand", enc],
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+async def ram_free(_req):
+    """Hand host RAM back and say how much: ComfyUI's node-output cache,
+    Pixal's own heap, then the working sets of Pixal and the ComfyUI
+    processes on this box.
+
+    The /free call here is free_memory WITHOUT unload_models - the lane
+    weights stay on the card (that is Free VRAM's button). free_memory
+    resets the whole node-output CacheSet (execution.py:672), so the next
+    render pays the reload the comfy-free-flags note warns about; that
+    full-reload cost is exactly why this lives behind its own RAM button
+    and never rides along with the VRAM flush. The chat brain is not
+    trimmed - Free brain kills it outright, and trimming a live brain just
+    slows the next token.
+    """
+    before = ram_free_bytes()
+    note = None
+    try:
+        async with aiohttp.ClientSession() as s:
+            await s.post(f"{COMFY}/free",
+                         json={"unload_models": False, "free_memory": True},
+                         timeout=30)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        # A down ComfyUI must not keep Pixal's own RAM hostage.
+        note = f"comfy node cache kept: {exc}"
+    import gc
+    gc.collect()
+    if _nt():
+        await asyncio.to_thread(
+            _trim_working_sets, [os.getpid()] + _comfy_local_pids())
+    after = ram_free_bytes()
+    freed = (after - before) if (before is not None and after is not None) else None
+    resp = {"ok": True, "freed_gb": round(freed / 2**30, 1) if freed else None}
+    if note:
+        resp["note"] = note
+    return web.json_response(resp)
+
+
+def _dwm_dedicated_bytes():
+    """dwm.exe's dedicated GPU memory, summed over its pids and every engine
+    the counter reports.
+
+    \\GPU Process Memory(*)\\Dedicated Usage keys its instances by PID
+    (pid_47728_luid_0x..._phys_0), not by name, so dwm's pids are fetched
+    first and matched as a prefix. PX_NONE when no sample matched at all -
+    a counter that never saw dwm is "cannot measure", never a fake zero.
+    """
+    if not _nt():
+        return None
+    ps = ("$pids = @((Get-Process dwm -ErrorAction SilentlyContinue).Id);"
+          "$samples = (Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage')"
+          ".CounterSamples;"
+          "$sum = 0.0; $matched = $false;"
+          "foreach ($p in $pids) { foreach ($s in $samples) {"
+          ' if ($s.InstanceName -match "^pid_${p}_") {'
+          "  $sum += $s.CookedValue; $matched = $true } } };"
+          "if ($matched) { [math]::Round($sum) } else { 'PX_NONE' }")
+    try:
+        out = _powershell(ps, timeout=45)
+        if out.returncode != 0:
+            return None
+        text = out.stdout.strip()
+        return None if text == "PX_NONE" else float(text)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+async def desktop_reset(req):
+    """Restart Explorer + the Windows compositor (tools/reset_shell_vram.bat)
+    and report what dwm's video memory dropped by.
+
+    An admin prompt on someone else's machine is never right: localhost
+    clients only, key or no key. And never mid-render - the screen flash
+    and the compositor restart would fight the card for the job in flight.
+    """
+    if not _is_local_peer(req):
+        return web.json_response(
+            {"ok": False, "error": "the desktop reset only answers this machine's own window"},
+            status=403)
+    if studio_busy():
+        return web.json_response(
+            {"ok": False, "error": "something is still rendering - try again when idle"},
+            status=409)
+    if not _nt():
+        return web.json_response(
+            {"ok": False, "error": "the desktop reset is Windows-only (dwm.exe)"},
+            status=400)
+    bat = HERE / "tools" / "reset_shell_vram.bat"
+    if not bat.is_file():
+        return web.json_response({"ok": False, "error": f"missing {bat}"}, status=500)
+    before = await asyncio.to_thread(_dwm_dedicated_bytes)
+    # -Verb RunAs puts the UAC prompt on the user's own desktop; -Wait holds
+    # until the elevated bat has finished (it waits 2s itself for the new
+    # dwm to settle). A declined prompt is Win32Exception 1223 - never a
+    # guess from the exit code.
+    ps = ("try { Start-Process -FilePath '%s' -Verb RunAs -Wait; 'PX_RESET_OK' } "
+          "catch [System.ComponentModel.Win32Exception] { 'PX_RESET_CANCELLED' } "
+          "catch { 'PX_RESET_ERROR ' + $_.Exception.Message }"
+          % str(bat).replace("'", "''"))
+    try:
+        out = await asyncio.to_thread(_powershell, ps, 180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+    verdict = out.stdout.strip()
+    if "PX_RESET_CANCELLED" in verdict:
+        return web.json_response({"ok": False, "error": "cancelled"})
+    if "PX_RESET_OK" not in verdict:
+        detail = verdict.replace("PX_RESET_ERROR", "").strip() or out.stderr.strip()
+        return web.json_response(
+            {"ok": False, "error": detail[:200] or "the reset did not run"},
+            status=500)
+    after = await asyncio.to_thread(_dwm_dedicated_bytes)
+    freed = (before - after) if (before is not None and after is not None) else None
+    # "back" cannot be negative: a fresh dwm recomposing the desktop can read
+    # a touch HIGHER than a trimmed baseline, and "-0.0 GB back" teaches
+    # nothing. Nothing came back is 0.0.
+    return web.json_response({"ok": True,
+                              "freed_gb": max(0.0, round(freed / 2**30, 1))
+                                          if freed is not None else None})
+
+
+async def vram_table(_req):
+    """GET /api/vram/table - the per-process GPU table the watch acts on
+    (9.48): [{pid, name, gb, role}], role in comfy | brain | desktop | other.
+    9.46's Clean up section and the telemetry strip read it from here."""
+    return web.json_response(await asyncio.to_thread(gpu_process_table))
 
 
 def gpu_stats():
@@ -17103,6 +17637,34 @@ def gpu_free_bytes():
         return int(out.stdout.strip().splitlines()[0]) * 2**20
     except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
         return None
+
+
+async def settled_gpu_free_bytes():
+    """The driver's best free-VRAM number across the whole settle window.
+
+    One read right after /free is whatever cudaMallocAsync had finished
+    releasing, not what it is about to - and on a card full enough to have
+    paged weights through WDDM the rest arrives in bursts SECONDS apart:
+    measured live 2026-08-25, two flat reads at +3.8GB while the pool was
+    still climbing to +26.8GB (the trim paused mid-release, exactly the
+    behaviour reclaim_vram's docstring warns about). Two flat reads are not
+    proof of done here, so this poll keeps the best over the full deadline -
+    the button is user-initiated and never in front of a render, the seconds
+    are free, and a toast that says 3.8 when the card handed back 26.8 is a
+    lie. None when the card cannot be read.
+    """
+    best = await asyncio.to_thread(gpu_free_bytes)
+    if best is None:
+        return None
+    waited = 0.0
+    while waited < VRAM_RECLAIM_DEADLINE:
+        await asyncio.sleep(VRAM_RECLAIM_POLL)
+        waited += VRAM_RECLAIM_POLL
+        free = await asyncio.to_thread(gpu_free_bytes)
+        if free is None:
+            return None
+        best = max(best, free)
+    return best
 
 
 # --------------------------------------------------------------- vram butler
@@ -17287,17 +17849,177 @@ def prev_floor_below_guard(prev_free_min, guard):
     """
     return prev_free_min is not None and prev_free_min < guard
 
-def brain_should_rest(free, need, brain_bytes):
-    """Would evicting the resident chat brain ALONE make this job fit?
+# ------------------------------------------------- the whole-card watch (9.48)
+# The butler priced renders against ComfyUI's own numbers and never saw the
+# rest of the card: a left-behind edit lane (21GB, 2026-08-25 16:19 -
+# identity renders went 27s to 130s sampling through the page storm), a fat
+# dwm (2.5GB, invisible to every nvidia-smi call), and the warmed brain's
+# normal ~8GB reading as "nothing to reclaim". The watch reads a per-process
+# GPU table and acts in a fixed order - idle lane weights, the brain, the
+# desktop named - and the job-done line says when it was not enough.
+# Windows: the GPU Process Memory counters see EVERY process (nvidia-smi on
+# WDDM shows [N/A] per process - gpu_hogs documents that). POSIX:
+# nvidia-smi --query-compute-apps works there.
 
-    Pure arithmetic, no I/O: there must be a brain to rest (brain_bytes > 0),
-    the job must not fit as the card stands (free < need), and it must fit
-    once the brain steps aside (free + brain_bytes >= need). None free is no
-    signal, and no signal is never a decision - the prev_floor_below_guard
-    rule."""
-    if free is None:
-        return False
-    return brain_bytes > 0 and free < need and free + brain_bytes >= need
+GPU_TABLE_TTL = 2.0               # seconds; one Get-Counter costs ~1s of
+                                  # PowerShell, so the watch reuses a fresh read
+_GPU_TABLE = {"ts": None, "rows": []}
+
+# The fixed order's thresholds.
+IDLE_LANE_JOBS = 2                # a lane untouched by the last N jobs is left
+                                  # behind; ping-ponging lanes never evict
+IDLE_LANE_MIN = int(0.5 * 2**30)  # under this it is counter noise, not a lane
+DESKTOP_WATCH_BYTES = int(1.5 * 2**30)  # dwm+explorer above this gets named
+FULL_CARD_FREE_MIN = int(1.0 * 2**30)   # a job ending under this ran at the
+                                        # wall - the post-hoc tell's trigger
+
+
+def _parse_gpu_counter_samples(text):
+    """{pid: dedicated bytes} from one `instance=cooked` line per engine.
+
+    \\GPU Process Memory(*)\\Dedicated Usage keys instances by pid
+    (`pid_47728_luid_0x..._phys_0`), one row per ENGINE - a process is the
+    SUM of its engines. Junk lines (headers, warnings) are skipped."""
+    usage = {}
+    for line in text.splitlines():
+        m = re.match(r"pid_(\d+)_.*=(\d+)\s*$", line.strip())
+        if not m:
+            continue
+        pid, b = int(m.group(1)), int(m.group(2))
+        usage[pid] = usage.get(pid, 0) + b
+    return usage
+
+
+def _parse_tasklist_csv(text):
+    """{pid: exe name} from `tasklist /FO CSV /NH`; malformed lines skipped."""
+    names = {}
+    for row in csv.reader(text.splitlines()):
+        if len(row) < 2:
+            continue
+        try:
+            names[int(row[1])] = row[0]
+        except ValueError:
+            continue
+    return names
+
+
+def _gpu_counter_usage():
+    """{pid: dedicated bytes} for every process on the card, or None when the
+    counter cannot be read. One Get-Counter call - it sees every process,
+    which nvidia-smi on WDDM does not."""
+    ps = ("$samples = (Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage'"
+          " -ErrorAction SilentlyContinue).CounterSamples;"
+          "foreach ($s in $samples) {"
+          " \"$($s.InstanceName)=$([math]::Round($s.CookedValue))\" }")
+    try:
+        out = _powershell(ps, timeout=45)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return _parse_gpu_counter_samples(out.stdout)
+
+
+def _process_names():
+    """{pid: exe name} - psutil when it is installed, tasklist otherwise
+    (psutil is not a dependency; tasklist is always there on Windows)."""
+    try:
+        import psutil
+        return {p.pid: p.name() for p in psutil.process_iter(["name"])}
+    except ImportError:
+        pass
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if out.returncode != 0:
+            return {}
+        return _parse_tasklist_csv(out.stdout)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+
+
+def _nvml_process_usage():
+    """({pid: bytes}, {pid: name}) from nvidia-smi --query-compute-apps, or
+    (None, None) on failure. POSIX: per-process bytes work there; on WDDM
+    they read N/A (gpu_hogs documents that), and a row without a real number
+    is dropped rather than trusted."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi",
+             "--query-compute-apps=pid,process_name,used_gpu_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if out.returncode != 0:
+            return None, None
+        usage, names = {}, {}
+        for line in out.stdout.strip().splitlines():
+            pid, _, rest = line.partition(",")
+            name, _, used = rest.rpartition(",")
+            pid, used = pid.strip(), used.strip()
+            if not pid.isdigit() or not used.isdigit():
+                continue
+            usage[int(pid)] = int(used) * 2**20
+            names[int(pid)] = Path(name.strip()).name.lower()
+        return usage, names
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None
+
+
+def _gpu_role(pid, name, comfy_pids, brain_pid):
+    """Whose memory this row is: our ComfyUI, our chat brain, the desktop
+    (dwm+explorer - what Clean up -> Reset desktop answers), or other."""
+    if pid in comfy_pids:
+        return "comfy"
+    if brain_pid and pid == brain_pid:
+        return "brain"
+    if (name or "").lower() in ("dwm.exe", "explorer.exe"):
+        return "desktop"
+    return "other"
+
+
+def gpu_process_table():
+    """[{pid, name, gb, role}] of every process holding dedicated GPU memory,
+    biggest first; [] when the machine cannot be read. Cached GPU_TABLE_TTL
+    seconds - the watch reads it at every not-fit pricing, and
+    /api/vram/table serves it to 9.46's Clean up section and the telemetry
+    strip. Rows under 64MB are counter noise and never listed."""
+    now = time.monotonic()
+    if _GPU_TABLE["ts"] is not None and now - _GPU_TABLE["ts"] < GPU_TABLE_TTL:
+        return _GPU_TABLE["rows"]
+    if _nt():
+        usage = _gpu_counter_usage()
+        names = _process_names() if usage else {}
+    else:
+        usage, names = _nvml_process_usage()
+    if not usage:
+        _GPU_TABLE.update(ts=now, rows=[])
+        return []
+    comfy_pids = set(_comfy_local_pids())
+    brain_pid = (_llm_state() or {}).get("pid")
+    rows = []
+    for pid, b in usage.items():
+        if b < 64 * 2**20:
+            continue
+        name = names.get(pid, "?")
+        rows.append({"pid": pid, "name": name, "gb": round(b / 2**30, 2),
+                     "role": _gpu_role(pid, name, comfy_pids, brain_pid)})
+    rows.sort(key=lambda r: -r["gb"])
+    _GPU_TABLE.update(ts=now, rows=rows)
+    return rows
+
+
+def _lane_word(template):
+    """The one-word lane name the watch's toast uses for an evicted stack."""
+    if template in VIDEO_TEMPLATES:
+        return "video"
+    if template and ("edit" in template or "inpaint" in template):
+        return "edit"
+    if not template:
+        return "lane"        # it predates the watch - no usage record
+    return "still"
 
 # ComfyUI surfaces the allocator failure as prose, and the exact wording varies
 # by allocator backend - this box runs cudaMallocAsync, which says "Allocation
@@ -17584,6 +18306,24 @@ async def free_brain_vram():
     if not pid:
         return False
     killed = _llm_kill(pid)
+    if not killed and await local_llm_port_open():
+        # The pidfile's pid is dead but a brain still answers: a transient
+        # probe miss (2s, mid-paging-storm) can disown a live brain this way -
+        # measured live 2026-08-25, the unload then said "already gone" about
+        # 8GB that was still resident. The port holder's command line naming
+        # OUR pixal_brain_server.py is the same spawn receipt the adopt branch
+        # uses; recovering it here is what makes the unload path work on an
+        # adopted brain whose state went stale. A stranger's server keeps
+        # proven None and nothing is spent.
+        try:
+            proven = await asyncio.to_thread(_adopted_brain_pid)
+        except Exception:                # a guessed pid kills the wrong process
+            proven = None
+        if proven and proven != pid:
+            killed = _llm_kill(proven)
+            if killed:
+                st = {**st, "pid": proven, "adopted": True}
+                LLM_STATE.write_text(json.dumps(st), encoding="utf-8")
     if killed:
         await asyncio.sleep(1.5)          # the driver reclaims after the exit
     # Disown it ONLY when it is really gone. The pidfile used to come off
@@ -18674,6 +19414,9 @@ def main():
     app.router.add_post("/api/comfy/restart", restart_comfy)
     app.router.add_post("/api/sidecar/restart", restart_sidecar)
     app.router.add_post("/api/llm/free", free_chat_model)
+    app.router.add_post("/api/ram/free", ram_free)
+    app.router.add_post("/api/desktop/reset", desktop_reset)
+    app.router.add_get("/api/vram/table", vram_table)
     app.router.add_get("/api/history", history)
     app.router.add_post("/api/history/delete", history_delete)
     app.router.add_get("/api/options", options)

@@ -486,8 +486,8 @@ const MiniChip = ({ children, accent }) => (
   }}>{children}</span>
 );
 
-const Btn = ({ children, onClick, primary, disabled }) => (
-  <button type="button" onClick={onClick} disabled={disabled}
+const Btn = ({ children, onClick, primary, disabled, title }) => (
+  <button type="button" onClick={onClick} disabled={disabled} title={title}
     style={{
       height: 34, padding: `0 ${SPACE[16]}px`, fontSize: TYPE.ui, fontFamily: FONT,
       fontWeight: primary ? W.heading : W.body, cursor: disabled ? "default" : "pointer",
@@ -536,6 +536,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [upd, setUpd] = useState(null);
   const [busy, setBusy] = useState(false);
   const [comfyBusy, setComfyBusy] = useState(false);
+  // The brain's idle window (9.46): minutes before the local brain unloads
+  // itself. 0 = Never, it stays resident.
+  const [idleMin, setIdleMin] = useState(10);
   const [showKey, setShowKey] = useState(false);
   const [comfyUrl, setComfyUrl] = useState("");
   // The last-used tab is remembered - "where was that setting" usually means
@@ -565,6 +568,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       setLocalList(d.llm.local_llms || []);
       setLocalKeep(d.llm.local_keep !== false);
       setLocalGpu(Number.isInteger(d.llm.local_gpu_layers) ? d.llm.local_gpu_layers : -1);
+      setIdleMin(Number.isFinite(d.llm.local_idle_minutes) ? d.llm.local_idle_minutes : 10);
       setCriticModel(d.critic.model);
       setCriticInstalled(d.critic.installed || []);
       setCriticBrain(d.critic.brain || null);
@@ -627,6 +631,53 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     setComfyBusy(false);
   };
 
+  // 9.46: a clean-up action says what it actually freed - "done" teaches
+  // nothing. freed_gb rides the response; when the machine cannot measure,
+  // the toast says so in plain words rather than inventing a number. A
+  // declined UAC is the user's own choice and says exactly that.
+  const freeAction = async (url, pending, label) => {
+    setComfyBusy(true); setNote({ ok: true, text: pending });
+    try {
+      const r = await fetch(url, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: "{}" });
+      const d = await r.json();
+      if (d.ok) {
+        const n = d.freed_gb;
+        setNote(d.freed === false && d.note ? { ok: true, text: d.note }
+          : Number.isFinite(n) ? { ok: true, text: `${label}: ${n} GB back` }
+          : { ok: true, text: `${label}: freed - could not measure` });
+      } else {
+        setNote({ ok: false,
+                  text: d.error === "cancelled" ? "Desktop reset cancelled"
+                                                : d.error || "failed" });
+      }
+    } catch (e) { setNote({ ok: false, text: e.message }); }
+    setComfyBusy(false);
+  };
+
+  // One click, the lot: the four frees in the buttons' order, one toast with
+  // the measured total. A declined desktop prompt does not sink the rest.
+  const freeAll = async () => {
+    setComfyBusy(true); setNote({ ok: true, text: "freeing everything" });
+    let total = 0, measured = false, failed = null;
+    for (const url of ["/api/comfy/free", "/api/llm/free",
+                       "/api/ram/free", "/api/desktop/reset"]) {
+      try {
+        const r = await fetch(url, { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: "{}" });
+        const d = await r.json();
+        if (d.ok && Number.isFinite(d.freed_gb)) {
+          total += d.freed_gb; measured = true;
+        } else if (!d.ok && d.error !== "cancelled") {
+          failed = failed || d.error || "failed";
+        }
+      } catch (e) { failed = failed || e.message; }
+    }
+    setNote(failed && !measured ? { ok: false, text: failed }
+      : { ok: true, text: `${Math.round(total * 10) / 10} GB back` });
+    setComfyBusy(false);
+  };
+
   // The API inputs apply on blur/Enter - but only when actually changed, so
   // tabbing through the panel doesn't spam config writes.
   const apiDirty = cfg && (baseUrl !== cfg.llm.base_url || model !== cfg.llm.model);
@@ -670,6 +721,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   // the advisory tooltip on a build heavier than the card (9.29). Null = the
   // card was never read, and the option says nothing at all.
   const detectedGb = (cfg && cfg.vram && cfg.vram.detected_gb) || null;
+
+  // 9.46: the clean-up buttons sleep while the card is working - a flush
+  // mid-render would fight the job for the very memory it is using.
+  const renderBusy = (store.liveJobs || []).length > 0;
 
   // 9.30 (Models tab): the whole library, read from the same /api/options
   // payload the composer already holds. Grouped by family in the order a
@@ -781,9 +836,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       id === "auto" ? "reading it from your words"
                         : id === "on" ? "explicit allowed" : "explicit off");
               }}
-              options={[{ v: "auto", label: "auto" },
-                        { v: "on", label: "allow" },
-                        { v: "off", label: "never" }]} />
+              options={[{ v: "auto", label: "Auto" },
+                        { v: "on", label: "Allow" },
+                        { v: "off", label: "Never" }]} />
           ) : (
             /* the stored value is still in flight - a ghost, never a guess
                (this row lit on "auto" with "on" stored was the defect) */
@@ -795,8 +850,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
 
         <GroupLabel>this machine</GroupLabel>
-        <Section title={<>Compute <InfoTip text="The ComfyUI box that renders. Freeing is safe — the next render reloads what was dropped. The chat brain rides its own process; free it only when a video clip needs the room." /></>}
-                 gloss="Another rig's address borrows its GPU.">
+        <Section title={<>Compute <InfoTip text="The ComfyUI box that renders. Another rig's address borrows its GPU. Restart is for the state no endpoint can fix." /></>}>
           <input style={inputStyle} value={comfyUrl}
                  autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                  onChange={(e) => setComfyUrl(e.target.value)}
@@ -807,26 +861,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                    }
                  }}
                  placeholder="http://127.0.0.1:8188 (this PC)" />
-          {/* Freeing is deliberately manual: ComfyUI caches models on purpose,
-              and the 21GB video stack staying resident is exactly why a second
-              render is fast. Restart is for the state no endpoint can fix. */}
+          {/* Restart is for the state no endpoint can fix. */}
           <div style={{ display: "flex", gap: SPACE[8], flexWrap: "wrap" }}>
-            <Btn disabled={comfyBusy} onClick={() => comfyAction(
-              "/api/comfy/free", "freeing VRAM", "VRAM released - the chat brain is untouched")}>
-              free VRAM
-            </Btn>
             <Btn disabled={comfyBusy} onClick={() => comfyAction(
               "/api/comfy/restart", "restarting ComfyUI",
               "ComfyUI restarting - the boot meter takes it from here")}>
-              restart
-            </Btn>
-            {/* The one flush the other button deliberately will not do. It is
-                here because a chat model with a grown KV cache was measured at
-                7.2GB, and MiniMax H3's DiT alone wants ~20GB of the card. */}
-            <Btn disabled={comfyBusy} onClick={() => comfyAction(
-              "/api/llm/free", "freeing the chat model",
-              "chat model unloaded - the next message brings it back")}>
-              free brain
+              Restart
             </Btn>
           </div>
           <Field label={<>when ComfyUI boots <InfoTip text="ComfyUI likes to pop its node editor in a browser tab when it starts. quiet keeps that from interrupting; the editor is always at the compute address above." /></>}>
@@ -838,8 +878,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         on ? "editor tab will open on the next ComfyUI boot"
                            : "quiet boots applied");
                 }}
-                options={[{ v: false, label: "quiet" },
-                          { v: true, label: "open the graph editor" }]} />
+                options={[{ v: false, label: "Quiet" },
+                          { v: true, label: "Open the graph editor" }]} />
             ) : (
               <SegGhost segments={2} />
             )}
@@ -853,10 +893,67 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         id === "tui" ? "meters on the next ComfyUI boot"
                                      : "plain console on the next ComfyUI boot");
                 }}
-                options={[{ v: "tui", label: "meters" },
-                          { v: "plain", label: "plain console" }]} />
+                options={[{ v: "tui", label: "Meters" },
+                          { v: "plain", label: "Plain console" }]} />
             ) : (
               <SegGhost segments={2} />
+            )}
+          </Field>
+        </Section>
+
+        <Section title={<>Clean up <InfoTip text="Nothing hands memory back until asked. Each button says what it freed." /></>}
+                 gloss="A full card is a slow render.">
+          {/* Freeing is deliberately manual: ComfyUI caches models on purpose,
+              and the 21GB video stack staying resident is exactly why a second
+              render is fast. These are for when the card needs the room back. */}
+          <div style={{ display: "flex", gap: SPACE[8], flexWrap: "wrap", alignItems: "center" }}>
+            <Btn disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/comfy/free", "freeing VRAM", "VRAM")}>
+              Free VRAM
+            </Btn>
+            {/* The one flush the VRAM button deliberately will not do. It is
+                here because a chat model with a grown KV cache was measured at
+                7.2GB, and MiniMax H3's DiT alone wants ~20GB of the card. */}
+            <Btn disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/llm/free", "freeing the brain", "Brain")}>
+              Free brain
+            </Btn>
+            <Btn disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/ram/free", "freeing RAM", "RAM")}>
+              Free RAM
+            </Btn>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE[6] }}>
+              <Btn disabled={comfyBusy || renderBusy}
+                   title={renderBusy ? "wait for the render" : undefined}
+                   onClick={() => freeAction("/api/desktop/reset", "resetting the desktop", "Desktop")}>
+                Reset desktop
+              </Btn>
+              <InfoTip text="Restarts Explorer and the Windows compositor, which hoard video memory. One screen flash, Explorer windows close, admin prompt; an idle ComfyUI may restart." />
+            </span>
+            <Btn primary disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={freeAll}>
+              Free all
+            </Btn>
+          </div>
+          <Field label={<>Brain idles after <InfoTip text="A warmed brain holds ~8 GB. Idle, it unloads; the next message wakes it in seconds." /></>}>
+            {cfg ? (
+              <SegmentedControl className="px-ghost-in" ariaLabel="Brain idles after" value={idleMin}
+                onChange={(v) => {
+                  setIdleMin(v);
+                  apply({ llm: { local_idle_minutes: v } },
+                        v > 0 ? `brain unloads after ${v} min`
+                              : "brain stays resident");
+                }}
+                options={[{ v: 5, label: "5 min" },
+                          { v: 10, label: "10 min" },
+                          { v: 30, label: "30 min" },
+                          { v: 0, label: "Never" }]} />
+            ) : (
+              <SegGhost segments={4} />
             )}
           </Field>
         </Section>
@@ -880,7 +977,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       t === "auto" ? "following the card" : `pinned the ${t} GB profile`);
               }}
               options={[
-                { v: "auto", label: `auto${cfg.vram && cfg.vram.detected
+                { v: "auto", label: `Auto${cfg.vram && cfg.vram.detected
                     ? ` · ${cfg.vram.detected === "low" ? "under 16" : cfg.vram.detected} GB`
                     : ""}` },
                 ...["32", "24", "16"].map((t) => ({ v: t, label: `${t} GB` })),
@@ -956,7 +1053,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 setNote({ ok: true, text: "rescanning - watch the status row" });
               } catch (e) { setNote({ ok: false, text: e.message }); }
               setBusy(false);
-            }} disabled={busy}>rescan folders</Btn>
+            }} disabled={busy}>Rescan folders</Btn>
           </div>
         </Section>
         </>)}
@@ -977,7 +1074,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       id ? `${label} opens first` : "following the server's order");
               }}
               options={[
-                { v: "", label: "auto" },
+                { v: "", label: "Auto" },
                 ...(videoCfg.engines || []).map((e) => ({
                   v: e.id, label: e.label,
                   disabled: e.available === false,
@@ -1025,9 +1122,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       id === "quotes" ? "plain quotes applied" : "trained tags applied");
               }}
               options={[
-                { v: "tags", label: "tags",
+                { v: "tags", label: "Tags",
                   title: "MiniMax's trained <d>[Language] …</d> form." },
-                { v: "quotes", label: "quotes",
+                { v: "quotes", label: "Quotes",
                   title: "Plain quotes — the MiniMax-H3 #76 form; won the same-seed A/B." },
               ]} />
           ) : (
@@ -1123,7 +1220,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         on ? "2× default applied" : "2× default off");
                 }}
                 options={[
-                  { v: "off", label: "off",
+                  { v: "off", label: "Off",
                     disabled: !videoCfg.upscale_2x_available,
                     title: videoCfg.upscale_2x_available
                       ? "The render's native canvas — the fast path."
@@ -1172,7 +1269,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               row lists both families (9.44): a Klein pick routes mask-less
               edits to klein_edit, a Qwen pick to qwen_edit. */}
           {editCfg ? (<>
-            <Field className="px-ghost-in" label="whole frame">
+            <Field className="px-ghost-in" label={<>whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
               <ScrollPicker
                 value={editCfg.model || ""}
                 placeholder="recipe default"
@@ -1187,7 +1284,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         name ? "edit model applied" : "recipe default restored");
                 }} />
             </Field>
-            <Field className="px-ghost-in" label="masked area">
+            <Field className="px-ghost-in" label={<>masked area <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
               <ScrollPicker
                 value={editCfg.inpaint_model || ""}
                 placeholder="recipe default"
@@ -1473,8 +1570,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                           keep ? "model stays loaded - fast replies"
                                : "will unload after each reply - frees VRAM for renders");
                   }}
-                  options={[{ v: true, label: "keep in memory" },
-                            { v: false, label: "unload after reply" }]} />
+                  options={[{ v: true, label: "Keep in memory" },
+                            { v: false, label: "Unload after reply" }]} />
               ) : (
                 <SegGhost segments={2} />
               )}

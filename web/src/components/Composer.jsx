@@ -113,6 +113,8 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
   const [railGeometry, setRailGeometry] = useState(null);
   const [shift, setShift] = useState(0);
   const shiftRef = useRef(0);        // measure() reads this, not the closure
+  const pinRef = useRef(null);       // viewport-left the panel settled on when it opened
+  const measureRef = useRef(null);   // the clamp, re-run on every render (see below)
 
   useLayoutEffect(() => {
     if (!rail) return undefined;
@@ -196,6 +198,7 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
       return null;
     })();
     const pad = SPACE[8];
+    pinRef.current = null;
     const measure = () => {
       const box = ref.current?.getBoundingClientRect();
       if (!box) return;
@@ -208,14 +211,24 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
       const cur = shiftRef.current;
       const bounds = clipper ? clipper.getBoundingClientRect()
                              : { left: 0, right: window.innerWidth };
-      const left = box.left - cur, right = box.right - cur;
-      const over = right - (bounds.right - pad);
-      const under = (bounds.left + pad) - left;
-      const next = Math.round(over > 0 ? -over : under > 0 ? under : 0);
+      const natural = box.left - cur;
+      // Pinned while open: picking "1.5 MP" rewrites the opener pill's label,
+      // the pill row reflows, and the panel's anchor moves under it - the
+      // panel used to follow, half off the composer (Jesse, 2026-08-25, the
+      // canvas popover in a windowed Pixal). The first measure decides where
+      // the panel sits; later ones only keep it there, re-clamped to the
+      // current bounds.
+      const want = pinRef.current == null ? natural : pinRef.current;
+      const lo = bounds.left + pad;
+      const hi = Math.max(lo, bounds.right - pad - box.width);
+      const target = Math.min(hi, Math.max(lo, want));
+      if (pinRef.current == null) pinRef.current = target;
+      const next = Math.round(target - natural);
       if (next === cur) return;
       shiftRef.current = next;
       setShift(next);
     };
+    measureRef.current = measure;
     measure();
     // The panel's width is content-driven, so a list that finishes loading can
     // move the edge after mount. Watching the box beats depending on children,
@@ -231,6 +244,11 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rail, wide, xl, alignRight, down]);
+
+  // Every render, not only panel resizes: the anchor moving under the panel
+  // (a sibling pill changing width) resizes nothing the observer watches.
+  // One rect read per render is nothing.
+  useLayoutEffect(() => { if (!rail) measureRef.current?.(); });
 
   const panel = (
     <div ref={ref} className={rail ? undefined : "px-scroll"} style={{

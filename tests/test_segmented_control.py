@@ -167,14 +167,14 @@ class OneOptionKey(unittest.TestCase):
 
 
     def test_all_call_sites_use_the_one_component(self):
-        # 14 in SettingsMenu, 6 in MotionDirector, 2 in the Composer - the
+        # 15 in SettingsMenu, 6 in MotionDirector, 2 in the Composer - the
         # 9.23b census plus H3's attention row (9.28) and 2x upscale row
         # (9.28), the H3 2× default in Settings (9.31) and the 9.38
         # dialogue-format row, minus the Animate model-family track (9.32 -
-        # the dropdown names that choice now).
+        # the dropdown names that choice now), plus the 9.46 brain-idle row.
         total = sum(text.count("<SegmentedControl")
                     for text in CALLSITES.values())
-        self.assertEqual(total, 22,
+        self.assertEqual(total, 23,
                          "call sites drifted from the 9.23b census")
 
 

@@ -555,7 +555,7 @@ Video**:
 
 - **Video engine** — "Which engine the Animate popup opens on. The popup
   still switches freely per clip - this only sets where it starts." Leave it
-  on "auto" to follow the server's order.
+  on "Auto" to follow the server's order.
 - **Video model** — "Which model the Animate popup opens on inside its
   engine - the popup still switches freely per clip." Lists the chosen
   engine's models, or every engine's (labeled "engine · model") when no
@@ -624,45 +624,51 @@ The tab you used last is remembered.
 
 **Appearance** — Light, Dark, or System. "System follows Windows."
 
-**Explicit content** — three positions: "auto", "allow", "never". The
+**Explicit content** — three positions: "Auto", "Allow", "Never". The
 footnote reads "auto reads your words; never keeps subjects dressed." The
 tip adds that allow leaves your prompt exactly as written, and that the
 switch only bites with Prompt enhance off — with it on, the chat brain
 still decides.
 
-**Compute** — the ComfyUI box that renders: "Another rig's address borrows
-its GPU." The address field's placeholder shows the default,
-`http://127.0.0.1:8188 (this PC)`; point it at another machine's ComfyUI to
-render there. Three buttons beside it:
+**Compute** — the ComfyUI box that renders. The address field's placeholder
+shows the default, `http://127.0.0.1:8188 (this PC)`; point it at another
+machine's ComfyUI to render there — "Another rig's address borrows its
+GPU." **Restart** restarts ComfyUI itself ("ComfyUI restarting - the boot
+meter takes it from here"): the fix for a wedged sampler or a node that
+will not let go.
 
-- **free VRAM** — drops the models ComfyUI has cached on the card. Confirms
-  "VRAM released - the chat brain is untouched".
-- **restart** — restarts ComfyUI itself. "ComfyUI restarting - the boot
-  meter takes it from here". This is the fix for a wedged sampler or a node
-  that will not let go.
-- **free brain** — unloads the chat model. "chat model unloaded - the next
-  message brings it back".
+**Clean up** — "A full card is a slow render." Nothing hands memory back
+until asked, and each button says what it freed:
 
-The tip holds the deliberate laziness: freeing is safe — the next render
-reloads what was dropped, and the chat brain rides its own process, so free
-it only when a video clip needs the room. (The 21 GB video stack staying
-resident is exactly why a second render is fast.)
+- **Free VRAM** — drops the models ComfyUI has cached on the card.
+- **Free brain** — unloads the chat model; the next message brings it back.
+- **Free RAM** — resets ComfyUI's node cache and trims Pixal's and
+  ComfyUI's working sets; the next render reloads the cache.
+- **Reset desktop** — restarts Explorer and the Windows compositor, which
+  hoard video memory: one screen flash, Explorer windows close, admin prompt.
+- **Free all** — the four in order, one toast with the total.
 
-**when ComfyUI boots** — "quiet" or "open the graph editor". The tip:
+All five sleep while a render is in flight. Freeing is deliberately manual:
+the 21 GB video stack staying resident is exactly why a second render is
+fast. **Brain idles after** sets when the local brain unloads itself
+(5 min, 10 min, 30 min, Never) — a warmed brain holds ~8 GB; idle, it
+unloads, and the next message wakes it in seconds.
+
+**when ComfyUI boots** — "Quiet" or "Open the graph editor". The tip:
 ComfyUI likes to pop its node editor in a browser tab when it starts; quiet
 keeps that from interrupting, and the editor is always at the compute
 address above.
 
-**ComfyUI's console window** — "meters" or "plain console". The tip: meters
+**ComfyUI's console window** — "Meters" or "Plain console". The tip: meters
 wrap the launcher in a boot dashboard and keep an errors-only log at
 logs\comfy-errors.log; plain console is the raw ComfyUI output. Either way,
-closing that window stops ComfyUI. The meters console has keys: `E` opens
+closing that window stops ComfyUI. The Meters console has keys: `E` opens
 the errors log, `L` the full transcript, `V` toggles the raw output, `Q`
 stops ComfyUI.
 
 **VRAM profile** — once ComfyUI has booted, the line under the title tells
 you what it found ("The card reads as 16 GB."); before that, "Card not read
-yet — auto follows it." "auto" follows the detected card; pin 32, 24 or 16
+yet — auto follows it." "Auto" follows the detected card; pin 32, 24 or 16
 GB to preview what that tier honestly gets. The tip: what the machine can
 hold resident is advisory — pickers flag what a tier holds poorly; the card
 itself is still managed at render time.
@@ -670,7 +676,7 @@ itself is still managed at render time.
 **Model folders** — "Where your checkpoints and LoRAs live." plus the count
 it indexed ("Found 412 files."). The list is every folder Pixal scans: your
 ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
-e.g. D:\models"), remove one with its ×, then **rescan folders** — the note
+e.g. D:\models"), remove one with its ×, then **Rescan folders** — the note
 says "rescanning - watch the status row" and the status row above the message
 box narrates the scan. This is how your existing checkpoint and LoRA library
 joins Pixal without moving a file.
@@ -764,8 +770,8 @@ In short:
   answers "connected - <model>" or the provider's error.
 - Local: a list of the .gguf chat models found in your model folders, each
   with its quant, size, and VISION / NSFW chips. The lock note: "Runs
-  entirely on this PC — nothing leaves the machine." "keep in memory" vs
-  "unload after reply" — the tip holds the trade-off (loaded: instant
+  entirely on this PC — nothing leaves the machine." "Keep in memory" vs
+  "Unload after reply" — the tip holds the trade-off (loaded: instant
   replies, but a few GB of VRAM held next to your renders; unloaded: the
   card is free, but the next reply waits for a reload). **brain runs on** —
   GPU or CPU; the tip: GPU replies fast but holds VRAM next to the render,
@@ -813,17 +819,17 @@ at.
 
 Three local behaviors to know:
 
-- **keep in memory** vs **unload after reply**. Kept: instant replies, but
+- **Keep in memory** vs **Unload after reply**. Kept: instant replies, but
   the model holds a few GB of VRAM next to your renders. Unloaded: the card
   is free for rendering, but the first message after a render waits for the
-  model to load again ("waking the local brain - …"). The "free brain"
+  model to load again ("waking the local brain - …"). The "Free brain"
   button in Settings → General → Compute unloads it on demand.
 - **brain runs on** — GPU or CPU. The hint is the whole trade: "GPU replies
   fast but holds VRAM next to the render; CPU chat is slow but frees the
   card for rendering."
 - On a 16 GB card the local brain is the component that crowds VRAM — the
   image models themselves run fine quantized. If renders start running out
-  of room, the honest options are: switch the brain to "unload after reply",
+  of room, the honest options are: switch the brain to "Unload after reply",
   run it on CPU, or point chat at an API brain (one Settings field) and take
   the headroom back.
 
@@ -940,8 +946,8 @@ brain to API — a vision-capable API model reads attachments directly.
 
 **Chat is suddenly slow.**
 Three honest causes, in the order to check:
-1. "unload after reply" is on — every first reply pays the model-load time.
-   "keep in memory" trades a few GB of VRAM for instant replies.
+1. "Unload after reply" is on — every first reply pays the model-load time.
+   "Keep in memory" trades a few GB of VRAM for instant replies.
 2. **brain runs on** is set to CPU. The setting's own words: "CPU chat is
    slow but frees the card for rendering."
 3. Neither, and it is still slow: the local brain may have silently fallen
@@ -977,9 +983,9 @@ Pixal watches the card and manages it in the open. The notes you can meet:
   right … If it is unbearable, restarting ComfyUI is the quick way out.*"
 
 What to do, in escalating order: let it finish (it will be right, just
-slow); **free VRAM** and **free brain** in Settings → General → Compute;
+slow); **Free VRAM** and **Free brain** in Settings → General → Clean up;
 set the chat
-brain to "unload after reply" or CPU; drop the megapixels or the clip
+brain to "Unload after reply" or CPU; drop the megapixels or the clip
 length; use the Animate dialog's "find a lighter build".
 
 **The status dot says packs are missing.**
@@ -1051,14 +1057,14 @@ stream weights and slow down rather than refuse.
 
 **What actually works on 16 GB?**
 Every still-image model (Anima, Z-Image, Krea 2, the editors) and LTX 2.5
-video, with the local brain set to "unload after reply" or CPU when things
+video, with the local brain set to "Unload after reply" or CPU when things
 get tight. MiniMax H3 video runs but streams weights — the dialog warns "about
 5x slower". The local brain is the piece that crowds a 16 GB card; the image
 models run fine quantized.
 
 **Can it use the models and LoRAs I already have?**
 Yes — that is the point of Model folders in Settings. Point Pixal at your
-existing ComfyUI (or add any extra folder) and **rescan folders**; nothing
+existing ComfyUI (or add any extra folder) and **Rescan folders**; nothing
 is moved or copied. Your checkpoints appear in the **model** pill as long as
 they belong to a family Pixal has a profile for (Krea 2, Z-Image and Anima
 today; the picker says "No installed model has a supported Pixal profile
@@ -1068,7 +1074,7 @@ compatible with the current model profile.").
 
 **Do I need to know ComfyUI?**
 No. Pixal builds and queues the graphs; you never see a node. If you are
-curious, the full editor is one setting away ("open the graph editor" in
+curious, the full editor is one setting away ("Open the graph editor" in
 Settings → General) or at the ComfyUI address any time — but nothing in the
 normal flow asks for it.
 
@@ -1124,7 +1130,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.9b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.10b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

@@ -115,7 +115,6 @@ const Switch = ({ on, onChange, disabled, label, title }) => (
     <span aria-hidden="true" style={{ position: "absolute", top: 2, left: on ? 15 : 2,
       width: 11, height: 11, borderRadius: "50%",
       background: on ? "var(--accent)" : "var(--textMut)",
-      boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
       transition: `left ${MOTION.state}, background ${MOTION.state}` }} />
   </button>
 );

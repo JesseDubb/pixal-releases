@@ -51,7 +51,8 @@ TAB_KEYS = {
     "video": ["default_engine", "default_model", "video_mode", "upscale_2x",
               "video_fps", "h3_resolution"],
     "brain": ["base_url", "local_model", "local_keep", "local_gpu_layers",
-              "api_key", "critic: { model", "onClick={test}"],
+              "api_key", "critic: { model", "onClick={test}",
+              "official_prompting"],
     # 9.30's library is read-only: an empty reach is the contract - a control
     # appearing under models means choosing leaked back into the inventory.
     "models": [],

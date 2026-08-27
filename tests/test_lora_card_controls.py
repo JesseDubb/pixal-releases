@@ -54,7 +54,7 @@ class LoraCardControls(unittest.TestCase):
         for attrs in mounts:
             self.assertIn("onDial={(key, value) => store.setRecipeDial(key, value)}", attrs,
                           "a LoraChain mount is not wired to store.setRecipeDial")
-        self.assertRegex(STORE, r"setRecipeDial\(key, value\) \{[\s\S]{0,800}?state\.opts\.dials",
+        self.assertRegex(STORE, r"setRecipeDial\(key, value\) \{[\s\S]{0,1800}?state\.opts\.dials",
                          "setRecipeDial no longer writes the opts.dials map")
         self.assertRegex(COMPOSER, r"\(\(opts\?\.dials \|\| \{\}\)\)\[recipeId\]",
                          "overrides are no longer read from opts.dials[recipeId]")
@@ -62,6 +62,22 @@ class LoraCardControls(unittest.TestCase):
                          "the choice-dial branch is gone - the bypass variant is unreachable")
         self.assertRegex(COMPOSER, r"onDial\(dial\.key,",
                          "no control reports back through onDial(dial.key, ...)")
+
+    def test_a_string_valued_choice_dial_is_not_coerced_to_a_number(self):
+        """The identity Build dial keys its options on STRINGS ("full"/"r128"/
+        "r64", brief 9.56); the bypass dial on ints. setRecipeDial ran every
+        value through Number(), so Number("full") was NaN, the write returned
+        false and the Build control read as locked (2026-08-27). A choice dial
+        is gated on membership in its offered options, never on numeracy."""
+        body = re.search(r"setRecipeDial\(key, value\) \{([\s\S]{0,1800}?)\n  \},", STORE)
+        self.assertIsNotNone(body, "setRecipeDial not found in store.js")
+        body = body.group(1)
+        self.assertRegex(body, r'spec\.kind === "choice"',
+                         "setRecipeDial has no choice-dial branch - string builds are rejected")
+        self.assertRegex(body, r"\(spec\.choices \|\| \[\]\)\.some\(\(c\) => c\.value === value\)",
+                         "a choice is not validated against the offered options")
+        self.assertNotRegex(body, r'kind === "choice"[\s\S]*?Number\(value\)',
+                            "a choice value is still coerced through Number()")
 
     def test_the_standalone_advanced_fold_is_gone(self):
         """Gone, not merely unused: no RecipeDials identifier anywhere in

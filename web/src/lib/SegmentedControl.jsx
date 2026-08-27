@@ -70,7 +70,7 @@ export const SegmentedControl = ({
           position: "absolute", top: pad, bottom: pad, left: pad,
           width: `calc((100% - ${pad * 2}px) / ${options.length})`,
           transform: `translateX(${activeIndex * 100}%)`,
-          background: "var(--bg4)", boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
+          background: "var(--bg4)",
           borderRadius: RADIUS.pill, boxSizing: "border-box",
           transition: `transform ${MOTION.state}`,
         }} />

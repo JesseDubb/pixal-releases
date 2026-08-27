@@ -1,0 +1,139 @@
+{
+ "caption": "A red barn at dusk She is fully dressed in the clothing described above.",
+ "graph": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424242
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "ImageFromBatch",
+   "inputs": {
+    "batch_index": 0,
+    "image": [
+     "12",
+     0
+    ],
+    "length": 1
+   }
+  },
+  "14": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/a_red_barn_at_dusk",
+    "images": [
+     "13",
+     0
+    ]
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 2048,
+    "length": 5,
+    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - A red barn at dusk She is fully dressed in the clothing described above. The subject holds the pose; nothing in the frame moves.\n\noverall_soundscape: Room tone, steady, synchronized.",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1536
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "res_multistep"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  }
+ }
+}

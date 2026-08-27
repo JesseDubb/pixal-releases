@@ -79,7 +79,7 @@ class RecipeTests(unittest.TestCase):
             server.PUBLIC_RECIPE_IDS,
             ("realism", "realism_ii", "fantasy", "anime", "zimage", "identity_edit",
              "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "klein_edit",
-             "anima"),
+             "anima", "h3_still", "h3_still_2x"),
         )
         self.assertTrue(set(server.PUBLIC_RECIPE_IDS).issubset(server.BUILDERS))
 
@@ -1065,13 +1065,16 @@ class RecipeTests(unittest.TestCase):
         # style refs number AFTER the person photo
         self.assertIn("#2 = style reference (look.png)", d)
 
-    def test_character_reference_photo_reaches_the_vision_brain(self):
+    def test_character_anchor_photo_never_reaches_the_vision_brain(self):
+        # 2026-08-27: the anchor card carries the canon and the identity graph
+        # the face; a brain that could see the photo described its pixels into
+        # the scene (the blue backdrop curtain). No PERSON REFERENCE either -
+        # there is no attached person to reference.
         opts = {"engine": "fantasy", "character": "hero"}
         with identity_anchor():
             d, vision = server.build_directive(opts, local=False)
-        self.assertEqual([v["file"] for v in vision], ["hero.png"])
-        self.assertIn("PERSON REFERENCE", d)
-        # the private filename stays out of the directive text
+        self.assertEqual(vision, [])
+        self.assertNotIn("PERSON REFERENCE", d)
         self.assertNotIn("hero.png", d)
 
     def test_local_writer_ban_covers_skin_and_ethnicity(self):

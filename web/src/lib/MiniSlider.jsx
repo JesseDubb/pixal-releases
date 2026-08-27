@@ -81,7 +81,7 @@ export const MiniSlider = ({
         <div style={{ position: "absolute", left: `${fillPct}%`, top: "50%",
                       width: 12, height: 12, marginLeft: -6, marginTop: -6,
                       background: "var(--bg1)", border: "1.5px solid var(--text)",
-                      borderRadius: "50%", boxShadow: "0 1px 2px rgba(0,0,0,0.18)",
+                      borderRadius: "50%",
                       pointerEvents: "none" }} />
         </div>
         <input type="range" min={min} max={max} step={step} value={clamped}

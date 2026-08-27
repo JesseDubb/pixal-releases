@@ -382,7 +382,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.0b"
+PIXAL_VERSION = "1.1.1b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -434,7 +434,14 @@ def load_config():
                    # -1 = every layer on the GPU (the hardcoded flag before
                    # 8.7), 0 = CPU, positive = that many layers. The 16 GB
                    # knob: the brain shares the card or the render swaps.
-                   "local_gpu_layers": -1},
+                   "local_gpu_layers": -1,
+                   # 9.60: the writer runs the model maker's own expansion
+                   # prompt (prompts/official/<family>.txt) in place of Pixal's
+                   # craft rules. Off = the same prompts as before, verbatim.
+                   # Default ON since 2026-08-27: the fresh product A/B
+                   # (Official 2, Pixal 1, draw 1) and Jesse's own picks
+                   # all came from the official arm; Off stays available.
+                   "official_prompting": True},
            "critic": {"model": "Qwen3-VL-4B-Instruct"},
            # Upscaling is a finishing step, not a recipe: the image side runs any
            # installed ESRGAN-style model, the video side runs the RTX VSR filter.
@@ -1822,6 +1829,15 @@ ZIMAGE_EXECUTION_PROFILES = {
     },
 }
 
+# MiniMax H3's fl2va transformers render stills natively (brief 9.58): the
+# h3_still recipe drives the video model prompt-only at its 5-frame floor and
+# keeps frame 0, the causal VAE's standalone latent. The rest of the H3
+# constants live with the Animate builders below; these three are up here
+# because RECIPE_SPECS names them.
+H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+H3_VIDEO_VAE = "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+
 # Public creative recipes are deliberately separate from runtime graph families.
 # "anime" is a creative direction; "zimage" is the compatible execution stack.
 # That separation prevents the old failure mode where any selected UNET was
@@ -1912,7 +1928,10 @@ RECIPE_SPECS = {
         # killed the ComfyUI process outright - no traceback, log just stops
         # (gonzalomo, 2026-08-11). Safetensors builds only until proven otherwise.
         "no_gguf": True,
-        "aspect": "9:16 (Portrait Widescreen)", "mp": 2.36,
+        # 2.0 is the identity ceiling's sweet spot: likeness is locked through
+        # 2 MP, softens past 3, breaks by 5 (res ladder, Zara Promo\24-hires-set,
+        # 2026-08-27) - the 768px-grounded reference gets out-resolved.
+        "aspect": "9:16 (Portrait Widescreen)", "mp": 2.0,
         "required_loras": [KREA_BYPASS_LORA, IDENTITY_LORA],
         # The recipe-card extender's advanced dials (Likeness, Grounding) plus
         # the bypass variant A/B (brief 9.15) and the identity patch's build
@@ -2007,6 +2026,35 @@ RECIPE_SPECS = {
         "default_model": "Anima\\anima-base-v1.0.safetensors",
         "aspect": "3:4 (Portrait Standard)", "mp": 1.03,
         "required_text_encoders": [ANIMA_CLIP],
+        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+    },
+    # MiniMax H3's fl2va builds as a still camera (brief 9.58): the video
+    # model renders one frame at its native 2K ceiling. The quality path is
+    # the whole point - no turbo distillation ever runs here, so there are no
+    # dials and no LoRA stack. mp_cap is the Max tier's 1536x2048; the
+    # composer's MP ladder dims its rungs above it.
+    "h3_still": {
+        "label": "MiniMax H3", "tag": "2K still · 20 steps · ~1 min",
+        "family": "minimax_h3", "variants": ["fl2va"],
+        "default_model": H3_MODEL,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "required_text_encoders": [H3_CLIP],
+        "required_vaes": [H3_VIDEO_VAE],
+        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+    },
+    # What "Refined" means on an H3 build (brief 9.59): the same still, then
+    # its own latent re-sampled at 2x through the MMH3 pack's 3D upscaler -
+    # the measured best-looking still in the app (lashes and pores at
+    # 3072x4096; distant-face mush in full-body shots gets repainted out).
+    # aspect/mp/mp_cap are the FIRST pass's - the cap prices what the model
+    # samples first; the refine doubles the delivered canvas on top of it.
+    "h3_still_2x": {
+        "label": "MiniMax H3 2x", "tag": "2K still + 2x latent refine · ~3 min",
+        "family": "minimax_h3", "variants": ["fl2va"],
+        "default_model": H3_MODEL,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "required_text_encoders": [H3_CLIP],
+        "required_vaes": [H3_VIDEO_VAE],
         "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
     },
 }
@@ -2170,7 +2218,21 @@ def model_profile(rel, kind="diffusion_models"):
     elif low.startswith("flux\\") or "flux" in bml:
         family, variant, media, supported = "flux", "image", "image", False
         reason = "Flux needs its own Pixal pipeline"
-    elif low.startswith(("ltx", "minimax h3\\")):
+    elif low.startswith("minimax h3\\"):
+        # MiniMax H3 transformers ARE video models, so media stays "video"
+        # (the Library's grouping and the Animate lanes read it), but the
+        # family is their own: fl2va builds run the h3_still recipe (9.58),
+        # so they are supported; ref2va builds belong to the Animate
+        # reference lane and never take a text-to-image render. No
+        # families.json row can say this - a row classifies media "image",
+        # supported True - so the family stays an elif. The variant rule is
+        # the filename token, ref2va first (h3_model_variant's precedence).
+        variant = "ref2va" if "ref2va" in low.rsplit("\\", 1)[-1] else "fl2va"
+        family, media = "minimax_h3", "video"
+        supported = variant == "fl2va"
+        reason = ("" if supported else
+                  "reference-video build - used by the Animate lanes")
+    elif low.startswith("ltx"):
         family, variant, media, supported = "video", "video", "video", False
         reason = "video model"
     elif "melband" in low:
@@ -2570,7 +2632,11 @@ def pick_recipe_model(requested, recipe_id):
                          "safetensors build of this model instead")
     variants = spec.get("variants")
     if variants and entry["variant"] not in variants:
-        raise ValueError(f"{spec['label']} uses Z-Image {', '.join(variants)} models; "
+        # The architecture word rides only where the label doesn't already
+        # name it ("Fantasy uses Z-Image base models", but "MiniMax H3 uses
+        # fl2va models" - not "...uses MiniMax H3 fl2va models").
+        arch = "Z-Image " if spec["family"] == "zimage" else ""
+        raise ValueError(f"{spec['label']} uses {arch}{', '.join(variants)} models; "
                          f"{base(wanted)} is {entry['variant']}")
     return entry
 
@@ -2616,6 +2682,12 @@ for _row in FAMILY_TABLE:
     _vs.update(_fixed.values() if isinstance(_fixed, dict)
                else [_fixed] if _fixed else [])
     _LORA_PROFILE_VARIANTS[_row["id"]] = tuple(sorted(_vs))
+# minimax_h3 is deliberately NOT a families.json row (its models keep media
+# "video", which a row cannot say), but the add-LoRA popup's key space is how
+# the picker learns a LoRA's verdict for a profile. No LoRA ever classifies
+# minimax_h3, so every verdict is a refusal - the picker greys the whole
+# shelf for an h3_still plan instead of offering video LoRAs it would drop.
+_LORA_PROFILE_VARIANTS["minimax_h3"] = ("any", "fl2va")
 _LORA_PROFILE_KEYS = tuple(f"{fam}:{v}" for fam, vs in _LORA_PROFILE_VARIANTS.items()
                            for v in vs)
 del _row, _vs, _fixed
@@ -2805,6 +2877,21 @@ SAMPLER_SEATS = {
     "zimage":     {"node": "8", "class": "KSampler"},
     "anima":      {"node": "8", "class": "KSampler"},
     "qwen_image": {"node": "qi:sampler", "class": "KSampler"},
+    # h3_still's sampler is a KSamplerSelect whose steps and scheduler live
+    # on the BasicScheduler beside it; there is no cfg anywhere on the graph
+    # (a BasicGuider - the build is CFG-distilled), so the map IS the key
+    # list (see seat_tuning_keys).
+    "h3_still":   {"node": "7", "class": "KSamplerSelect",
+                   "map": {"sampler_name": [("7", "sampler_name")],
+                           "steps": [("8", "steps")],
+                           "scheduler": [("8", "scheduler")]}},
+    # h3_still_2x's seat is the FIRST pass only - the same nodes. The 2x
+    # refine's steps/scheduler stay authored (up:sigmas), the Realism II rule:
+    # the refine is what "refined" means and is not a dial.
+    "h3_still_2x": {"node": "7", "class": "KSamplerSelect",
+                    "map": {"sampler_name": [("7", "sampler_name")],
+                            "steps": [("8", "steps")],
+                            "scheduler": [("8", "scheduler")]}},
 }
 TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta")
 # Which of those a seat can actually take, by the node class sitting in it. eta
@@ -2838,6 +2925,11 @@ def seat_tuning_keys(seat):
     """The tuning settings one seat accepts, in TUNING_KEYS order."""
     if not seat:
         return ()
+    # A mapped seat's tunables ARE its map's keys. The class row would offer
+    # cfg for a KSamplerSelect, but the h3_still graph has no cfg node, and
+    # the Amazing v4 map carries exactly its old set - no drift there.
+    if seat.get("map"):
+        return tuple(key for key in TUNING_KEYS if key in seat["map"])
     allowed = SEAT_TUNING.get(seat["class"], _STOCK_TUNING)
     return tuple(key for key in TUNING_KEYS if key in allowed)
 
@@ -2901,6 +2993,12 @@ def sampler_defaults(base_id, model=None):
         return {"steps": s["steps"], "cfg": s["cfg"],
                 "sampler_name": node.get("sampler_name", "er_sde"),
                 "scheduler": node.get("scheduler", "simple")}
+    if base_id in ("h3_still", "h3_still_2x"):
+        # No TEMPLATES entry to read (the graph is built in code); the
+        # numbers are the still recipe's own constants. h3_still_2x shares
+        # the first pass, so it reports the same trio.
+        return {"steps": H3_STEPS, "sampler_name": H3_SAMPLER,
+                "scheduler": H3_SCHEDULER}
     return {k: node[k] for k in seat_tuning_keys(seat) if k in node}
 
 
@@ -4641,6 +4739,177 @@ def build_anima(scene, seed, width=None, height=None, loras=(), overrides=(),
     return g, cap, info
 
 
+def _h3_still_clamp(width, height):
+    """Snap a canvas to H3's 32 grid, then walk the long edge down under the
+    Max-tier pixel ceiling. dims_for scores aspect over area and can overshoot
+    the cap a step on wide aspects; h3_adapt_canvas walks the same way."""
+    step = H3_CANVAS_MULTIPLE
+    ceiling = H3_RESOLUTIONS["max"]["max_pixels"]
+    width = max(step, int(math.floor(width / step + 0.5)) * step)
+    height = max(step, int(math.floor(height / step + 0.5)) * step)
+    while width * height > ceiling:
+        if width >= height and width > step:
+            width -= step
+        elif height > step:
+            height -= step
+        else:
+            break
+    return width, height
+
+
+def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
+                   standing=True, nsfw=False, model=None, aspect=None, mp=None,
+                   character=None, lora_plan=None):
+    """MiniMax H3 as a still camera (brief 9.58), ported from the proven
+    h3_image.py block - not redesigned.
+
+    Prompt-only MiniMaxH3ImageToVideo at its 5-frame floor: frame 0 gets the
+    causal VAE's standalone latent (a pure image) while frames 1-4 share one
+    motion-carrying chunk and decode darker, softer, banded - so the graph
+    keeps frame 0 only. The build is CFG-distilled, so a BasicGuider, never a
+    CFGGuider; the quality path (res_multistep · simple · 20 steps) is the
+    still recipe and no turbo distillation ever runs here.
+    """
+    spec = RECIPE_SPECS["h3_still"]
+    entry = pick_recipe_model(model, "h3_still")
+    assets, missing = _h3_asset_paths(entry["rel"], audio=False)
+    if missing:
+        raise ValueError("MiniMax H3 still needs: " + ", ".join(missing))
+
+    if width and height:
+        width, height = _h3_still_clamp(int(width), int(height))
+    else:
+        asked = min(float(mp), spec["mp_cap"]) if mp else spec["mp"]
+        width, height = dims_for(aspect or spec["aspect"], asked,
+                                 multiple=H3_CANVAS_MULTIPLE)
+        width, height = _h3_still_clamp(width, height)
+
+    cap, ch = _character_caption(scene, character, standing, nsfw)
+    # The video prompt format's two fields, wrapped deterministically around
+    # the image lane's own caption - no brain call, no director pass.
+    sentence = cap if cap.endswith((".", "!", "?")) else cap + "."
+    prompt = ("integrated_multimodal_description: [Shot 1] Live-action, "
+              "a frozen instant held completely still - " + sentence +
+              " The subject holds the pose; nothing in the frame moves.\n\n"
+              "overall_soundscape: Room tone, steady, synchronized.")
+
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": assets["model"], "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": assets["clip"], "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {
+            "vae_name": assets["video_vae"]}},
+        "6": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
+            "clip": ["2", 0], "vae": ["3", 0], "prompt": prompt,
+            "width": width, "height": height, "length": 5}},
+        "7": {"class_type": "KSamplerSelect",
+              "inputs": {"sampler_name": H3_SAMPLER}},
+        "8": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["1", 0], "scheduler": H3_SCHEDULER,
+            "steps": H3_STEPS, "denoise": 1.0}},
+        "9": {"class_type": "BasicGuider", "inputs": {
+            "model": ["1", 0], "conditioning": ["6", 0]}},
+        "10": {"class_type": "RandomNoise",
+               "inputs": {"noise_seed": int(seed)}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["10", 0], "guider": ["9", 0], "sampler": ["7", 0],
+            "sigmas": ["8", 0], "latent_image": ["6", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {
+            "samples": ["11", 0], "vae": ["3", 0]}},
+        # Only frame 0 is a real image: the causal VAE gives it its own
+        # standalone latent, while frames 1-4 share ONE compressed chunk that
+        # also carries the planned motion - they decode darker and softer.
+        "13": {"class_type": "ImageFromBatch", "inputs": {
+            "image": ["12", 0], "batch_index": 0, "length": 1}},
+        "14": {"class_type": "SaveImage", "inputs": {
+            "images": ["13", 0],
+            "filename_prefix": f"pixal_dm/{slug(scene)}"}},
+    }
+    for o in overrides:
+        g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+    info = {**model_job_info(entry, "h3_still"),
+            "text_encoder": base(assets["clip"]),
+            "vae": base(assets["video_vae"]),
+            # No H3 still LoRA stack exists yet: loras/lora_plan are accepted
+            # and ignored, and the card says none ran.
+            **lora_job_info((), ()),
+            "size": f"{width}x{height}",
+            "canvas_mp": (width * height) / 1e6,
+            "character": ch["name"] if ch else None}
+    return g, cap, info
+
+
+def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=(),
+                      standing=True, nsfw=False, model=None, aspect=None, mp=None,
+                      character=None, lora_plan=None):
+    """"Refined" on an H3 build (brief 9.59): the h3_still graph plus the
+    in-family 2x latent refine, ported from the proven zara_hero.py block.
+
+    The render's own latent is re-sampled at exactly 2x through the MMH3
+    pack's 3D latent upscaler (MMH3UltimateUpscale, 6 steps, denoise 0.22) -
+    it resolves lashes and pores at 3072x4096 and repaints distant-face mush
+    in full-body shots. The still's conditioning is prompt-only, so it is
+    simply rebuilt at the 2x canvas: no first_frame anchor and no
+    ImageScale/ESRGAN pre-upscale (those exist in the video lane because its
+    conditioning carries a first_frame), and no temporal split - five frames
+    are one temporal block, the clean case.
+    """
+    if not h3_upscale_available():
+        raise ValueError("MiniMax H3 2x upscale needs the MMH3 pack and "
+                         "latent_upscale_models\\" + H3_LATENT_UPSCALER)
+    # Nodes 1-14 ARE build_h3_still's, byte for byte; the refine block only
+    # appends. Calling the public builder (rather than a factored private
+    # graph helper) makes the "untouched" guarantee structural.
+    g, cap, info = build_h3_still(scene, seed, width, height, loras, overrides,
+                                  standing, nsfw, model, aspect, mp, character,
+                                  lora_plan)
+    width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
+    w2, h2 = width * 2, height * 2
+    tile_w, ol_w = h3_tile_axis(w2)
+    tile_h, ol_h = h3_tile_axis(h2)
+    # The same prompt at the 2x canvas, length still 5, no first_frame.
+    g["up:cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
+        **g["6"]["inputs"], "width": w2, "height": h2}}
+    g["up:param"] = {"class_type": "MMH3LatentUpscaleWithModelParams",
+                     "inputs": {
+        "model_name": H3_LATENT_UPSCALER, "width": w2, "height": h2,
+        "device": "cuda", "precision": "bf16"}}
+    g["up:tiles"] = {"class_type": "MMH3SpatialSplitParams", "inputs": {
+        "tile_width": tile_w, "tile_height": tile_h,
+        "spatial_w_overlap": ol_w, "spatial_h_overlap": ol_h,
+        "fade_width": max(32, ol_w - 32), "fade_height": max(32, ol_h - 32),
+        "min_tile_size": 256,
+        "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
+    g["up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": ["1", 0], "scheduler": H3_SCHEDULER,
+        "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
+    g["up:noise"] = {"class_type": "RandomNoise",
+                     "inputs": {"noise_seed": int(seed) + 1}}
+    g["up:sample"] = {"class_type": H3_UPSCALE_NODE, "inputs": {
+        "model": ["1", 0], "conditioning": ["up:cond", 0],
+        "latent": ["11", 0], "noise": ["up:noise", 0],
+        "sampler": ["7", 0], "sigmas": ["up:sigmas", 0], "cfg": 1.0,
+        "latent_upscale_param": ["up:param", 0],
+        "spatial_split_param": ["up:tiles", 0]}}
+    g["up:decode"] = {"class_type": "VAEDecode", "inputs": {
+        "samples": ["up:sample", 0], "vae": ["3", 0]}}
+    # Still frame 0 only - now read off the 2x decode.
+    g["13"]["inputs"]["image"] = ["up:decode", 0]
+    info = {**info,
+            "execution_profile": "h3_still_2x",
+            "size": f"{w2}x{h2}",
+            # canvas_mp stays the FIRST pass's canvas (inherited from
+            # build_h3_still): the butler prices it under ACT_DEFAULT's still
+            # slope, and 4x there would over-price a job this box runs
+            # resident into evicting the chat brain on every cold render.
+            # size reports the delivered 2x frame - the realism_ii
+            # disagreement, on purpose.
+            "refine": {"scale": 2, "steps": H3_UPSCALE_STEPS,
+                       "denoise": H3_UPSCALE_DENOISE}}
+    return g, cap, info
+
+
 def build_zimage(scene, seed, width=None, height=None, loras=(), overrides=(),
                  standing=True, nsfw=False, model=None, aspect=None, mp=None,
                  character=None, lora_plan=None):
@@ -4722,10 +4991,11 @@ LTX25_CANVAS_MULTIPLE = 32
 LTX25_VRAM_GATE_NODE = "VRAM_Debug"
 LTX25_VRAM_GATE_ID = "ltx25:vram"
 
-# Animate is its own model surface. Video engines never become "supported" in
-# model_profile(), because that flag is the still-image picker contract.
+# Animate is its own model surface. H3's fl2va builds ARE "supported" now -
+# the flag is the still-image picker contract and h3_still (9.58) runs them -
+# but the video lanes never read it: they resolve builds by catalog rel
+# through h3_model_options and attest model_family themselves.
 H3_MODEL_ID = "fl2va"
-H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 # The second architecture the same encoder/VAE stack serves: reference-to-video
 # ("put THIS subject in a new scene"). The model chip IS the lane switch, per
 # render - same family, different conditioning node and a different trained
@@ -4738,8 +5008,8 @@ H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 # exists from day one so the deferred video/audio lanes inherit one constant.
 H3_REF2V_MAX_IMAGES = 9
 H3_REF2V_MAX_FILES = 12
-H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
-H3_VIDEO_VAE = "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+# H3_MODEL/H3_CLIP/H3_VIDEO_VAE moved up beside RECIPE_SPECS - the h3_still
+# spec (9.58) names them. The audio VAE is the video lanes' own.
 H3_AUDIO_VAE = "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
 H3_HMNSFW_LORA = "Minimax H3\\HMNSFW_AIO_V2.safetensors"
 # Video LoRAs are deliberately not part of the still-image LoRA catalog contract.
@@ -5206,22 +5476,27 @@ def _video_asset(kind, rel):
                 None)
 
 
-def _h3_asset_paths(model_rel=None):
+def _h3_asset_paths(model_rel=None, audio=True):
     """Resolve every fixed H3 dependency to the spelling emitted by the catalog,
     for THE PICKED BUILD's transformer file (the stock fl2va constant when
     unspecified). Encoder and both VAEs are shared across variants and stay
     fixed; the transformer is the lane, so a ref2va-only machine must not fail
-    this check on the fl2va file it never needed."""
+    this check on the fl2va file it never needed.
+
+    audio=False drops the audio VAE for the still lane (9.58): five frames of
+    room tone is nothing, and h3_still must not gate on a file its graph
+    never loads. The video lanes keep the default four-asset contract."""
     build = model_rel or H3_MODEL
     label = ("MiniMax H3 FL2VA model" if build == H3_MODEL else
              "MiniMax H3 REF2VA model" if build == H3_REF2V_MODEL else
              f"MiniMax H3 model ({base(build)})")
-    required = (
+    required = [
         ("model", "diffusion_models", build, label),
         ("clip", "text_encoders", H3_CLIP, "Qwen3-VL 32B MiniMax encoder"),
         ("video_vae", "vae", H3_VIDEO_VAE, "MiniMax H3 video VAE"),
-        ("audio_vae", "vae", H3_AUDIO_VAE, "MiniMax H3 audio VAE"),
-    )
+    ]
+    if audio:
+        required.append(("audio_vae", "vae", H3_AUDIO_VAE, "MiniMax H3 audio VAE"))
     paths, missing = {}, []
     for key, kind, expected, label in required:
         canonical = _video_asset(kind, expected)
@@ -8598,7 +8873,8 @@ def build_look(scene, seed, image, overrides=()):
 
 BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "fantasy": build_fantasy, "anime": build_anime, "zimage": build_zimage,
-            "anima": build_anima,
+            "anima": build_anima, "h3_still": build_h3_still,
+            "h3_still_2x": build_h3_still_2x,
             "identity_edit": build_zara_edit,
             "zara_edit": build_zara_edit,       # alias: pre-rename ledger entries
             "qwen_edit": build_qwen_edit, "qwen_image": build_qwen_image,
@@ -10133,6 +10409,13 @@ class Hub:
             for nm in spec.get("required_upscalers", []):
                 if not _catalog_has("upscale_models", nm):
                     missing.append("upscaler: " + nm)
+            # The 2x refine rides the MMH3 pack's ultimate-upscale node AND a
+            # 659 MB latent upscaler on disk; h3_upscale_available() checks
+            # both (a cold probe alone is not enough - the weights may simply
+            # be absent while the node list is unprobed).
+            if rid == "h3_still_2x" and not h3_upscale_available():
+                missing.append("MiniMax H3 2x upscale: the MMH3 pack and "
+                               "minimax_h3_latent_upscaler_3d_bf16.safetensors")
             if spec["family"] == "zimage":
                 if not any(_catalog_has("text_encoders", name)
                            for name in ZIMAGE_CLIP_CANDIDATES):
@@ -10155,6 +10438,9 @@ class Hub:
                            for stage in spec.get("lora_stages", [])]
             recipes.append({"id": rid, "label": spec["label"], "tag": spec["tag"],
                              "family": spec["family"], "variants": spec.get("variants", []),
+                             # The composer's MP ladder dims rungs above this
+                             # (h3_still's 2K ceiling); absent everywhere else.
+                             "mp_cap": spec.get("mp_cap"),
                              "default_model": resolved_recipe_models[rid],
                              "lora_stack_revision": spec["lora_stack_revision"],
                              "lora_boundary": spec["lora_boundary"],
@@ -10238,7 +10524,10 @@ class Hub:
         scene_gate. `verbatim` carries the Prompt-enhance-off promise through:
         the user's own words are validated but never rewritten."""
         job_id = uuid.uuid4().hex[:8]
-        scene, scene_fault = scene_gate(template, scene, verbatim=verbatim)
+        scene_repairs = []
+        scene, scene_fault = scene_gate(template, scene, verbatim=verbatim,
+                                        nsfw=bool(spec_args.get("nsfw")),
+                                        repairs=scene_repairs)
         # JavaScript parses JSON integers past 2**53 as doubles, so a seed
         # drawn up to 2**62 came back from the client rounded - the lock then
         # replayed different dice than the card showed, and top-band values
@@ -10251,11 +10540,18 @@ class Hub:
         style_tag = spec_args.pop("_style", None)
         tuning_tag = spec_args.pop("_tuning", None)
         sampler_swap_tag = spec_args.pop("_sampler_swap", None)
+        # Who wrote the scene (9.60): "official" / "pixal" from the brain turn,
+        # "verbatim" from a prompt-enhance-off one. Same ride-along as _style.
+        writer_tag = spec_args.pop("_writer", None)
         job = {"id": job_id, "cid": cid, "template": template, "scene": scene,
                "seed": base_seed, "count": count, "started": time.time(), "parent": parent,
                "images": [], "seen": set(), "done_pids": set(), "prompt_ids": [],
                "texts": [], "spec": {}, "info": None, "error": None,
                **(flags or {})}
+        if scene_repairs:
+            # 9.64: what the gate tidied in a brain-written scene. The card's
+            # "tidied: 2 negations" copy is a later brief; the data rides now.
+            job["scene_repairs"] = scene_repairs
         self.jobs[job_id] = job
         if scene_fault:
             # Refuse before the card exists: a "job" event here would put a
@@ -10282,6 +10578,8 @@ class Hub:
                             info["style"] = style_tag
                         if tuning_tag:
                             info["tuning"] = tuning_tag
+                        if writer_tag:
+                            info["writer"] = writer_tag
                         job["info"] = info
                         self.broadcast(type="jobinfo", job_id=job_id, **info)
                         warn = _lora_warning_text(info.get("lora_warnings"))
@@ -10398,6 +10696,13 @@ TOOLS = [{
                                              "a 2x tiled finish; fantasy = painterly Z-Image Base; "
                                              "anime = tuned clear-anime Z-Image; zimage = general "
                                              "Z-Image with automatic Base/Turbo settings. "
+                                             "h3_still = MiniMax H3 native-2K still (~1 min; the "
+                                             "video model rendering one frame; the best skin "
+                                             "texture in the app; needs the H3 stack installed). "
+                                             "h3_still_2x = the H3 still plus its 2x latent "
+                                             "refine (~3 min; the best-looking still in the "
+                                             "app; use when the user asks for maximum detail "
+                                             "or a full-body shot). "
                                              # The enum offers 10 recipes and the SYSTEM prose
                                              # documents 7; the other three were presented as
                                              # peers with no guidance at all (k3's audit, F8).
@@ -10577,7 +10882,7 @@ Templates:
 Character anchors: turns may name one (a [COMPOSER ...] directive or "as <name>"). Pass character='<id>' to generate(). The anchor's canon arrives with the directive - honor it, but never restate the anchored face in edit instructions.
 
 Photo craft for realism and realism_ii:
-- For every non-explicit person, name a concrete complete opaque outfit unless the user already chose one. Never leave the wardrobe as an abstract "fully dressed" instruction; these realism finetunes need positive garment names.
+- For every non-explicit person, name the actual garments - top, bottom, shoes, each with a colour - unless the user already chose them. Never write an abstract instruction like "fully dressed", "an opaque garment" or "covered": the model needs garment names, and a small brain turns the abstraction into its opposite ("leaves her torso bare", 2026-08-27).
 - Every shot needs a HOOK (the event/object that is the reason the photo exists), a WANT (she wants something from someone off camera, expressed as a look), and a SMALL TELL (a physical behaviour, never an emotion label). Capture logic: who holds the camera and why - it explains her gaze.
 - Name ONE light source with a direction.
 - FOCUS IS DEEP BY DEFAULT. Do not write "shallow depth of field", bokeh, "blurred background", "background melts away", "creamy", "soft focus", or an f-stop. The whole frame stays legible - the room, the far wall, the street behind her are part of the photograph and carry the evidence the hook needs. Separate the subject with placement, light direction and camera distance instead of by throwing everything else away. This is the single most common thing that makes these renders look like stock portraiture; write it only when the user asks for it, or when a [CINEMATIC] directive rides the turn.
@@ -10638,7 +10943,8 @@ Write the scene the way the render models were measured to like:
 - The scene must agree with itself: what you made bare STAYS bare in every later sentence, named colours stay their colour, and no sentence may quietly undo an earlier one or the user's ask.
 - Readable lettering must be spelled out in quotes: a sign reading "BACK IN 5", a shirt reading "OTTER CREEK". Writing "a sign" with no words makes the model invent glyphs and they come out as garbled non-English. If the words do not matter, leave the text out of the shot entirely.
 - EXPLICIT asks: set nsfw=true and write the acts plainly and anatomically - name the bodies, the position, the contact, and state exactly what is bare. The explicit action is both the subject and the CLOSING sentence; the setting gets one short grounding clause at most. Never soften with implication, tasteful framing, or off-frame suggestion - show it directly.
-- SFW photo asks only: name a concrete complete opaque outfit unless the user chose one, and give the subject a real task in the hands and an offscreen pull. For fantasy/anime, use that medium's visual language instead.
+- SFW photo asks only: name the actual garments - top, bottom, shoes, each with a colour - unless the user chose them (never "fully dressed", "opaque garment" or "covered"), and give the subject a real task in the hands and an offscreen pull. For fantasy/anime, use that medium's visual language instead.
+- When the ask sets a state the scene would default otherwise - hood DOWN in the rain, no umbrella, sunglasses off at noon - say the asked state and what is seen instead ("hood down, resting on her shoulders, hair wet"): the model's habit wins unless the words beat it.
 
 Templates:
 - identity_edit: the anchored character. Write EDIT instructions - doing, wearing or not wearing, where, ~100 words. NEVER describe the face or age (the reference photo carries them); you may state eye colour.
@@ -10728,6 +11034,91 @@ enhancement. Otherwise append nothing. Do not rewrite, expand, polish, reinterpr
 the user's words; infer only the technical tool fields needed to route the workflow. Conversation
 still follows TURN POLICY.
 """
+
+# ---- official prompting (9.60) ----------------------------------------------
+# The model maker's own expansion prompt as the writer's craft block: a switch
+# (llm.official_prompting, default off), not a replacement. Krea's expansion.txt
+# won the 2026-08-27 same-seed A/B on all four Zara shots; Pixal's craft rules
+# stay the Off position, byte-identical. The prompt is DATA - one file per
+# family in prompts/official/ with a 2-line # header naming source and fetch
+# date; a family with no file has no official prompt and the toggle does
+# nothing for it.
+OFFICIAL_PROMPT_DIR = HERE / "prompts" / "official"
+_OFFICIAL_PROMPTS = {}
+
+
+def official_prompt(family):
+    """The family recipe's official expansion prompt, or None when the family
+    has no file. Cached: the file is read once per process."""
+    if family in _OFFICIAL_PROMPTS:
+        return _OFFICIAL_PROMPTS[family]
+    text = None
+    path = OFFICIAL_PROMPT_DIR / f"{family}.txt"
+    if path.is_file():
+        body = "\n".join(line for line in
+                         path.read_text(encoding="utf-8").splitlines()
+                         if not line.startswith("#")).strip()
+        text = body or None
+    _OFFICIAL_PROMPTS[family] = text
+    return text
+
+
+def official_prompt_families():
+    """The families carrying an official file - the Settings subline, so it
+    grows as data lands rather than when someone edits a label."""
+    if not OFFICIAL_PROMPT_DIR.is_dir():
+        return []
+    return sorted(p.stem for p in OFFICIAL_PROMPT_DIR.glob("*.txt"))
+
+
+# Pixal's contract with the renderer is NOT craft, so exactly one paragraph of
+# it rides after the official text: on an explicit ask the maker's rule 8
+# would re-dress the scene the user asked for. (The scene itself still goes
+# out as generate()'s scene argument - the RENDER MECHANICS end-contract says
+# that, and it stays last.)
+_OFFICIAL_CONTRACT = (
+    "Pixal studio contract, which outranks the rules above where they "
+    "conflict: with nsfw=true the EXPLICIT rule overrides rule 8 - do not "
+    "assume clothing; write the explicit scene exactly as asked. When the ask "
+    "sets a state the scene would default otherwise (hood down in the rain, no "
+    "umbrella), say the asked state and what is seen instead of the default - "
+    "the model's habit wins unless the words beat it. The scene is prose only: "
+    "never write tool fields such as standing or nsfw into it.")
+
+# The craft block each writer swaps, named by its seam lines: (block start,
+# first line of what follows it). Both blocks are the krea2 photo-caption
+# craft; identity_edit's EDIT register sits OUTSIDE them and never moves.
+_OFFICIAL_CRAFT_SEAM = {
+    False: ("Photo craft for realism and realism_ii:", "Identity-edit craft"),
+    True: ("Write the scene the way the render models were measured to like:",
+           "Templates:"),
+}
+
+
+def official_writer_base(local_brain, recipe_id):
+    """The writer's base prompt with the recipe family's official expansion
+    prompt in place of Pixal's craft block - or None when official prompting
+    does not apply to this turn (toggle off, or the family has no file)."""
+    if not load_config()["llm"].get("official_prompting", True):
+        return None
+    family = (RECIPE_SPECS.get(recipe_id) or {}).get("family")
+    text = official_prompt(family) if family else None
+    if text is None:
+        return None
+    base = SYSTEM_LOCAL if local_brain else SYSTEM
+    start, end = _OFFICIAL_CRAFT_SEAM[local_brain]
+    i = base.index(start)
+    j = base.index(end, i)
+    return base[:i] + text + "\n\n" + _OFFICIAL_CONTRACT + "\n\n" + base[j:]
+
+
+def writer_system_prompt(local_brain, prompt_enhance, recipe_id):
+    """The system prompt one chat turn's writer runs under."""
+    base = official_writer_base(local_brain, recipe_id) or \
+        (SYSTEM_LOCAL if local_brain else SYSTEM)
+    return base + TURN_POLICY + \
+        (PROMPT_ENHANCE_ON_POLICY if prompt_enhance else PROMPT_ENHANCE_OFF_POLICY)
+
 
 _OPEN_ASK_PHRASES = re.compile(
     r"\b(?:surprise me|surprise us|anything|something|whatever|no idea|"
@@ -12278,6 +12669,289 @@ _SEED_PROSE_RE = re.compile(r"[\s.,;:(\[-]*\bseed\s*[=:]\s*\d{4,}\b[\s.)\]]*", r
 def strip_seed_prose(scene):
     return _SEED_PROSE_RE.sub(" ", str(scene or "")).strip()
 
+# --- Scene repair (9.64) ---------------------------------------------------
+# The 4B writer keeps three habits no prompt rule stops - the rules sit LAST
+# in the prompt and the brain still writes them (measured in the 2026-08-27
+# A/B rounds, briefs/ref/): negation clauses a T2I encoder reads as a summons
+# ("no crowd" draws the crowd), tool arguments echoed into the prose
+# ("standing = true"), and sentences narrating the rulebook or the mood
+# instead of the frame ("This moment captures not just action, but
+# connection"). repair_scene runs on the brain-written path only; verbatim is
+# the user's own words and stays untouched.
+
+# Recipes whose own medium is photographic: a "rendered in realism style"-
+# type restatement there is the recipe echoed back. On zimage/fantasy/anime/
+# anima a named medium is the USER's ask, so it stays.
+_PHOTO_MEDIUM_TEMPLATES = frozenset({
+    "realism", "realism_ii", "identity_edit", "zara_edit", "qwen_image",
+    "face_mint", "klein_inpaint", "klein_edit"})
+_PHOTO_MEDIA = ("photorealistic|photographic|photography|photograph|realistic"
+                "|realism|photo")
+
+
+def _sentence_start(text, pos):
+    """Where the sentence containing pos opens (after . ! ? or a newline)."""
+    return max(text.rfind(".", 0, pos), text.rfind("!", 0, pos),
+               text.rfind("?", 0, pos), text.rfind("\n", 0, pos)) + 1
+
+
+def _apply_spans(text, spans):
+    """Splice (start, end, replacement, label) spans into text; returns the
+    rebuilt text and the labels of the spans that landed, in text order."""
+    kept, last = [], -1
+    for span in sorted(spans):
+        if span[0] >= last:
+            kept.append(span)
+            last = span[1]
+    out = text
+    for s, e, r, _label in reversed(kept):
+        out = out[:s] + r + out[e:]
+    return out, [label for _s, _e, _r, label in kept]
+
+
+# Pass 1 - negation clauses. A clause is repaired only at a clause edge
+# (sentence start, or right after , ; : — – ( ): "she could no longer see the
+# shore" is syntax, and cutting its "no" would break the sentence. A chained
+# list ("no buildings, no crowd, no sky visible") is one removal, and a
+# following "just…"/"only…" is the sentence's positive remainder and stays.
+_NEG_CLAUSE_RE = re.compile(
+    r"\b(?P<lead>nothing|never|without|no)\b(?!-)"   # "no-parking" is a thing
+    r"(?P<body>\s+[^.,;:!?()—–\n]*)"
+    r"(?P<chain>(?:\s*,\s*(?:nothing|never|without|no)\b(?!-)"
+    r"\s+[^.,;:!?()—–\n]*)*)", re.I)
+# "There is no crowd nearby." - the existential form of the same clause.
+_NEG_EXISTENTIAL_RE = re.compile(
+    r"\b(?P<lead>There\s+(?:is|are|was|were)\s+no)\b"
+    r"(?P<body>\s+[^.,;:!?()—–\n]*)"
+    r"(?P<chain>(?:\s*,\s*no\s+[^.,;:!?()—–\n]*)*)", re.I)
+# The positive remainder a negation may leave behind.
+_NEG_REMAINDER_RE = re.compile(r"\s*(?:,|;|—|–)?\s*(just|only)\b", re.I)
+
+
+def _negation_ok(m):
+    """The positive forms that merely OPEN with a negation word."""
+    lead = " ".join(m.group("lead").lower().split())
+    low = m.group("body").strip().lower()
+    if lead in ("no", "nothing", "never"):
+        # "nothing but a white tee" / "no one but her" state what IS there.
+        if re.match(r"(?:one\s+)?but\b", low):
+            return False
+    elif lead == "without":
+        words = low.split()
+        # "without specifying exact colors…" is the writer quoting its
+        # rulebook - a pass-3 echo, not an absent thing.
+        if len(words) > 1 and words[0].endswith("ing"):
+            return False
+    return True
+
+
+def _repair_negations(text):
+    spans = []
+    matches = list(_NEG_CLAUSE_RE.finditer(text))
+    matches += list(_NEG_EXISTENTIAL_RE.finditer(text))
+    matches.sort(key=lambda m: m.start())
+    for m in matches:
+        if not _negation_ok(m):
+            continue
+        s, e = m.start(), m.end()
+        while e > s and text[e - 1] in " \t":   # the run's own trailing space
+            e -= 1                              # belongs to the separator after
+        initial = not text[_sentence_start(text, s):s].strip()
+        if m.re is _NEG_EXISTENTIAL_RE:
+            if not initial:
+                continue            # "he said there is no light" is syntax
+        elif not initial:
+            i = s - 1
+            while i >= 0 and text[i] in " \t":
+                i -= 1
+            if i < 0 or text[i] not in ",;:—–(":
+                continue            # "she could no longer see" is syntax
+        after = text[e:]
+        rem = _NEG_REMAINDER_RE.match(after)
+        if rem:
+            if initial:
+                # "No boats… — only water…" -> "Only water…"
+                spans.append((s, e + rem.end(1),
+                              rem.group(1)[0].upper() + rem.group(1)[1:],
+                              "negation"))
+            else:
+                # "— no makeup, no contouring, just natural skin" -> "— just…"
+                spans.append((s, e + rem.start(1), "", "negation"))
+            continue
+        if initial:
+            stop = re.match(r"\s*[.!?]+", after)
+            if stop:                # the whole sentence was the negation
+                end = e + stop.end()
+                if end < len(text) and text[end] in " \t":
+                    end += 1
+                spans.append((s, end, "", "negation"))
+                continue
+            more = re.match(r"\s*[,;:—–-]?\s*(\w)", after)
+            if more:                # "No crowd nearby, she waits" -> "She waits"
+                spans.append((s, e + more.end(), more.group(1).upper(),
+                              "negation"))
+            else:
+                spans.append((s, len(text), "", "negation"))
+            continue
+        # mid-clause: the preceding separator dies with the run
+        bs = s
+        while bs > 0 and text[bs - 1] in " \t":
+            bs -= 1
+        if bs > 0 and text[bs - 1] in ",;:—–":
+            bs -= 1
+            while bs > 0 and text[bs - 1] in " \t":
+                bs -= 1
+        spans.append((bs, e, "", "negation"))
+    return _apply_spans(text, spans)
+
+
+# Pass 2 - inline tool fields and medium restatements. _SCENE_CONFIG_LINE_RE
+# only catches these on their own line; the measured failure is inline
+# ("…focusing on hands and roti, standing = true" - fresh roti, official arm).
+_TOOL_FIELD_INLINE_RE = re.compile(
+    r"\b(?:standing|nsfw|seed|count|template)\s*[=:]\s*\w+", re.I)
+# A trailing medium restatement is the recipe echoed back, not scene content
+# ("…, all rendered in a realistic photograph style with warm, moody color
+# tones…" - laundromat, Krea arm). Photo recipes only: on zimage a named
+# medium is the user's ask and stays.
+_MEDIUM_TRAIL_RE = re.compile(
+    r"[,;:—–-]\s*(?:all\s+)?rendered\s+in\s+(?:an?\s+)?"
+    rf"(?:{_PHOTO_MEDIA})\b(?:\s+(?:{_PHOTO_MEDIA})\b)*\s+style\b"
+    rf"(?:\s+with\s+[^.!?\n]*)?(?=\s*[.!?]|\s*$)", re.I)
+
+
+def _repair_tool_fields(text, template):
+    spans = []
+    for m in _TOOL_FIELD_INLINE_RE.finditer(text):
+        s, e = m.start(), m.end()
+        bs = s
+        while bs > 0 and text[bs - 1] in " \t":
+            bs -= 1
+        if bs > 0 and text[bs - 1] in ",;:—–":
+            bs -= 1
+            while bs > 0 and text[bs - 1] in " \t":
+                bs -= 1
+            spans.append((bs, e, "", "tool field"))
+            continue
+        if not text[_sentence_start(text, s):s].strip():
+            more = re.match(r"\s*[,;:—–-]?\s*(\w)", text[e:])
+            if more:                # sentence-initial field: keep the rest
+                spans.append((s, e + more.end(), more.group(1).upper(),
+                              "tool field"))
+                continue
+        spans.append((bs, e, "", "tool field"))
+    if template in _PHOTO_MEDIUM_TEMPLATES:
+        for m in _MEDIUM_TRAIL_RE.finditer(text):
+            spans.append((m.start(), m.end(), "", "meta echo"))
+    return _apply_spans(text, spans)
+
+
+# Pass 3 - meta-rule echoes: sentences about the scene/moment/image/shot/
+# frame itself, or the writer quoting its rulebook. Undrawable, and measured
+# at the tail where encoder weight is highest. One line per measured
+# instance (briefs/ref/, 2026-08-27); a later finding is one more line.
+_META_ECHO_RES = tuple(re.compile(p, re.I) for p in (
+    # "This moment captures not just action, but connection" - fresh bowling, pixal arm
+    r"\bThis\s+(?:moment|scene|image|shot|frame)\s+captures\b[^.!?\n]*",
+    # "The scene feels quiet and contemplative" - fresh platform, pixal arm
+    r"\bThe\s+(?:scene|moment|image|shot|frame)\s+feels\b[^.!?;:—–\n]*",
+    # "captures the essence/energy of…"; rooftop A wrote "capturing candid energy…"
+    r"\bcaptur(?:es|ing)\s+(?:the\s+|candid\s+)?(?:essence|energy)\b[^.!?;—–\n]*",
+    # "…with a painterly realism that evokes tranquility and solitude" - fisherman, Krea arm
+    r"\b(?:that\s+)?evokes?\s+[^.!?;:—–\n]*",
+    # "without specifying exact colors or textures…" - fresh bowling, official arm
+    r"\bwithout\s+specifying\b[^.!?;:—–\n]*",
+    # "…nothing beyond what's stated / implied by context" - fresh platform+bowling
+    r"\bbeyond\s+what['’]s\s+(?:implied|stated)\b[^.!?;:—–\n]*",
+    # "all details grounded in the moment: <drawable evidence>" - fresh bowling
+    r"\ball\s+details\s+grounded\s+in\b[^.!?;:—–\n]*",
+))
+# "The scene is rendered in realism style" - fresh platform, official arm.
+# The sentence form of the pass-2 restatement: photo medium on a photo
+# recipe only, and a "with <drawable>" tail survives, capitalized.
+_SCENE_RENDERED_RE = re.compile(
+    rf"\bThe\s+(?:scene|moment|image|shot|frame)\s+is\s+rendered\s+in\s+"
+    rf"(?:an?\s+)?(?:{_PHOTO_MEDIA})\b(?:\s+(?:{_PHOTO_MEDIA})\b)*\s+style\b",
+    re.I)
+
+
+def _strip_echo_pattern(text, pattern):
+    """Remove every match of one echo phrase; the sentence around it keeps
+    any drawable remainder, repunctuated."""
+    spans = []
+    for m in pattern.finditer(text):
+        s, e = m.start(), m.end()
+        ss = _sentence_start(text, s)
+        head = text[ss:s]
+        stop = re.search(r"[.!?]", text[e:])
+        se = e + stop.end() if stop else len(text)
+        tail = text[e:se]
+        if not head.strip():
+            more = re.match(r"[\s,;:—–-]*(\w)", tail)
+            if not tail.strip().strip(".!?") or more is None:
+                # the sentence was the echo, all of it
+                end = se + 1 if se < len(text) and text[se] in " \t" else se
+                spans.append((s, end, "", "meta echo"))
+            else:
+                # "The scene feels quiet… — she's still" -> "She's still"
+                spans.append((s, e + more.end(), more.group(1).upper(),
+                              "meta echo"))
+            continue
+        if len(re.sub(r"[^\w\s]", " ", head + " " + tail).split()) <= 2:
+            # the echo was the sentence's payload; a stub ("The scene.") goes
+            end = se + 1 if se < len(text) and text[se] in " \t" else se
+            spans.append((ss, end, "", "meta echo"))
+            continue
+        hsep = re.search(r"[\s,;:—–-]*$", head).group(0)
+        tsp = re.match(r"\s*", tail).group(0)
+        tail_rest = tail[len(tsp):]
+        if not tail_rest.strip() or tail_rest[0] in ".,;:!?":
+            rep = ""
+        else:
+            sep = next((c for c in hsep if c in ",;:—–-"), None)
+            rep = (sep + " ") if sep else " "
+        spans.append((s - len(hsep), e + len(tsp), rep, "meta echo"))
+    return _apply_spans(text, spans)
+
+
+def _repair_meta_echoes(text, template):
+    labels = []
+    for pattern in _META_ECHO_RES:
+        text, found = _strip_echo_pattern(text, pattern)
+        labels.extend(found)
+    if template in _PHOTO_MEDIUM_TEMPLATES:
+        text, found = _strip_echo_pattern(text, _SCENE_RENDERED_RE)
+        labels.extend(found)
+    return text, labels
+
+
+def repair_scene(text, template=None, nsfw=False):
+    """Repair the three brain-written scene failures the prompt rules cannot
+    stop (9.64). Runs after the scrubbers in scene_gate, on the non-verbatim
+    path only. Returns (text, repairs) - one short label per removal, so the
+    card can say "tidied: 2 negations" and the A/B driver can count them.
+
+    `nsfw` skips pass 1 entirely: on an explicit ask "no underwear" is a
+    positive instruction, not a negation. A repair that would remove more
+    than half the scene's words is refused - a wrong repair is worse than a
+    weak scene."""
+    original = str(text or "")
+    text, labels = original, []
+    if not nsfw:
+        text, found = _repair_negations(text)
+        labels.extend(found)
+    text, found = _repair_tool_fields(text, template)
+    labels.extend(found)
+    text, found = _repair_meta_echoes(text, template)
+    labels.extend(found)
+    if not labels:
+        return original, []
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" ([.,;:!?])", r"\1", text).strip()
+    if (len(original.split()) - len(text.split())) * 2 > len(original.split()):
+        return original, ["kept: repair would gut the scene"]
+    return text, labels
+
 
 def _norm_scene(scene):
     """Scene equality for the same-seed guard, compared at the WORD level:
@@ -12384,7 +13058,7 @@ PROSE_TEMPLATES = frozenset({
 # covers "CHARACTER ANCHOR" by prefix, so the longer name is redundant now.
 _MACHINERY_RE = re.compile(
     r"\[(?:COMPOSER|CHARACTER|PRIOR RENDER|SYSTEM|NOTE\s*-\s*THIS TURN|CINEMATIC"
-    r"|STYLE|ATTACHED IMAGES|PERSON REFERENCE)"
+    r"|STYLE|ATTACHED IMAGES|PERSON REFERENCE|REFERENCE IMAGE)"
     r"|</?tool_call>|\"name\"\s*:\s*\"(?:generate|animate|upscale|review)\"", re.I)
 # A label a small model prints in front of the scene because the recipe brief
 # told it to "write EDIT instructions" - it reads that as a heading.
@@ -12428,7 +13102,7 @@ def scene_is_command(text):
                 if w and w not in _ACCEPT_REMAINDER]
 
 
-def scene_gate(template, scene, verbatim=False):
+def scene_gate(template, scene, verbatim=False, nsfw=False, repairs=None):
     """Canonicalize a scene and refuse the shapes that are not one.
 
     ONE gate, at the only chokepoint every render passes, because the scrubbers
@@ -12442,6 +13116,10 @@ def scene_gate(template, scene, verbatim=False):
     `verbatim` is the Prompt-enhance-off promise: the user's own words go to the
     encoder untouched, so nothing is rewritten - but a scene that is machinery
     or a bare command is still refused, because those are never what they typed.
+    `nsfw` is the job's explicit flag: repair_scene skips its negation pass
+    there ("no underwear" is a positive instruction). `repairs`, when a list
+    is passed, collects what the repair removed (HUB.submit stamps it on the
+    job as scene_repairs).
 
     Returns (scene, error_or_None).
     """
@@ -12454,6 +13132,9 @@ def scene_gate(template, scene, verbatim=False):
         text = _strip_history_directives(text)      # [COMPOSER ...] and friends
         text = scrub_style_caption(text, template)
         text = strip_seed_prose(text)
+        text, fixed = repair_scene(text, template, nsfw=nsfw)
+        if repairs is not None:
+            repairs.extend(fixed)
     text = text.strip()
     if not text:
         return text, "empty scene - nothing to render"
@@ -12514,6 +13195,20 @@ def _generate_calls(message):
             if (call.get("function") or {}).get("name") == "generate"]
 
 
+# The receipt the server appends to chat (as a user turn) when the local
+# brain's prose scene is queued as a job. ONE source for appender and filter:
+# the appender formats _QUEUED_SCENE_RECEIPT_FMT; the writer-history filter
+# matches _QUEUED_SCENE_RECEIPT_RE, which is derived from the same string -
+# the two cannot drift. Job ids are uuid4().hex[:8]; template names carry no
+# parentheses.
+_QUEUED_SCENE_RECEIPT_FMT = ("[SYSTEM: the server queued that scene as job "
+                             "{job_id} ({template}) - no reply needed.]")
+_QUEUED_SCENE_RECEIPT_RE = re.compile(
+    re.escape(_QUEUED_SCENE_RECEIPT_FMT)
+    .replace(re.escape("{job_id}"), r"[0-9a-f]{4,12}")
+    .replace(re.escape("{template}"), r"[^()]*"))
+
+
 def local_history_view(messages, current_user_index, preserve_latest_render=False):
     """Context view for the local prompt writer, without old render echo.
 
@@ -12523,20 +13218,42 @@ def local_history_view(messages, current_user_index, preserve_latest_render=Fals
     autoregressive default. Fresh asks retain ordinary chat but omit those old
     generate chains. Explicit iteration keeps only the newest prior chain.
 
+    A queued PROSE scene - an assistant turn with no tool calls whose next
+    message is the server's queue receipt - is the same render in a different
+    costume and follows the same rules. It used to be invisible here: seven
+    prose copies of one wardrobe stayed in context and out-voted every new
+    ask (chat 71979bcf).
+
     Messages at and after ``current_user_index`` are the live turn and are never
     filtered, so the current generate/tool pairing remains valid on later rounds.
     """
     copied = copy.deepcopy(messages)
     prior = copied[:current_user_index]
     current = copied[current_user_index:]
-    render_indices = [i for i, message in enumerate(prior)
-                      if message.get("role") == "assistant" and
-                      _generate_calls(message)]
+    # Prose scenes the server queued, scene index -> receipt index. The pair
+    # is only ever adjacent (the server appends the receipt immediately), and
+    # only counts when the receipt is in view - a scene at the boundary is
+    # conversation until proven a render.
+    prose_receipts = {
+        i: i + 1
+        for i, message in enumerate(prior[:-1])
+        if message.get("role") == "assistant" and
+        not message.get("tool_calls") and
+        prior[i + 1].get("role") == "user" and
+        isinstance(prior[i + 1].get("content"), str) and
+        _QUEUED_SCENE_RECEIPT_RE.fullmatch(prior[i + 1]["content"])}
+    render_indices = sorted(
+        [i for i, message in enumerate(prior)
+         if message.get("role") == "assistant" and _generate_calls(message)] +
+        list(prose_receipts))
     keep_render = render_indices[-1] if preserve_latest_render and render_indices else None
     keep_user = None
     if keep_render is not None:
         keep_user = next((i for i in range(keep_render - 1, -1, -1)
                           if prior[i].get("role") == "user"), None)
+
+    dropped_scenes = set(prose_receipts) - {keep_render}
+    dropped_receipts = {prose_receipts[i] for i in dropped_scenes}
 
     out, dropped_call_ids = [], set()
     drop_followup = False
@@ -12544,9 +13261,14 @@ def local_history_view(messages, current_user_index, preserve_latest_render=Fals
         role = message.get("role")
         if role == "user":
             drop_followup = False
+            if i in dropped_receipts:
+                continue
             if i != keep_user:
                 message["content"] = _strip_history_directives(message.get("content"))
             out.append(message)
+            continue
+
+        if role == "assistant" and i in dropped_scenes:
             continue
 
         calls = _generate_calls(message) if role == "assistant" else []
@@ -13683,6 +14405,11 @@ def effective_recipe(opts):
         # the first render anyone tries.
         if entry and entry["family"] == "anima":
             return "anima"
+        # An H3 fl2va build picked for a still renders one frame on the
+        # h3_still graph, whatever style the selector last held; the Refined
+        # quality adds the in-family 2x latent refine (brief 9.59).
+        if entry and entry["family"] == "minimax_h3":
+            return "h3_still_2x" if refined else "h3_still"
         if style in ("anime", "fantasy"):
             return style
         return "realism_ii" if refined else "realism"
@@ -13698,6 +14425,11 @@ def effective_recipe(opts):
             return "qwen_image"
         if entry and entry["family"] == "anima":
             return "anima"
+        # Same routing as the style/quality branch above; quality can only
+        # arrive here when neither key was sent, but the branches mirror each
+        # other so they cannot drift.
+        if entry and entry["family"] == "minimax_h3":
+            return "h3_still_2x" if opts.get("quality") == "refined" else "h3_still"
     return None
 
 def held_seed(src):
@@ -14273,6 +15005,23 @@ def enhance_off_is_prompt(text):
                 or _CHAT_ONLY.fullmatch(body))
 
 
+# The substitution loop in _kimi_reply rewrites every image_url part in the
+# convo to this literal text part, so base64 is not resent forever. That makes
+# it server machinery, never prompt text: captured_prompt skips those parts
+# outright and head-strips the token from a body something already folded it
+# into, because a walk-back that returns it renders the words "[reference
+# image]" as the scene (9.62).
+REF_IMAGE_PLACEHOLDER = "[reference image]"
+
+
+def _strip_ref_image_placeholder(text):
+    """Remove leading REF_IMAGE_PLACEHOLDER tokens from a joined body."""
+    body = str(text or "")
+    while body.startswith(REF_IMAGE_PLACEHOLDER):
+        body = body[len(REF_IMAGE_PLACEHOLDER):].lstrip()
+    return body
+
+
 def captured_prompt(convo, current_text):
     """The user's own words to render, for a Prompt-enhance-off turn.
 
@@ -14286,6 +15035,7 @@ def captured_prompt(convo, current_text):
     behave the same as a live one and there is no second copy to fall stale.
     """
     text = " ".join(str(current_text or "").split()).strip()
+    text = _strip_ref_image_placeholder(text)
     if text and not scene_is_command(text):
         return text
     for message in reversed(convo):
@@ -14294,7 +15044,8 @@ def captured_prompt(convo, current_text):
         body = message.get("content")
         if isinstance(body, list):
             body = " ".join(part.get("text", "") for part in body
-                            if isinstance(part, dict) and part.get("type") == "text")
+                            if isinstance(part, dict) and part.get("type") == "text"
+                            and part.get("text") != REF_IMAGE_PLACEHOLDER)
         # Same split the turn itself uses, so a captured prompt never carries
         # the composer block appended to it - plus [SYSTEM, because the queue
         # receipts this server appends after a render carry role "user" so the
@@ -14308,6 +15059,7 @@ def captured_prompt(convo, current_text):
         body = re.split(r"\[(?:COMPOSER|CHARACTER ANCHOR|PRIOR RENDER|SYSTEM|NOTE|CINEMATIC|STYLE)",
                         str(body or ""))[0]
         body = " ".join(_WITHHELD_NOTE_RE.sub("", body).split()).strip()
+        body = _strip_ref_image_placeholder(body)
         if body and not scene_is_command(body):
             return body
     return text
@@ -14399,6 +15151,13 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     )
     local_iteration = bool(_LOCAL_ITERATION_RE.search(_utext) or
                            _REFERS_BACK_RE.search(_utext))
+    # Who writes this turn's scene (9.60): the verbatim path is the user's own
+    # words; otherwise the toggle plus the recipe's family pick the rulebook.
+    # The tag rides the job's info so a card and the A/B driver can tell.
+    turn_recipe = effective_recipe(opts or {}) or "realism"
+    writer_tag = "verbatim" if not prompt_enhance and not local_iteration else \
+        ("official" if official_writer_base(local_brain, turn_recipe) is not None
+         else "pixal")
     # Anything the assistant left hanging - a written scene OR a question -
     # makes the next user turn the second half of a render request, whatever
     # its words look like alone. Two shapes, one rule: a bare "yes"/"show me"
@@ -14427,7 +15186,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     spoke_scene = False   # a scene-shaped reply already broadcast this turn (9.43)
     for m in convo:                      # base64 refs are for THIS turn; don't resend them forever
         if isinstance(m.get("content"), list):
-            m["content"] = [{"type": "text", "text": "[reference image]"}
+            m["content"] = [{"type": "text", "text": REF_IMAGE_PLACEHOLDER}
                             if p.get("type") == "image_url" else p for p in m["content"]]
             for p in m["content"]:
                 if p.get("type") == "text":
@@ -14510,6 +15269,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
         args.setdefault("standing", standing)
         args.setdefault("nsfw", detected if mode == "auto" else mode == "on")
         freeze_seed(args, opts)
+        args["_writer"] = writer_tag
         HUB.broadcast(type="text", cid=cid,
                       text="Got it \u2014 rendering your prompt exactly as written.")
         HUB.broadcast(type="thinking", cid=cid,
@@ -14527,10 +15287,8 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
         return
     # name the invisible phase: this is a cloud call, not the GPU working
     HUB.broadcast(type="thinking", cid=cid, note=f"asking {brain_name()} to direct the shot")
-    base_prompt, base_tools = (SYSTEM_LOCAL, TOOLS_LOCAL) if local_brain else (SYSTEM, TOOLS)
-    enhance_policy = PROMPT_ENHANCE_ON_POLICY if prompt_enhance else \
-        PROMPT_ENHANCE_OFF_POLICY
-    sys_prompt = base_prompt + TURN_POLICY + enhance_policy
+    base_tools = TOOLS_LOCAL if local_brain else TOOLS
+    sys_prompt = writer_system_prompt(local_brain, prompt_enhance, turn_recipe)
     # Withhold generate on conversational turns for clean behavior. The queue
     # guard below remains authoritative against a raw/hallucinated tool call.
     #
@@ -14598,14 +15356,15 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                     HUB.broadcast(type="thinking", cid=cid,
                                   note="writing the workflow - " + plain_render_words(template))
                     freeze_seed(args, opts)
+                    args["_writer"] = writer_tag
                     job = await HUB.submit(cid, "chat", template, render_scene, args, 1)
                     if not job["error"]:
                         # Keep history coherent for the NEXT turn, but only when
                         # Comfy actually accepted the graph. HUB.submit already
                         # broadcasts the concrete failure when submission fails.
                         convo.append({"role": "user", "content":
-                                      f"[SYSTEM: the server queued that scene as job "
-                                      f"{job['id']} ({template}) - no reply needed.]"})
+                                      _QUEUED_SCENE_RECEIPT_FMT.format(
+                                          job_id=job["id"], template=template)})
                     HUB.broadcast(type="thinkingdone", cid=cid)
                     return
                 HUB.broadcast(type="thinkingdone", cid=cid)
@@ -14812,6 +15571,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                             HUB.broadcast(type="thinking", cid=cid,
                                           note="writing the workflow - " + plain_render_words(template))
                             freeze_seed(args, opts)
+                            args["_writer"] = writer_tag
                             job = await HUB.submit(cid, "chat", template, scene, args, count)
                             rendered = rendered or not job["error"]
                             HUB.broadcast(type="thinking", cid=cid,
@@ -15196,8 +15956,21 @@ def build_directive(opts, local=False):
             refs = opts.get("refs") or []
             identity = None if lch else next(
                 (r for r in refs if r.get("kind") == "identity"), None)
-            person = identity.get("file") if identity else \
-                (input_ref_name(lch.get("identity_ref")) if lch else None)
+            # Prompt enhance OFF is the user's-own-words turn: the anchor's
+            # photo still drives the identity graph server-side, but it must
+            # not ride the chat turn as a vision image - the attach flips
+            # has_vision_refs, forcing a brain round-trip on the direct path,
+            # and the substituted placeholder joins the next walk-back's
+            # captured prompt as "[reference image] <their words>" (9.62).
+            # A user-attached identity ref is a different thing and keeps
+            # attaching either way.
+            # A character ANCHOR's photo never rides as a vision image, in
+            # either mode (2026-08-27): the anchor card carries the canon and
+            # the identity graph carries the face; a brain that can see the
+            # photo describes its pixels into the scene - the blue backdrop
+            # curtain, the reference's own garment. Only a user-attached
+            # identity ref (no anchor) is shown to the brain.
+            person = identity.get("file") if identity else None
             if person:
                 vision.append({"kind": "identity", "file": person})
             vision += [r for r in refs
@@ -15206,8 +15979,9 @@ def build_directive(opts, local=False):
                 d += ("\n[ATTACHED IMAGES: "
                       + ("the FIRST is the person this render must depict - "
                          "never write a skin tone, hair colour, age or body "
-                         "type that contradicts it, and do not describe the "
-                         "face in detail; " if person else "")
+                         "type that contradicts it, do not describe the "
+                         "face in detail, and take NOTHING from that photo's "
+                         "background or clothing - only the person; " if person else "")
                       + "describe each style/clothing/object reference's "
                         "salient traits faithfully into the scene (garment "
                         "cut/colour/texture, palette/light/medium, "
@@ -15251,8 +16025,15 @@ def build_directive(opts, local=False):
     # (wrong skin tone, wrong hair) and the identity pass had to fight the
     # prompt. The vision brain now gets the photo itself as ground truth -
     # first in the attachment order, ahead of the style/clothing refs.
-    person = identity.get("file") if identity else \
-        (input_ref_name(ch.get("identity_ref")) if ch else None)
+    # Prompt enhance OFF is the exception (9.62): the anchor's photo must not
+    # become a chat-turn vision image (see the local arm above); identity still
+    # rides the graph server-side. A user-attached identity ref is unaffected.
+    # A character ANCHOR's photo never rides as a vision image, in either
+    # mode (2026-08-27): the anchor card carries the canon and the identity
+    # graph carries the face; a brain that can see the photo describes its
+    # pixels into the scene (the blue backdrop curtain, the reference's own
+    # garment). Only a user-attached identity ref is shown to the brain.
+    person = identity.get("file") if identity else None
     if seen:
         base = 2 if person else 1
         labels = "; ".join(f"#{i+base} = {r['kind']} reference ({r['file']})"
@@ -15286,7 +16067,8 @@ def build_directive(opts, local=False):
               "a skin tone, ethnicity, hair colour or texture, age, or body type "
               "that contradicts it; when the scene needs any of those words, read "
               "them off the photo. Do not describe the face in detail - the "
-              "reference itself carries identity.]")
+              "reference itself carries identity - and take NOTHING from the "
+              "photo's background or clothing: only the person.]")
     if ch and ch.get("notes"):
         d += (f"\n[CHARACTER ANCHOR: {ch['name']}. {ch['notes']}\nHonor this canon in the "
               f"scene; do not restate their face - the reference carries it in identity_edit, and "
@@ -15461,7 +16243,9 @@ async def settings_get(_req):
                 "local_gpu_layers": cfg["llm"].get("local_gpu_layers", -1),
                 "local_idle_minutes": cfg["llm"].get(
                     "local_idle_minutes", LLM_IDLE_EVICT_S // 60),
-                "local_llms": local_llm_models()},
+                "local_llms": local_llm_models(),
+                "official_prompting": cfg["llm"].get("official_prompting", True),
+                "official_families": official_prompt_families()},
         "critic": {"model": cfg["critic"]["model"],
                    # The Vision section names whoever ACTUALLY reviews, and
                    # brain_vl_read gets first refusal - see brain_vision.
@@ -15565,6 +16349,8 @@ async def settings_post(req):
             return web.json_response(
                 {"ok": False, "error": f"not a minute count: {want}"}, status=400)
         cfg["llm"]["local_idle_minutes"] = want   # 0 = keep it resident forever
+    if "official_prompting" in llm:
+        cfg["llm"]["official_prompting"] = bool(llm["official_prompting"])
     critic = body.get("critic") or {}
     if critic.get("model"):
         cfg["critic"]["model"] = critic["model"].strip()

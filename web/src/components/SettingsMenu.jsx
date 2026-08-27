@@ -284,12 +284,14 @@ const GroupLabel = ({ children }) => (
 // the order a user actually renders with them; everything without a lane
 // (Flux, audio, pipeline parts, unclassified) collapses into Other.
 const LIBRARY_ORDER = ["krea2", "zimage", "klein", "qwen_edit", "qwen_image",
-                       "anima", "video"];
+                       "anima", "minimax_h3", "video"];
 
 // The server's reason codes, said in the user's language. Keyed by the exact
 // reason model_profile writes; an unknown future reason passes through as-is.
 const HUMAN_REASON = {
   "video model": "a video model — used by the Animate lanes",
+  "reference-video build - used by the Animate lanes":
+    "a reference-video build — used by the Animate lanes",
   "Flux needs its own Pixal pipeline": "a Flux model — no lane here runs it yet",
   "audio model": "an audio model — no lane here runs it",
   "auxiliary model, not a standalone image generator":
@@ -510,6 +512,18 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [localList, setLocalList] = useState([]);
   const [localKeep, setLocalKeep] = useState(true);
   const [localGpu, setLocalGpu] = useState(-1);
+  // 9.60: whose rulebook the writer runs - the families list is server data
+  // (which prompts/official files exist), so the subline grows as data lands.
+  const [officialPrompting, setOfficialPrompting] = useState(false);
+  const [officialFamilies, setOfficialFamilies] = useState([]);
+  // The subline is live data (the families carrying an official file), held
+  // as a LineGhost until cfg lands. Computed here, next to vidLtx: a gloss
+  // that IS a live value carries no prose, so it costs no visible words.
+  const officialGloss = cfg ? (
+    <span className="px-ghost-in">{officialFamilies.map(familyName).join(", ")}</span>
+  ) : (
+    <LineGhost w={64} />
+  );
   const scrolledSel = useRef(false);   // scroll the saved pick into view once per open
   const [criticModel, setCriticModel] = useState("");
   const [criticInstalled, setCriticInstalled] = useState([]);
@@ -569,6 +583,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       setLocalKeep(d.llm.local_keep !== false);
       setLocalGpu(Number.isInteger(d.llm.local_gpu_layers) ? d.llm.local_gpu_layers : -1);
       setIdleMin(Number.isFinite(d.llm.local_idle_minutes) ? d.llm.local_idle_minutes : 10);
+      setOfficialPrompting(!!d.llm.official_prompting);
+      setOfficialFamilies(d.llm.official_families || []);
       setCriticModel(d.critic.model);
       setCriticInstalled(d.critic.installed || []);
       setCriticBrain(d.critic.brain || null);
@@ -827,7 +843,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             ]} />
         </Section>
 
-        <Section title={<>Explicit content <InfoTip text="Whether a render may be explicit. allow leaves your prompt exactly as written; it only bites with Prompt enhance off — with it on, the chat brain still decides." /></>}>
+        <Section title={<>Explicit content <InfoTip text="Uncensored writing needs a local abliterated model — most APIs refuse NSFW." /></>}>
           {cfg ? (
             <SegmentedControl className="px-ghost-in" ariaLabel="Explicit content" value={explicit}
               onChange={(id) => {
@@ -845,7 +861,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <SegGhost segments={3} />
           )}
           <Foot>
-            auto reads your words; never keeps subjects dressed.
+            Auto reads your prompt · Never keeps everyone clothed.
           </Foot>
         </Section>
 
@@ -1714,6 +1730,27 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </div>
         </Section>
 
+        {/* 9.60: whose rulebook the writer runs. Own section, not a row inside
+            Chat brain - a Field cannot carry both a tip and a hint (the copy
+            contract), so the families subline is the section gloss, and the
+            Chat brain section is already at the two-segmented-row cap. */}
+        <Section title={<>Official prompting <InfoTip text="Writes scenes the way the model's makers recommend — Krea 2's own expansion prompt on Krea 2 recipes. A family with no official file is unchanged either way. Off uses Pixal's photo-craft rules." /></>}
+                 gloss={officialGloss}>
+          {cfg ? (
+            <SegmentedControl className="px-ghost-in" ariaLabel="Official prompting" value={officialPrompting}
+              onChange={(on) => {
+                setOfficialPrompting(on);
+                apply({ llm: { official_prompting: on } },
+                      on ? "writes with the model makers' own prompt"
+                         : "writes with Pixal's photo-craft rules");
+              }}
+              options={[{ v: true, label: "On" },
+                        { v: false, label: "Off" }]} />
+          ) : (
+            <SegGhost segments={2} />
+          )}
+        </Section>
+
         <GroupLabel>vision</GroupLabel>
         {/* This section used to read "Image reviewer" over the ComfyUI picker
             with no mention of the brain, so it looked like the picked model
@@ -1881,16 +1918,13 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                    borderRadius: RADIUS.pill, background: "#FFDD00",
                    color: "#1A1200", textDecoration: "none",
                    fontFamily: FONT, fontSize: TYPE.body, fontWeight: W.heading,
-                   boxShadow: SHADOW.sm,
-                   transition: `transform ${MOTION.press}, box-shadow ${MOTION.press}`,
+                   transition: `transform ${MOTION.press}`,
                  }}
                  onMouseEnter={(e) => {
                    e.currentTarget.style.transform = "translateY(-1px)";
-                   e.currentTarget.style.boxShadow = SHADOW.md;
                  }}
                  onMouseLeave={(e) => {
                    e.currentTarget.style.transform = "translateY(0)";
-                   e.currentTarget.style.boxShadow = SHADOW.sm;
                  }}>
                 🍺 Buy me a beer
               </a>
@@ -1967,7 +2001,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         <div style={{
           width: "100%", height: "100%",
           background: "var(--surface)", border: "1px solid var(--border)",
-          borderRadius: RADIUS.surface, boxShadow: SHADOW.md,
+          borderRadius: RADIUS.surface,
           backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
           display: "flex", flexDirection: "column", overflow: "hidden",
         }}>{panel}</div>

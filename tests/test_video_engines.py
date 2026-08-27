@@ -107,11 +107,15 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertFalse(loras[0]["active_by_default"])
         self.assertTrue(loras[0]["available"])
 
-        # H3 stays out of the still picker even though Animate can run it.
+        # 9.58: fl2va builds joined the still picker via h3_still, under their
+        # own family - media stays "video", and the Animate lanes never read
+        # either flag (they resolve builds by catalog rel, proven unchanged by
+        # the chip assertions above).
         with patch.object(server, "adjacent_metadata", return_value={}):
             profile = server.model_profile(server.H3_MODEL)
-        self.assertEqual(profile["family"], "video")
-        self.assertFalse(profile["supported"])
+        self.assertEqual(profile["family"], "minimax_h3")
+        self.assertEqual(profile["media"], "video")
+        self.assertTrue(profile["supported"])
         # The ref2va chip is real now (9.12), but the LoRA fence holds:
         # HMNSFW's own description says FL2VA, so the ref2va chip lists none.
         ref2va = next(m for m in h3["models"] if m["id"] == "ref2va")

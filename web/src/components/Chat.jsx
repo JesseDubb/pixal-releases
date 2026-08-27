@@ -820,7 +820,21 @@ export const Chat = () => {
   const inlineLoraChain = hasLoraChain && !desktopLoraRail && !dock;
   // Attachments live as icons beside the prompt-enhance sparkle; the textarea
   // pads right so long prompts never run under the stack.
-  const attachedCount = (store.opts.character ? 1 : 0) + (store.opts.refs || []).length;
+  // The switch row (attachment chips, seed lock, sparkle) floats over the
+  // prompt box's top-right corner, so the textarea's right padding must be
+  // its MEASURED width - the old count-based guess ignored the seed chip and
+  // the sparkle and let typed text run under the icons (Jesse, 2026-08-27).
+  const switchRef = useRef(null);
+  const [switchWidth, setSwitchWidth] = useState(0);
+  useEffect(() => {
+    const el = switchRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const measure = () => setSwitchWidth(el.getBoundingClientRect().width);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Theme: user pref (light/dark/system) resolved against the OS; the style
   // tag is rewritten on every change, and system-mode tracks the OS live.
@@ -1027,8 +1041,11 @@ export const Chat = () => {
           glow and photon field breathe through it. */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "row",
                     overflow: "hidden", position: "relative", zIndex: 1,
+                    // Narrow: flush to the window - a floated card at phone
+                    // width read as "a box around the chat" (Jesse,
+                    // 2026-08-27); the ground shows only on the wide layout.
                     margin: narrow
-                      ? `0 ${SPACE[8]}px calc(${SPACE[8]}px + env(safe-area-inset-bottom))`
+                      ? `0 0 env(safe-area-inset-bottom)`
                       : `${SPACE[12]}px ${SPACE[12]}px ${SPACE[12]}px 0`,
                     // Same discipline as PhotonField's `calm`: while ComfyUI is
                     // sampling, every progress tick damages this surface, and a
@@ -1036,11 +1053,10 @@ export const Chat = () => {
                     // panel on the GPU CUDA is monopolizing - a hitch per step.
                     // Solid surface + no blur means a step costs one tiny paint.
                     background: rendering ? "var(--surfaceSolid)" : "var(--surface)",
-                    border: "1px solid var(--border)",
-                    borderRadius: RADIUS.surface,
+                    border: narrow ? "none" : "1px solid var(--border)",
+                    borderRadius: narrow ? 0 : RADIUS.surface,
                     backdropFilter: rendering ? "none" : "blur(18px)",
-                    WebkitBackdropFilter: rendering ? "none" : "blur(18px)",
-                    boxShadow: SHADOW.md }}>
+                    WebkitBackdropFilter: rendering ? "none" : "blur(18px)" }}>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
                     overflow: "hidden" }}>
@@ -1284,7 +1300,8 @@ export const Chat = () => {
             {/* The switch row: attachment icons stack leftward from the
                 sparkle, newest nearest it — every per-send toggle in one
                 corner instead of chrome budding off the composer's edge. */}
-            <div style={{ position: "absolute", top: SPACE[8], right: SPACE[12], zIndex: 5,
+            <div ref={switchRef}
+                 style={{ position: "absolute", top: SPACE[8], right: SPACE[12], zIndex: 5,
                           display: "flex", alignItems: "center" }}>
               <AttachmentIcons opts={store.opts}
                 setOpts={(patch) => store.setOpts(patch)}
@@ -1373,7 +1390,7 @@ export const Chat = () => {
                 color: "var(--text)", fontFamily: FONT,
                 fontSize: narrow ? 16 : TYPE.h3,
                 lineHeight: 1.5,
-                padding: `${SPACE[4]}px ${SPACE[48] + attachedCount * 40}px 0 ${SPACE[10]}px`,
+                padding: `${SPACE[4]}px ${Math.max(SPACE[48], Math.ceil(switchWidth) + SPACE[12] + SPACE[8])}px 0 ${SPACE[10]}px`,
               }}
             />
             {characterNotice && (
@@ -1484,14 +1501,19 @@ export const Chat = () => {
         <SettingsMenu phone={narrow} onClose={() => store.setSettingsOpen(false)} />}
 
       {!wide && store.chatsOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: OVERLAY.panel, display: "flex" }}
+        // The scrim covers the WHOLE overlay: dimming only the spacer beside
+        // the panel left the wrapper's 10px padding un-dimmed - a lighter
+        // band down the panel's right edge and across its top (Jesse,
+        // 2026-08-27).
+        <div style={{ position: "fixed", inset: 0, zIndex: OVERLAY.panel, display: "flex",
+                      background: "rgba(0,0,0,0.35)" }}
           onClick={() => store.setChatsOpen(false)}>
           <div style={{ width: 292, maxWidth: "84vw", height: "100%",
                         padding: 10, boxSizing: "border-box" }}
             onClick={(e) => e.stopPropagation()}>
             <ChatsPanel store={store} onClose={() => store.setChatsOpen(false)} />
           </div>
-          <div style={{ flex: 1, background: "rgba(0,0,0,0.35)" }} />
+          <div style={{ flex: 1 }} />
         </div>
       )}
 

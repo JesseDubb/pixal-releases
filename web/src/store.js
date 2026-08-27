@@ -149,6 +149,10 @@ export function activeRecipeId(opts, options) {
   if (meta?.family === "qwen_image") return "qwen_image";
   // Anima IS the style - one graph, no style or quality variants.
   if (meta?.family === "anima") return "anima";
+  // An H3 fl2va build picked for a still renders one frame on h3_still; the
+  // Refined quality adds the in-family 2x latent refine (h3_still_2x).
+  if (meta?.family === "minimax_h3")
+    return opts.quality === "refined" ? "h3_still_2x" : "h3_still";
   if (style === "anime" || style === "fantasy") return style;
   return opts.quality === "refined" ? "realism_ii" : "realism";
 }
@@ -181,10 +185,23 @@ export function withExecutionRecipe(opts, options) {
   // Neither control reaches Qwen-Image's graph; pin them so the composer never
   // shows a style the render will not honour.
   if (meta?.family === "qwen_image") { style = "realism"; quality = "standard"; }
+  // H3 stills have one style register: the pin is the qwen_image pattern, so
+  // the pill never shows a style the render will not honour. Refined stays
+  // possible - it is the in-family 2x latent refine, gated on h3_still_2x's
+  // own availability rather than Realism II's.
+  if (meta?.family === "minimax_h3") {
+    style = "realism";
+    quality = quality === "refined" && (options?.recipes || [])
+      .some((recipe) => recipe.id === "h3_still_2x" && recipe.available)
+      ? "refined" : "standard";
+  }
   // Anima only draws anime. Pin the selector to it so the pill states what the
   // render will actually be, rather than leaving a stale Realism label on it.
   if (meta?.family === "anima") { style = "anime"; quality = "standard"; }
-  if (quality === "refined" && !(options?.recipes || [])
+  // The H3 branch above already gated its Refined on h3_still_2x; this guard
+  // is Realism II's and must not strip what that branch allowed.
+  if (quality === "refined" && meta?.family !== "minimax_h3" &&
+      !(options?.recipes || [])
       .some((recipe) => recipe.id === "realism_ii" && recipe.available))
     quality = "standard";
   const normalized = { ...opts, style, quality };
@@ -897,12 +914,27 @@ export const api = {
     const recipeId = activeRecipeId(state.opts, options);
     const spec = recipeDials(recipeId, options).find((d) => d.key === key);
     if (!spec) return false;
-    const raw = value === null || value === undefined ? "" : String(value).trim();
-    const n = raw === "" ? null : Number(raw);
-    if (raw !== "" && !Number.isFinite(n)) return false;
+    // A choice dial's value is whatever the server keyed its options on: the
+    // bypass variant is an int (vector count), the identity Build is a STRING
+    // ("full"/"r128"/"r64"). Coercing every dial through Number() rejected
+    // the Build dial outright - Number("full") is NaN - so every click was
+    // silently dropped and the control read as locked (Jesse, 2026-08-27).
+    // A choice passes only when it names an offered option, by strict
+    // equality, exactly as the server's own _recipe_choice_value gates it.
+    let n;
+    if (spec.kind === "choice") {
+      const cleared = value === null || value === undefined || value === "";
+      if (!cleared && !(spec.choices || []).some((c) => c.value === value))
+        return false;
+      n = cleared ? null : value;
+    } else {
+      const raw = value === null || value === undefined ? "" : String(value).trim();
+      n = raw === "" ? null : Number(raw);
+      if (raw !== "" && !Number.isFinite(n)) return false;
+    }
     const map = { ...(state.opts.dials || {}) };
     const current = { ...(map[recipeId] || {}) };
-    if (raw === "" || n === spec.default) delete current[key];
+    if (n === null || n === spec.default) delete current[key];
     else current[key] = n;
     if (Object.keys(current).length) map[recipeId] = current;
     else delete map[recipeId];

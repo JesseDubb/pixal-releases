@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.1.1b — 2026-08-27
+
+MiniMax H3 takes stills, and the chat writer learns from Krea's own playbook.
+
+**MiniMax H3 is an image model now.** Pick any H3 build in the model shelf -
+they sit in their own "MiniMax H3" folder - and a still renders at the
+model's native 2K: the video model run for one frame, kept at its floor of
+five frames and the first frame saved. About a minute warm on a 5090, the
+best skin texture in the app. The canvas tops out at 3.1 MP (the model's Max
+tier); rungs above it on the megapixel ladder say so. Reference-video (ref2va)
+builds stay with the Animate lanes.
+
+**Refined on an H3 build is a 2x latent refine.** The same still, then its
+own latent re-sampled at 2x through the 3D latent upscaler - lashes and pores
+at 3072x4096, and distant faces in full-body shots come back sharp. About
+three minutes. It needs the MMH3 pack and its upscaler weights; without them
+the pill says what is missing.
+
+**Official prompting.** Settings → Brain has a new switch, on by default: the
+chat writer writes scenes the way the model's makers recommend - Krea 2's own
+expansion prompt on Krea 2 recipes - instead of Pixal's photo-craft rules. A
+same-seed comparison through the real chat on fresh asks went the official
+way on three of four shots, including every render Jesse picked. Off is the
+old writer, unchanged. Each render records which writer produced its scene.
+
+**The writer stops copying the last scene.** Switch directions in a thread
+and the new ask no longer inherits the previous render's wardrobe and
+setting. The local brain writes most scenes as prose the server then queues;
+those were invisible to the writer's history filter, so seven copies of one
+outfit out-voted every new idea. A queued prose scene now counts as a render
+and leaves the context on a fresh ask.
+
+**Prompt enhance off with a character anchor** means what it says: the anchor
+drives the identity graph, its reference photo is no longer attached to the
+chat turn as an image, and your typed prompt is the positive prompt - no
+brain round-trip, no "[reference image]" leaking into the scene, no error
+after it.
+
+**Scenes are tidied before they render.** A small local brain writes things an
+image model cannot use: "no crowd, no sky" (an encoder has no negation - it
+draws the crowd), stray tool fields, and sentences about the scene instead of
+in it ("this moment captures…"). The server now removes those from a
+brain-written scene before it reaches the sampler, keeps the positive
+remainder, and records what it tidied on the job. Your own words with Prompt
+enhance off are never touched.
+
+**The identity Build dial works.** Full / r128 / r64 could be seen but not
+switched: the store rejected string-valued choices. Fixed.
+
+**Flat surfaces.** No drop shadows on panels, toggles, segmented controls or
+sliders; the chat surface sits flush at narrow widths instead of floating as
+a boxed card, and the chats drawer dims the whole window behind it. The
+prompt box pads its text by the real width of the icon cluster in its
+corner, so typing never runs under the attachments.
+
 ## 1.1.0b — 2026-08-26
 
 Every recipe opens its sampler, and H3 gets three new knobs.

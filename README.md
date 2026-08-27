@@ -6,7 +6,7 @@ The point is repeatability. Model files remain interchangeable within their supp
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.1.0b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.1.1b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 
@@ -29,7 +29,7 @@ Current build: **1.1.0b** (channel `stable`). Both values live in `PIXAL_VERSION
   all, each reporting the gigabytes it gave back - and a butler that frees
   idle weights and rests the chat brain before a render that would not fit.
 - Two separate first-frame animation engines: MiniMax H3 with native audio and
-  LTX 2.3, both launched from a finished still.
+  LTX 2.5, both launched from a finished still.
 - Chat as the studio's hands: with a remote chat brain, "animate this", "review
   it", and "make it bigger" act on the conversation's renders through the same
   verified paths as the buttons. The managed local GGUF lane deliberately keeps
@@ -434,7 +434,7 @@ by Pixal and installed by you, in Manager.
 | Qwen Image Edit (GGUF builds) | `ComfyUI-GGUF` |
 | Realism II tiled finish | `ComfyUI_UltimateSDUpscale` |
 | Realism II color correction | `ComfyUI-post-processing-nodes` |
-| LTX 2.3 animation | `ComfyUI-LTXVideo`, `ComfyUI-KJNodes`, `rgthree-comfy`, `ComfyUI-VideoHelperSuite`, and `comfyui-easy-use` |
+| LTX 2.5 animation | `ComfyUI-LTXVideo`, `ComfyUI-KJNodes`, `rgthree-comfy`, `ComfyUI-VideoHelperSuite`, and `comfyui-easy-use` |
 | MiniMax H3 multishot | [`ComfyUI-H3-Multishot`](https://github.com/jlucasmcrell/ComfyUI-H3-Multishot) |
 | PiD 4× identity upscale | `ComfyUI-PiD` (non-commercial license) |
 | Video upscale | `Deno RTX VFX` pack (or the NVIDIA RTX Video pack as fallback) |
@@ -579,11 +579,11 @@ Only the original Qwen-Image-Edit is wired today. The 2509 and 2511 releases
 take multiple reference images through `TextEncodeQwenImageEditPlus` and are not
 drop-in substitutes for the single-image node used here.
 
-### LTX 2.3 animation
+### LTX 2.5 animation
 
-The default animation model is `LTX2\ltx-2.3-22b-distilled-1.1-Q8_0.gguf`. The optional `LTX2\10Eros_v1.4-Q8_0.gguf` and `LTX2\sulphur_dev-Q8_0.gguf` profiles are non-distilled and require `LTX\ltx-2.3-22b-distilled-lora-384-1.1.safetensors` on this few-step graph.
+The animation model is `LTX2\ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors` (Lightricks' official int8 convrot build; GGUF and nvfp4 quants are recognised too), with its Gemma 4 12B text encoder `LTX2\gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors`, the `ltx-2.5-video-vae-bf16` / `ltx-2.5-audio-vae-bf16` pair, and `ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors` for the "LTX 2.5 2x" clip-upscale mode. The graph is `templates\ltx25_i2v.json`; load it in ComfyUI once to resolve those files against your LTX node version.
 
-The animation template also references its LTX 2.3 video/audio VAEs, text encoder/connector, and `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`. Load `templates\ltx_i2v.json` in ComfyUI once to resolve those auxiliary files against your LTX node version and replace unavailable example assets before using Animate.
+LTX 2.3 is retired from the Animate picker. Its template (`templates\ltx_i2v.json`) and model profiles remain so older history entries still re-roll.
 
 LTX remains its own animation engine. It does not share the MiniMax H3 model,
 conditioning, VAE, sampler, or native-audio path.

@@ -351,7 +351,7 @@ export const HistoryGrid = ({ history, onClose, onOpen, onAnimate, onReroll, onR
     // stays live, so the history icon keeps its active state and closes it.
     <div style={{
       ...(docked
-        ? { width: "100%", height: "100%", position: "relative", boxShadow: SHADOW.md }
+        ? { width: "100%", height: "100%", position: "relative" }
         : phone
           ? { position: "fixed", zIndex: OVERLAY.card, boxShadow: SHADOW.xl,
               top: "calc(8px + env(safe-area-inset-top))", right: 8,

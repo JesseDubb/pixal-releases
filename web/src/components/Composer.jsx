@@ -354,8 +354,11 @@ const SizeGroup = ({ label, value, children }) => (
      chips, not one itself.
    Reading only, no refactor - the next brief that touches chips inherits
    this map. */
-const SizeChip = ({ on, wide, title, onClick, children }) => (
-  <button type="button" title={title} onClick={onClick}
+const SizeChip = ({ on, wide, title, onClick, children, disabled = false }) => (
+  // aria-disabled, not the attribute: a disabled button swallows mouse events
+  // and the title (the cap's explanation) would never show.
+  <button type="button" title={title} onClick={disabled ? undefined : onClick}
+    aria-disabled={disabled || undefined}
     style={{
       display: "flex", alignItems: "center", justifyContent: "center",
       height: 32, width: "100%", ...(wide ? { marginTop: SPACE[6] } : null),
@@ -364,9 +367,11 @@ const SizeChip = ({ on, wide, title, onClick, children }) => (
       background: on ? "var(--accentMut)" : "transparent",
       color: on ? "var(--accent)" : "var(--textSec)",
       fontFamily: FONT, fontSize: TYPE.ui, whiteSpace: "nowrap",
-      cursor: "pointer", transition: `border-color ${MOTION.hover}`,
+      cursor: disabled ? "default" : "pointer",
+      opacity: disabled ? 0.35 : 1,
+      transition: `border-color ${MOTION.hover}`,
     }}
-    onMouseEnter={(e) => { if (!on) e.currentTarget.style.borderColor = "var(--borderHov)"; }}
+    onMouseEnter={(e) => { if (!on && !disabled) e.currentTarget.style.borderColor = "var(--borderHov)"; }}
     onMouseLeave={(e) => { if (!on) e.currentTarget.style.borderColor = "var(--border)"; }}
   >{children}</button>
 );
@@ -952,7 +957,6 @@ const LoraToggle = ({ checked, disabled = false, label, onChange, title: hint })
       <span aria-hidden="true" style={{ position: "absolute", top: 2,
         left: checked ? 15 : 2, width: 11, height: 11, borderRadius: "50%",
         background: checked ? "var(--accent)" : "var(--textMut)",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
         transition: `left ${MOTION.hover}, background ${MOTION.hover}` }} />
     </button>
   );
@@ -2228,7 +2232,17 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
   const MP_LADDER = [1, 1.5, 2, 3, 4, 6, 8];
   const customMp = Number(opts.mp) > 0 && !MP_LADDER.includes(Number(opts.mp))
     ? Number(opts.mp) : null;
-  const canvasDims = opts.aspect && opts.mp ? dimsFor(opts.aspect, Number(opts.mp)) : null;
+  // A recipe can cap the ladder (h3_still tops out at its native 2K): rungs
+  // above the cap render disabled and name it, and a stored mp above it reads
+  // out the clamped canvas rather than promising one the model cannot render.
+  const cappedRecipe = recipeById(opts.engine);
+  const mpCap = (cappedRecipe && cappedRecipe.mp_cap) || null;
+  const mpCapTitle = mpCap
+    ? `${cappedRecipe.label} tops out at ${(((options || {}).defaults || {})[opts.engine] || {}).mp ?? mpCap} MP`
+    : "";
+  const canvasDims = opts.aspect && opts.mp
+    ? dimsFor(opts.aspect, mpCap ? Math.min(Number(opts.mp), mpCap) : Number(opts.mp))
+    : null;
   const savedStyles = (options && options.saved_styles) || [];
   // The ACTIVE saved style, gated on availability the same way the store and
   // the server gate it - so the pill can never name a style that will not run.
@@ -2283,13 +2297,22 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
     // Anima draws anime and only anime; lighting Anime keeps the pill honest
     // about what withExecutionRecipe pins it to.
     if (selectedModelMeta.family === "anima") return style === "anime";
+    // MiniMax H3 renders one still way; Realism stays lit so the pill matches
+    // what withExecutionRecipe pins it to (the qwen_image pattern).
+    if (selectedModelMeta.family === "minimax_h3") return style === "realism";
     const compatible = selectedModelMeta.compatible_recipes || [];
     return style === "realism"
       ? compatible.some((id) => ["realism", "realism_ii", "zimage"].includes(id))
       : compatible.includes(style);
   };
-  const refinedAvailable = !!recipeById("realism_ii")?.available &&
-    (!opts.model || selectedModelMeta.family === "krea2");
+  // Refined is per-family: Realism II on Krea 2, the in-family 2x latent
+  // refine (h3_still_2x) on a MiniMax H3 build - each gated on its own
+  // recipe's availability.
+  const refinedRecipeId = selectedModelMeta.family === "minimax_h3"
+    ? "h3_still_2x" : "realism_ii";
+  const refinedAvailable = !!recipeById(refinedRecipeId)?.available &&
+    (refinedRecipeId === "h3_still_2x" || !opts.model ||
+     selectedModelMeta.family === "krea2");
 
   const chooseStyle = (style) => {
     if (!styleAvailable(style) || !styleAllowedByModel(style)) return;
@@ -2829,13 +2852,15 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                   </Row>
                   <Row sel={quality === "refined"}
                        disabled={!refinedAvailable}
-                       title={!recipeById("realism_ii")?.available
-                         ? (recipeById("realism_ii")?.missing || []).join("\n")
-                         : opts.model && selectedModelMeta.family !== "krea2"
-                           ? "Refined is available with Krea 2 models" : undefined}
+                       title={!recipeById(refinedRecipeId)?.available
+                         ? (recipeById(refinedRecipeId)?.missing || []).join("\n")
+                         : selectedModelMeta.family === "minimax_h3"
+                           ? "2x latent refine in the model's own family\nlashes and pores at 3072x4096, and it repairs distant faces\n~3 min"
+                           : opts.model && selectedModelMeta.family !== "krea2"
+                             ? "Refined is available with Krea 2 models" : undefined}
                        onClick={() => chooseQuality("refined")}>
                     <Stack size={12} weight="duotone" /> Refined
-                    <Tag>{!recipeById("realism_ii")?.available ? "assets missing"
+                    <Tag>{!recipeById(refinedRecipeId)?.available ? "assets missing"
                       : refinedAvailable ? "two-pass finish" : "Krea 2 only"}</Tag>
                   </Row>
                 </>
@@ -2982,14 +3007,19 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                     instead of being tacked on as a ninth cell. */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)",
                               gap: SPACE[6] }}>
-                  {[null, ...MP_LADDER].map((v) => (
+                  {[null, ...MP_LADDER].map((v) => {
+                    const capped = v !== null && mpCap && v > mpCap;
+                    return (
                     <SizeChip key={String(v)} on={opts.mp === v}
-                      title={v === null ? "Let the recipe choose the canvas"
-                                        : `${v} megapixels`}
+                      disabled={!!capped}
+                      title={capped ? mpCapTitle
+                                    : v === null ? "Let the recipe choose the canvas"
+                                                 : `${v} megapixels`}
                       onClick={() => setOpts({ mp: v })}>
                       {v === null ? "auto" : <>{v}<Unit>MP</Unit></>}
                     </SizeChip>
-                  ))}
+                    );
+                  })}
                 </div>
                 {customMp !== null && (
                   <SizeChip on={opts.mp === customMp} wide

@@ -21,6 +21,7 @@ export const prettyTemplate = (t) => ({
   ltx25_i2v: "LTX 2.5",
   h3_i2v: "MiniMax H3",
   h3_multishot: "MiniMax H3 Multishot",
+  h3_still: "MiniMax H3",
   vl_review: "review",
 }[t] || String(t || "").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
@@ -47,10 +48,22 @@ export const prettyModel = (m, family) => {
   if (!m) return m;
   let s = String(m).split(/[\\/]/).pop().replace(/\.(safetensors|gguf|ckpt|pt)$/i, "");
   if (family === "minimax_h3") {
-    const low = s.toLowerCase();
-    if (low.includes("fl2va")) return "MiniMax H3 I2V";
-    if (low.includes("ref2va")) return "MiniMax H3 Reference";
-    return "MiniMax H3";
+    // The Animate picker's own wording (server _h3_finetune_label): packaging
+    // words drop and the identity survives - "10eros_max_fl2va_beta2" reads
+    // "10Eros Max Beta2". A stem that is ALL packaging (the stock builds)
+    // composes family + variant + quant instead: "H3 FL2VA int8".
+    const DROP = new Set(["h3", "fl2va", "ref2va", "pruned", "int8", "convrot",
+                          "comfyui", "minimax"]);
+    const words = s.split(/[_\-\s]+/).filter(Boolean);
+    const identity = words.filter((w) => !DROP.has(w.toLowerCase()));
+    if (identity.length)
+      return identity.map((w) => w.toLowerCase()
+        .replace(/(^|\d)([a-z])/g, (_m, a, b) => a + b.toUpperCase()))
+        .join(" ");
+    const PACK = new Set(["minimax", "pruned", "convrot", "comfyui"]);
+    const TOKEN = { h3: "H3", fl2va: "FL2VA", ref2va: "REF2VA" };
+    return words.filter((w) => !PACK.has(w.toLowerCase()))
+      .map((w) => TOKEN[w.toLowerCase()] || w).join(" ") || "MiniMax H3";
   }
   // Official LTX weights carry the whole recipe in the filename
   // (ltx-2.5-22b-distilled-transformer-comfy-int8-convrot); the version and
@@ -113,6 +126,7 @@ const FAMILY_LABELS = {
   qwen_image: "Qwen Image",
   qwen_edit: "Qwen Image Edit",
   flux: "Flux",
+  minimax_h3: "MiniMax H3",
   video: "Video",
   audio: "Audio",
   auxiliary: "Auxiliary",

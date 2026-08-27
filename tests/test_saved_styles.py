@@ -17,6 +17,7 @@ def model(rel, family, variant="any", **extra):
 
 
 KREA = model("Krea 2\\analogMadnessKrea2Turbo_v20.safetensors", "krea2")
+H3 = model(server.H3_MODEL, "minimax_h3", "fl2va")
 ZTURBO = model("ZiT\\z_image_turbo_bf16.safetensors", "zimage", "turbo")
 ZBASE = model("ZiB\\z_image_bf16.safetensors", "zimage", "base")
 
@@ -161,9 +162,24 @@ class SamplerSeatTests(unittest.TestCase):
         inside the builder's override loop, at queue time, on the user."""
         for base_id, seat in server.SAMPLER_SEATS.items():
             with self.subTest(recipe=base_id):
-                template = server.TEMPLATES[
-                    "zimage" if server.RECIPE_SPECS[base_id]["family"] == "zimage"
-                    else base_id]
+                key = ("zimage" if server.RECIPE_SPECS[base_id]["family"] == "zimage"
+                       else base_id)
+                if key not in server.TEMPLATES:
+                    # h3_still builds its graph in code (9.58) - the same
+                    # guarantee, checked against the built graph itself, seat
+                    # map targets included.
+                    with catalog(H3), patch.object(
+                            server, "_video_asset",
+                            side_effect=lambda _kind, rel: rel):
+                        g, _cap, _info = server.build_h3_still("a barn", 1)
+                    self.assertIn(seat["node"], g)
+                    self.assertEqual(g[seat["node"]]["class_type"],
+                                     seat["class"])
+                    for targets in (seat.get("map") or {}).values():
+                        for node, _inp in targets:
+                            self.assertIn(node, g)
+                    continue
+                template = server.TEMPLATES[key]
                 self.assertIn(seat["node"], template)
                 self.assertEqual(template[seat["node"]]["class_type"], seat["class"])
 

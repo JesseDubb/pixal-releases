@@ -1,0 +1,326 @@
+{
+ "brief": "She turns.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+ "graph": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 987
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "VAEDecodeAudio",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "4",
+     0
+    ]
+   }
+  },
+  "14": {
+   "class_type": "VHS_VideoCombine",
+   "inputs": {
+    "audio": [
+     "13",
+     0
+    ],
+    "crf": 14,
+    "filename_prefix": "pixal_dm/h3_she_turns_audio_generate",
+    "format": "video/h264-mp4",
+    "frame_rate": 24,
+    "images": [
+     "h3:up:decode",
+     0
+    ],
+    "loop_count": 0,
+    "pingpong": false,
+    "pix_fmt": "yuv420p",
+    "save_output": true
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "prepared.png"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "first_frame": [
+     "5",
+     0
+    ],
+    "height": 1120,
+    "length": 124,
+    "prompt": "She turns.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 928
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "res_multistep"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  },
+  "h3:up:cond": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "first_frame": [
+     "h3:up:imgfit",
+     0
+    ],
+    "height": 2240,
+    "length": 124,
+    "prompt": "She turns.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1856
+   }
+  },
+  "h3:up:decode": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "h3:up:sample",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "h3:up:imgfit": {
+   "class_type": "ImageScale",
+   "inputs": {
+    "crop": "disabled",
+    "height": 2240,
+    "image": [
+     "h3:up:imgup",
+     0
+    ],
+    "upscale_method": "lanczos",
+    "width": 1856
+   }
+  },
+  "h3:up:imgloader": {
+   "class_type": "UpscaleModelLoader",
+   "inputs": {
+    "model_name": "4x\\4xPurePhoto-RealPLSKR.pth"
+   }
+  },
+  "h3:up:imgup": {
+   "class_type": "ImageUpscaleWithModel",
+   "inputs": {
+    "image": [
+     "5",
+     0
+    ],
+    "upscale_model": [
+     "h3:up:imgloader",
+     0
+    ]
+   }
+  },
+  "h3:up:noise": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 988
+   }
+  },
+  "h3:up:param": {
+   "class_type": "MMH3LatentUpscaleWithModelParams",
+   "inputs": {
+    "device": "cuda",
+    "height": 2240,
+    "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+    "precision": "bf16",
+    "width": 1856
+   }
+  },
+  "h3:up:sample": {
+   "class_type": "MMH3UltimateUpscale",
+   "inputs": {
+    "cfg": 1.0,
+    "conditioning": [
+     "h3:up:cond",
+     0
+    ],
+    "latent": [
+     "11",
+     0
+    ],
+    "latent_upscale_param": [
+     "h3:up:param",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ],
+    "noise": [
+     "h3:up:noise",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "h3:up:sigmas",
+     0
+    ],
+    "spatial_split_param": [
+     "h3:up:tiles",
+     0
+    ],
+    "temporal_split_param": [
+     "h3:up:time",
+     0
+    ]
+   }
+  },
+  "h3:up:sigmas": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 0.22,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 6
+   }
+  },
+  "h3:up:tiles": {
+   "class_type": "MMH3SpatialSplitParams",
+   "inputs": {
+    "fade_height": 192,
+    "fade_width": 192,
+    "min_tile_size": 256,
+    "overlap_blend": "smoothstep",
+    "overlap_mode": "earlier",
+    "spatial_h_overlap": 224,
+    "spatial_w_overlap": 224,
+    "tile_height": 896,
+    "tile_width": 768
+   }
+  },
+  "h3:up:time": {
+   "class_type": "MMH3TemporalSplitParams",
+   "inputs": {
+    "anchor_strength": 0.999,
+    "chunk_length": 51,
+    "temporal_overlap": 17
+   }
+  }
+ }
+}

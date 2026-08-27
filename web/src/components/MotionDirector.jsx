@@ -17,14 +17,15 @@
 // row narrates any non-default it is hiding, so collapsing never lies about
 // what will render.
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, CaretDown, FilmStrip,
-         Minus, Plus, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretDown, CircleNotch, FilmStrip,
+         Minus, Plus, Sparkle, Trash, X } from "@phosphor-icons/react";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W, LH } from "../lib/design-tokens.js";
 import { LightricksMark, MiniMaxMark } from "../lib/BrandMarks.jsx";
 import { Disclosure } from "../lib/Disclosure.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
 import { InfoTip } from "./InfoTip.jsx";
+import { Picker } from "../lib/Picker.jsx";
 import { imgUrl, thumbUrl, subscribe, animateBrief } from "../transport.js";
 
 const LENGTHS = [
@@ -297,101 +298,7 @@ const groupModels = (models) => {
 // selected build readable at rest, the whole name in the title when it has
 // to clip. A segmented track cannot hold a community finetune name; this
 // holds twenty.
-const ModelPicker = ({ label, options, value, onChange }) => {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const boxRef = useRef(null);
-  const inputRef = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    inputRef.current?.focus();
-    const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
-    document.addEventListener("pointerdown", away);
-    return () => document.removeEventListener("pointerdown", away);
-  }, [open]);
-  const current = options.find((opt) => opt.id === value);
-  const needle = q.trim().toLowerCase();
-  const hits = options.filter((opt) => !needle ||
-    `${opt.label} ${opt.description || ""}`.toLowerCase().includes(needle));
-  const choose = (opt) => { onChange(opt.id); setOpen(false); setQ(""); };
-  return (
-    <div ref={boxRef} style={{ position: "relative" }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && open) { e.stopPropagation(); setOpen(false); setQ(""); }
-      }}>
-      <button type="button" aria-haspopup="listbox" aria-expanded={open}
-        aria-label={label} title={current ? current.label : label}
-        onClick={() => setOpen((o) => !o)}
-        style={{ width: "100%", height: 28, display: "flex", alignItems: "center",
-                 gap: SPACE[8], padding: `0 ${SPACE[10]}px`, cursor: "pointer",
-                 background: "var(--bg2)",
-                 border: `1px solid ${open ? "var(--borderStr)" : "var(--border)"}`,
-                 borderRadius: RADIUS.input, fontFamily: FONT, fontSize: TYPE.ui,
-                 color: "var(--text)", textAlign: "left",
-                 transition: `border-color ${MOTION.hover}` }}>
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
-                       textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {current ? current.label : "choose a build…"}
-        </span>
-        <CaretDown size={11} weight="bold" style={{ color: "var(--textTer)",
-          flex: "none", transform: open ? "rotate(180deg)" : "none",
-          transition: `transform ${MOTION.hover}` }} />
-      </button>
-      {open && (
-        <div role="listbox" aria-label={label} className="px-ov-pop"
-          style={{ position: "absolute", left: 0, right: 0, top: "calc(100% + 6px)",
-                   transformOrigin: "top center",
-                   zIndex: 5, padding: SPACE[4], background: "var(--bg1)",
-                   border: "1px solid var(--borderHov)", borderRadius: RADIUS.card,
-                   boxShadow: SHADOW.lg, display: "flex", flexDirection: "column",
-                   gap: SPACE[4] }}>
-          {options.length > 6 && (
-            <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="find a build…" className="px-input" spellCheck={false}
-              style={{ width: "100%", height: 28, padding: `0 ${SPACE[8]}px`,
-                       background: "var(--bg2)", border: "1px solid var(--border)",
-                       borderRadius: RADIUS.input, outline: "none",
-                       color: "var(--text)", fontFamily: FONT, fontSize: 12 }} />
-          )}
-          <div className="px-scroll" style={{ maxHeight: 236, overflowY: "auto",
-                        display: "flex", flexDirection: "column" }}>
-            {hits.map((opt) => {
-              const on = opt.id === value;
-              return (
-                <button key={opt.id} type="button" role="option" aria-selected={on}
-                  onClick={() => choose(opt)} title={opt.label}
-                  style={{ display: "flex", flexDirection: "column",
-                           alignItems: "stretch", gap: 1,
-                           padding: `${SPACE[6]}px ${SPACE[8]}px`, textAlign: "left",
-                           background: on ? "var(--accentMut)" : "transparent",
-                           border: "none", borderRadius: RADIUS.input,
-                           cursor: "pointer", fontFamily: FONT }}>
-                  <span style={{ fontSize: 12, overflow: "hidden",
-                                 textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                 color: on ? "var(--accent)" : "var(--text)" }}>
-                    {opt.label}
-                  </span>
-                  {opt.description && (
-                    <span style={{ fontSize: 9, color: "var(--textTer)",
-                                   overflow: "hidden", textOverflow: "ellipsis",
-                                   whiteSpace: "nowrap" }}>
-                      {opt.description}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            {!hits.length && (
-              <span style={{ padding: SPACE[8], fontSize: 11, color: "var(--textTer)" }}>
-                nothing matches “{q.trim()}”
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
+const ModelPicker = Picker;
 
 // The model companies' marks, not generic glyphs: Lightricks makes LTX,
 // MiniMax makes H3. Mono when idle; the active segment keeps MiniMax's color.
@@ -450,6 +357,36 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // server sees both the pack and its 659 MB upscaler weights.
   const [upscale, setUpscale] = useState(
     !!engines.find((item) => item.upscale_2x_default && item.upscale_2x));
+  // Resolution (9.55). The canvas H3 renders at NATIVELY - detail from the
+  // model, not an upscaler; with this row the 2x row below becomes the
+  // budget option (render small, upscale) and this is the quality one. Both
+  // can be on at once - the butler prices the resulting canvas either way.
+  // Opens on the Settings default, which rides the engine entry as
+  // resolution_default (the 9.31 flag discipline); a flip below stays
+  // per-clip. The row shows only where the server publishes the tier list.
+  const [resolution, setResolution] = useState(
+    engines.find((item) => item.resolution_default)?.resolution_default
+    || "standard");
+  // The canvas THIS still gets at each tier, from the server's own
+  // adaptive-canvas math - a JS port would be a second implementation of the
+  // walk-down rule, free to drift off the canvas the render actually gets,
+  // and the popup never learns the still's pixels this way. Fetched once per
+  // tier on open; a hint shows the tier's relative time alone until its
+  // answer lands.
+  const [canvases, setCanvases] = useState({});
+  useEffect(() => {
+    if (!activeEngine?.h3_resolutions) return;
+    for (const tier of activeEngine.h3_resolutions) {
+      fetch(`/api/h3/canvas?id=${encodeURIComponent(sourceId)}&resolution=${tier.id}`)
+        .then((resp) => resp.json())
+        .then((d) => {
+          if (d && d.ok)
+            setCanvases((seen) => seen[tier.id]
+              ? seen : { ...seen, [tier.id]: [d.width, d.height] });
+        })
+        .catch(() => {});
+    }
+  }, [activeEngine?.id, sourceId]);
   const speedModes = activeEngine?.speed_modes || [];
   const defaultSpeed = activeEngine?.speed_default || "quality";
   const speedMode = speedModes.find((m) => m.id === speed && m.available !== false)
@@ -540,8 +477,8 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   // A draft is written for ONE configuration: engine, model, length, shot
   // count and the end frame are the director's inputs, so moving any of them
   // stales the brief and it stops shipping as a script. fps, speed, sparse,
-  // upscale and the LoRA chain never reach the director - sampler settings
-  // leave the draft alone.
+  // upscale, resolution and the LoRA chain never reach the director - sampler
+  // settings leave the draft alone.
   const draftCfg = useRef([engineId, model, secs, shots, endId]);
   useEffect(() => {
     const next = [engineId, model, secs, shots, endId];
@@ -632,7 +569,8 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         fpsChoices.length ? fps : null, activeShots,
         speedMode ? speedMode.id : null, bridgeEligible && endId ? endId : null,
         activeEngine.sparse ? sparse : undefined,
-        activeEngine.upscale_2x ? upscale : undefined);
+        activeEngine.upscale_2x ? upscale : undefined,
+        activeEngine.h3_resolutions ? resolution : undefined);
       if (d && d.ok) {
         setNote(typeof d.brief === "string" ? d.brief : "");
         setDrafted(true);
@@ -654,7 +592,8 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
       isScript ? note.trim() : null, speedMode ? speedMode.id : null,
       bridgeEligible && endId ? endId : null,
       activeEngine.sparse ? sparse : undefined,
-      activeEngine.upscale_2x ? upscale : undefined);
+      activeEngine.upscale_2x ? upscale : undefined,
+      activeEngine.h3_resolutions ? resolution : undefined);
     onClose();
   };
 
@@ -675,6 +614,10 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
   if (bridgeEligible && endId) tweaks.push("end frame set");
   if (speedMode && speedMode.id !== defaultSpeed) tweaks.push(speedMode.label.toLowerCase());
   if (activeEngine?.sparse && !sparse) tweaks.push("dense attention");
+  if (activeEngine?.h3_resolutions && resolution === "high")
+    tweaks.push("High res");
+  if (activeEngine?.h3_resolutions && resolution === "max")
+    tweaks.push("Max res");
   if (activeEngine?.upscale_2x && upscale) tweaks.push("2x upscale");
   if (fpsChoices.length > 1 && fps !== (activeEngine?.fps_default || 30))
     tweaks.push(`${fps}fps`);
@@ -721,6 +664,11 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         }}>
         {/* ZONE 1 - the brief. The note IS the product; it gets the room. */}
         <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+          {/* The draft control lives IN the box (Jesse, 2026-08-25: three
+              footer buttons "looks stupid", and a footer pill gave no sign
+              the director was working). A sparkle at rest; a spinner and
+              "Drafting a direction…" while the brief is being written. */}
+          <div style={{ position: "relative" }}>
           <textarea
             ref={taRef} value={note} rows={4}
             onChange={(e) => {
@@ -734,17 +682,43 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
             }}
             placeholder={"What happens? Action, camera, pacing — your words become the brief.\n" +
               "“she pushes off the hood, turns and laughs — handheld follows her”"}
-            className="px-input"
+            className="px-input px-scroll"
             style={{
               width: "100%", resize: "none", background: "var(--bg2)",
               border: "1px solid var(--border)", borderRadius: RADIUS.card,
               outline: "none", color: "var(--text)", fontFamily: FONT, fontSize: 13,
               lineHeight: 1.5, padding: SPACE[12],
+              paddingRight: drafting ? 190 : 44,
             }}
           />
-          {drafting ? (
-            <span style={CAPTION}>looking at the frame · directing…</span>
-          ) : draftErr ? (
+          <button type="button" onClick={draftBrief}
+            disabled={drafting || !activeEngine?.available || !model}
+            aria-label="draft the brief"
+            title="the director writes the brief from the frame - you edit it, action ships it as written"
+            style={{
+              position: "absolute", right: SPACE[12], bottom: SPACE[8],
+              height: 28, padding: drafting ? `0 ${SPACE[10]}px` : 0,
+              width: drafting ? "auto" : 28,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              gap: SPACE[6],
+              background: drafting ? "var(--bg3)" : "transparent",
+              border: "1px solid transparent", borderRadius: RADIUS.pill,
+              color: "var(--accent)", cursor: drafting ? "default" : "pointer",
+              fontFamily: FONT, fontSize: TYPE.label, whiteSpace: "nowrap",
+              transition: `background ${MOTION.hover}`,
+            }}
+            onMouseEnter={(e) => { if (!drafting) e.currentTarget.style.background = "var(--bg3)"; }}
+            onMouseLeave={(e) => { if (!drafting) e.currentTarget.style.background = "transparent"; }}>
+            {drafting ? (
+              <>
+                <CircleNotch size={14} weight="bold" aria-hidden="true"
+                  style={{ animation: "px-spin 0.9s linear infinite" }} />
+                <span style={{ color: "var(--textSec)" }}>Drafting a direction…</span>
+              </>
+            ) : <Sparkle size={16} weight="duotone" aria-hidden="true" />}
+          </button>
+          </div>
+          {draftErr ? (
             <span style={CAPTION}>{draftErr}</span>
           ) : drafted ? (
             <span style={CAPTION}>
@@ -893,7 +867,9 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
               style={{ flex: 1, borderTop: "1px solid var(--border)", minWidth: SPACE[12] }} />
           </>}>
               {availableModels.length > 1 && (
-                <Row label="model"
+                <Row label={activeEngine?.id === "h3"
+                    ? <>model <InfoTip size={11} text={"H3 comes in two lanes, chosen by the build. FL2VA animates the still you picked - it is the clip's first frame, and the end-frame row can pin a last one. REF2VA puts the PERSON or THING in the still into a new scene you describe - the still is a reference, not the first frame, so the camera, room and pose come from the brief. Use FL2VA to bring a render to life, REF2VA to send a character somewhere new."} /></>
+                    : "model"}
                   hint={activeModel?.nsfw
                     ? "NSFW finetune — distill LoRA chained automatically"
                     : activeModel?.description || null}>
@@ -1021,23 +997,37 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
                 </Row>
               )}
 
+              {activeEngine?.h3_resolutions && (
+                <Row label={<>Resolution <InfoTip size={11} text={"H3 renders at this canvas - detail comes from the model, not an upscaler. Composition can shift at a bigger canvas. High and Max are not for the faint of heart: a 10 s Max clip is ~20 min on a 5090 and fills the card."} /></>}
+                  hint={(() => {
+                    const tier = activeEngine.h3_resolutions.find(
+                      (r) => r.id === resolution);
+                    const canvas = canvases[resolution];
+                    const size = canvas ? `${canvas[0]}x${canvas[1]}` : null;
+                    if (!tier || tier.id === "standard") return size;
+                    const time = `~${Math.round(tier.mp)}x the time`;
+                    return size ? `${size} · ${time}` : time;
+                  })()}>
+                  <SegmentedControl ariaLabel="resolution" size="sm"
+                    value={resolution} onChange={setResolution}
+                    options={activeEngine.h3_resolutions.map((tier) => ({
+                      v: tier.id, label: tier.label,
+                      title: (canvases[tier.id]
+                        ? `${canvases[tier.id][0]}x${canvases[tier.id][1]} on this still`
+                        : `${tier.mp} MP`) + (tier.id === "standard"
+                        ? "" : ` · ~${Math.round(tier.mp)}x the time`),
+                    }))} />
+                </Row>
+              )}
+
               {activeEngine?.upscale_2x && (
-                <Row label="2x upscale"
+                <Row label={<>2x upscale <InfoTip size={11} text={"Native 2x: after sampling, H3 runs a second pass over its own latent at twice the canvas, so detail is generated by the video model itself rather than guessed from finished pixels. Costs ~3x the render near the card's ceiling - even a 2 s clip takes a while. Runs in short time chunks so long clips stay clean."} /></>}
                   hint={upscale
                     ? "~3x longer \u00b7 runs inside this render, not after"
                     : "the render's native size"}>
-                  <SegmentedControl ariaLabel="2x upscale" size="sm"
-                    value={upscale ? "2x" : "off"}
-                    onChange={(v) => setUpscale(v === "2x")}
-                    options={[
-                      { v: "off", label: "off",
-                        title: "The render's native canvas \u2014 the fast path." },
-                      { v: "2x", label: "2x",
-                        title: "Re-samples the fresh latent at twice the size, inside the "
-                               + "same job \u2014 ~3x the render time, close to the card's "
-                               + "ceiling. Not a post action: it needs the render's "
-                               + "latent, so it can only run as part of the render." },
-                    ]} />
+                  <Switch on={upscale} label="2x upscale"
+                    title={upscale ? "render at the native size" : "render at twice the size"}
+                    onChange={setUpscale} />
                 </Row>
               )}
 
@@ -1138,22 +1128,6 @@ export const MotionDirector = ({ onClose, onAction, options, history = [],
         <div style={{ flex: "0 0 auto", padding: `0 ${SPACE[20]}px ${SPACE[20]}px`,
                       display: "flex", alignItems: "center", justifyContent: "flex-end",
                       gap: SPACE[8] }}>
-          {/* 9.36: an ACTION, so it wears the footer's action pill like its
-              neighbours (DESIGN.md: selection and action must look different)
-              - secondary style, and never a selection chip. */}
-          <button type="button" onClick={draftBrief}
-            disabled={drafting || !activeEngine?.available || !model}
-            title="read the brief before the render - the director writes it, you edit it, action ships it as written"
-            style={{
-              height: 36, padding: `0 ${SPACE[16]}px`, cursor: "pointer",
-              display: "inline-flex", alignItems: "center",
-              background: "transparent", border: "1px solid var(--border)",
-              borderRadius: RADIUS.pill, color: "var(--textSec)",
-              fontFamily: FONT, fontSize: 13, whiteSpace: "nowrap",
-              opacity: drafting ? 0.6 : 1,
-            }}>
-            draft the brief
-          </button>
           <button type="button" onClick={() => go(null)}
             disabled={!activeEngine?.available || !model}
             title="no note - the director animates what's already in the frame"

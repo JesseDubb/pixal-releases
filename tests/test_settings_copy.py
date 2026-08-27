@@ -551,5 +551,40 @@ class H3Upscale2xSection(unittest.TestCase):
                       SRC)
 
 
+class H3ResolutionSection(unittest.TestCase):
+    """9.55: the H3 resolution default sits next to the H3 2× Section in the
+    Video tab's finishing group - the same shape, the same gloss contract
+    ("the popup still decides per clip"), one fact per option title (the MP
+    and the relative time), Lumen SegmentedControl only. It follows rather
+    than precedes the 2× Section because 9.31 pinned Upscaler -> H3 2×
+    adjacency above."""
+
+    def test_the_section_sits_next_to_the_2x_one(self):
+        video = SRC[SRC.index('{tab === "video" &&'):]
+        two_x = video.index('<Section title={<>H3 2× upscale')
+        nxt = video.index("<Section ", two_x + 1)
+        self.assertIn("H3 resolution", video[nxt:nxt + 300],
+                      "the section right after H3 2× upscale is not the "
+                      "H3 resolution one")
+
+    def test_the_wire_key_is_h3_resolution(self):
+        self.assertIn("apply({ video: { h3_resolution: id } }", SRC)
+        self.assertIn('value={videoCfg.h3_resolution || "standard"}', SRC)
+
+    def test_every_option_title_is_one_fact(self):
+        # the MP and the relative time - no adjectives
+        self.assertIn("`${r.mp} MP — the fast default.`", SRC)
+        self.assertIn("~${Math.round(r.mp)}x the render time.", SRC)
+
+    def test_the_gloss_is_the_per_clip_contract(self):
+        section = SRC[SRC.index('<Section title={<>H3 resolution'):]
+        section = section[:section.index("</Section>")]
+        self.assertIn("The popup still decides per clip — this sets the default.",
+                      section)
+        self.assertIn("<SegmentedControl", section)
+        self.assertIn("<InfoTip", section)
+        self.assertIn("detail comes from the model, not an upscaler", section)
+
+
 if __name__ == "__main__":
     unittest.main()

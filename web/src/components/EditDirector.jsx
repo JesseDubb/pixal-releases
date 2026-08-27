@@ -404,7 +404,10 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     <ModalShell onClose={onClose}
       boxProps={{ role: "dialog", "aria-label": "Edit this image" }}
       boxStyle={{
-        width: imageUrl ? 640 : 480, maxWidth: "94vw", maxHeight: "92vh",
+        // Wide enough for a landscape frame, tall enough that a portrait one
+        // reaches the bottom edge at a paintable size (Jesse, 2026-08-25:
+        // "it needs to show the entire image so I can paint to the edge").
+        width: imageUrl ? "min(1100px, 94vw)" : 480, maxWidth: "94vw", maxHeight: "92vh",
         overflowY: "auto",
         background: "var(--bg1)", border: "1px solid var(--borderHov)",
         borderRadius: 20, boxShadow: SHADOW.xl, padding: SPACE[20],
@@ -450,7 +453,10 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
                             willChange: zoom > 1 ? "transform" : "auto" }}>
                 <img ref={imgRef} src={imageUrl} alt="edit source" onLoad={onImgLoad}
                      draggable={false}
-                     style={{ display: "block", maxWidth: "100%", maxHeight: "48vh",
+                     style={{ display: "block", maxWidth: "100%",
+                              // the modal's 92vh minus its chrome (header, tools,
+                              // prompt row, footer ~ 300px); never below 40vh
+                              maxHeight: "max(40vh, calc(92vh - 300px))",
                               userSelect: "none" }} />
                 <canvas ref={viewRef}
                   onPointerDown={down} onPointerMove={move}

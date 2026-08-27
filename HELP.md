@@ -223,6 +223,10 @@ whole setup:
    scheduler. Leave a field blank and it "follows the recipe" — the dialog's
    own footnote: "Blank follows the recipe, so the style keeps improving when
    the recipe does — only what you change is saved."
+   Under the sampler sit two optional text fields: **Negative** — what the
+   sampler steers away from, and it only does anything above cfg 1 — and
+   **Prompt tail**, a clause appended after the caption (after the wardrobe
+   lock, so it is always the closing clause).
 3. If you had a canvas pinned in the composer, it is saved too ("canvas 3:2
    @ 2MP — saved with the style"); otherwise "no canvas pinned — the recipe's
    default is used".
@@ -422,7 +426,8 @@ Three ways to go:
   "stitching the trailer").
 - **surprise me** sends no note at all — its tooltip: "no note - the director
   animates what's already in the frame".
-- **draft the brief** asks the director for the brief without rendering — the
+- **the sparkle in the brief box** asks the director for the brief without
+  rendering — it spins with "Drafting a direction…" while it works, then the
   note is replaced by what it wrote, so you can read and edit it before any
   GPU time is spent. A drafted brief then ships as written, exactly like a
   script, until you change the engine, model, length, shots or end frame —
@@ -521,6 +526,17 @@ Inside, in order:
   The reason "dense" exists is so you can render the same shot both ways and
   judge the difference yourself. If the pack is not installed the row is not
   shown at all.
+- **Resolution** — H3. The canvas the clip renders at natively: "Standard"
+  (about 1 MP, e.g. 768x1024 for a 3:4 still), "High" (about 1.8 MP,
+  ~2x the time) or "Max" (about 3.1 MP, ~3x the time); the hint names the
+  exact canvas the picked still will get. Detail at a bigger canvas comes
+  from the model itself, not an upscaler — the skin-and-hair difference is
+  visible — but the model re-frames at a bigger canvas, so composition can
+  shift, and the big tiers are slow: a 10 s Max clip is about 20 minutes on
+  a 5090 and fills the card. The 2x upscale row below is the budget option
+  (render small, then upscale); this row is the quality one, and both can
+  be on at once. Opens on the Settings default (Settings → Video → "H3
+  resolution"); a flip here is per clip.
 - **2x upscale** — H3, and only when the upscale pack and its 659 MB
   upscaler weights are installed. "off" (the default, hinted "the render's
   native size") or "2x" ("~3x longer · runs inside this render, not after").
@@ -553,7 +569,7 @@ builds with their sizes and a verdict per file — "fits", "too big", or
 The dialog always opens on your defaults. Change them under **Settings →
 Video**:
 
-- **Video engine** — "Which engine the Animate popup opens on. The popup
+- **Video engine** — "Which engine the popup opens on. The popup
   still switches freely per clip - this only sets where it starts." Leave it
   on "Auto" to follow the server's order.
 - **Video model** — "Which model the Animate popup opens on inside its
@@ -596,8 +612,7 @@ The "video clips" control lists the clip upscalers:
 - **VSR Low / Medium / High / Ultra** — RTX Video Super Resolution, a
   Windows driver feature. The hint states the deal: "Doubled at 2× with
   audio kept." (The scale figure follows your setting.) Without the Deno RTX
-  VFX node pack the row is greyed: "Install the Deno RTX VFX node pack to
-  upscale clips."
+  VFX node pack the row is greyed: "Install the Deno RTX VFX node pack."
 - **LTX 2.5 2x** — a generative re-render: "Re-rendered at 2× — real new
   detail, audio untouched." Slower than
   VSR, and it invents detail rather than interpolating it.
@@ -608,8 +623,8 @@ A separate switch, "PiD finish", changes how Identity Edit renders decode at
 all; the tip beside it explains: "Identity Edit renders decode through NVIDIA
 PiD instead of the Wan VAE — the finished latent is repainted at 4× in a
 4-step diffusion pass. A 2:3 canvas comes back 2688×4032." The trade-off is
-stated where you flip it: "Experimental: canvas snaps to 1024-class presets
-and returns 4×."
+stated where you flip it: "Experimental: canvas snaps to 1024-class presets,
+returns 4×."
 
 ---
 
@@ -673,7 +688,7 @@ GB to preview what that tier honestly gets. The tip: what the machine can
 hold resident is advisory — pickers flag what a tier holds poorly; the card
 itself is still managed at render time.
 
-**Model folders** — "Where your checkpoints and LoRAs live." plus the count
+**Model folders** — "Where checkpoints and LoRAs live." plus the count
 it indexed ("Found 412 files."). The list is every folder Pixal scans: your
 ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
 e.g. D:\models"), remove one with its ×, then **Rescan folders** — the note
@@ -721,17 +736,17 @@ tab.
 ### Video
 
 
-**Video engine** — "Which engine the Animate popup opens on." **Video
+**Video engine** — "Which engine the popup opens on." **Video
 model** — "Which model the popup opens on." The Animate dialog's defaults
 (see Section 4); each tip notes the popup still switches freely per clip.
 
-**Dialogue format** — "How H3 briefs write spoken lines." **quotes** is the
+**Dialogue format** — "How H3 briefs write speech." **quotes** is the
 default — `(S1) says "…"`, the MiniMax-H3 discussion #76 form; it won the
 same-seed A/B with no opening blip and no cue read aloud. **tags** is
 MiniMax's trained `(S1) says: <d>[English] …</d>`, which some seeds open
 with a half-second of gibberish.
 
-**Upscaler** — "Used by the upscale button on a finished clip." The "video
+**Upscaler** — "The upscale button on finished clips." The "video
 clips" engine (VSR, or LTX 2.5 2x); walked in Section 5.
 
 **H3 2× upscale** — "The popup still decides per clip — this sets the
@@ -739,6 +754,13 @@ default." The MiniMax 2× pass runs inside the render — it re-samples the
 render's own latent, so it can never be a button on a finished clip — and
 costs roughly 3× the render time. Greyed until the MMH3 Ultimate Upscale
 pack and its 659 MB weights are installed.
+**H3 resolution** — "The popup still decides per clip — this sets the
+default." The canvas H3 renders at natively: **Standard** (1.0 MP, the fast
+default), **High** (1.8 MP, ~2x the render time) or **Max** (3.1 MP, ~3x the
+render time). Detail comes from the model, not an upscaler; a bigger canvas
+re-frames the shot, and a 10 s Max clip is about 20 minutes on a 5090 and
+fills the card. The 2× row stays the budget option — render small, then
+upscale.
 
 ### Models
 
@@ -1130,7 +1152,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.0.10b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.0b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

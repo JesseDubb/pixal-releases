@@ -116,7 +116,10 @@ class ModelRowOneControl(unittest.TestCase):
         # The picker shows the selected build's full label at rest (the
         # trigger clips with an ellipsis and keeps the whole label in its
         # title), and its option rows do the same.
-        block = _block("const ModelPicker = ", "const ENGINE_ICONS")
+        # The picker is the app's shared Picker (lib/Picker.jsx) since
+        # 2026-08-26; MotionDirector aliases it as ModelPicker.
+        self.assertIn("const ModelPicker = Picker;", SRC)
+        block = (ROOT / "web" / "src" / "lib" / "Picker.jsx").read_text(encoding="utf-8")
         self.assertIn('textOverflow: "ellipsis"', block)
         self.assertIn('whiteSpace: "nowrap"', block)
         self.assertRegex(block, r"title=\{[^}]*\.label",
@@ -276,11 +279,15 @@ class Upscale2xRow(unittest.TestCase):
                          "the hardcoded OFF is back - the Settings default is ignored")
         self.assertIn("item.upscale_2x_default && item.upscale_2x", block)
 
-    def test_it_is_the_shared_segmented_control_not_a_new_switch(self):
-        # DESIGN.md: never hand-roll a control.
+    def test_it_is_the_dialog_shared_switch_not_a_new_control(self):
+        # DESIGN.md: never hand-roll a control. Jesse, 2026-08-26: "use the
+        # lora mini toggles for it" - the same Switch the LoRA rows use, off
+        # by default, with an InfoTip that says what native 2x is.
         row = _block("{activeEngine?.upscale_2x && (", "showVideoLoraChain")
-        self.assertIn("<SegmentedControl", row)
-        self.assertIn('value={upscale ? "2x" : "off"}', row)
+        self.assertIn("<Switch on={upscale}", row)
+        self.assertNotIn("<SegmentedControl", row)
+        self.assertIn("<InfoTip", row)
+        self.assertIn("Native 2x", row)
 
     def test_the_hint_says_what_it_costs_and_where_it_runs(self):
         # "~3x longer" is the honest number (measured 140s -> 464s), and the
@@ -298,6 +305,45 @@ class Upscale2xRow(unittest.TestCase):
         self.assertIn("activeEngine.upscale_2x ? upscale : undefined", SRC)
 
 
+class ResolutionRow(unittest.TestCase):
+    """The Resolution row (9.55): the canvas H3 renders at NATIVELY - detail
+    from the model, not an upscaler ("1024x768 is insanely low res", Jesse).
+    It sits ABOVE the 2x row, which is now the budget option; it opens on the
+    Settings default (the 9.31 flag discipline: resolution_default rides the
+    h3 engine entry); it is the shared SegmentedControl like every other fold
+    pick; and its per-clip choice rides the body beside sparse and upscale.
+    The canvas hint comes from the server's own adaptive-canvas math (GET
+    /api/h3/canvas) - never a JS port that could drift off the canvas the
+    render actually gets."""
+
+    def test_the_row_sits_above_the_2x_row(self):
+        self.assertLess(SRC.index("{activeEngine?.h3_resolutions && ("),
+                        SRC.index("{activeEngine?.upscale_2x && ("))
+
+    def test_the_opening_position_comes_from_settings_not_a_literal(self):
+        block = _block("const [resolution", "const [canvases")
+        self.assertIn("item.resolution_default", block)
+        self.assertIn('|| "standard"', block)
+
+    def test_it_is_the_shared_segmented_control_with_an_infotip(self):
+        row = _block("{activeEngine?.h3_resolutions && (",
+                     "{activeEngine?.upscale_2x && (")
+        self.assertIn("<SegmentedControl", row)
+        self.assertIn("<InfoTip", row)
+        self.assertIn("detail comes from the model, not an upscaler", row)
+
+    def test_the_canvas_hint_comes_from_the_server(self):
+        self.assertIn("/api/h3/canvas?id=", SRC)
+
+    def test_the_non_default_tiers_are_narrated_on_the_collapsed_fold(self):
+        self.assertIn('tweaks.push("High res")', SRC)
+        self.assertIn('tweaks.push("Max res")', SRC)
+
+    def test_the_choice_reaches_the_render(self):
+        self.assertIn("activeEngine.h3_resolutions ? resolution : undefined",
+                      SRC)
+
+
 class DraftTheBrief(unittest.TestCase):
     """9.36: the dialog can DRAFT the director's brief and let the user read
     and edit it before a 90-170s clip is spent. The button is an ACTION, so
@@ -309,16 +355,20 @@ class DraftTheBrief(unittest.TestCase):
 
     FOOTER = _block("{/* Footer - the commitment.", "</ModalShell>")
 
-    def test_the_button_is_a_footer_action_pill_left_of_surprise_me(self):
-        self.assertLess(self.FOOTER.index("draft the brief\n"),
-                        self.FOOTER.index("surprise me\n"),
-                        "draft the brief must sit left of surprise me")
-        button = self.FOOTER[self.FOOTER.index("onClick={draftBrief}"):
-                             self.FOOTER.index("draft the brief\n")]
-        self.assertIn("borderRadius: RADIUS.pill", button,
-                      "an action wears the pill, not a selection chip")
+    def test_the_draft_control_lives_in_the_brief_box(self):
+        """Three footer buttons "looks stupid" and a footer pill gave no sign
+        the director was working (Jesse, 2026-08-25). The control sits inside
+        the brief box: a sparkle at rest, a spinner + "Drafting a direction…"
+        while the brief is written; the footer keeps surprise me + action."""
+        self.assertNotIn("draft the brief", self.FOOTER,
+                         "the footer button is gone")
+        box = _block('<div style={{ position: "relative" }}>', "{draftErr ? (")
+        self.assertIn("onClick={draftBrief}", box)
         self.assertIn("disabled={drafting || !activeEngine?.available || !model}",
-                      button, "disabled while drafting or when the engine is down")
+                      box, "disabled while drafting or when the engine is down")
+        self.assertIn("<Sparkle", box)
+        self.assertIn("Drafting a direction…", box)
+        self.assertIn("px-spin", box)
 
     def test_drafted_extends_script_mode(self):
         self.assertIn("const isScript = drafted || hasSplit;", SRC,
@@ -342,8 +392,8 @@ class DraftTheBrief(unittest.TestCase):
                          "emptying the note must clear the draft")
 
     def test_the_caption_strings(self):
-        self.assertIn("looking at the frame · directing…", SRC,
-                      "the in-flight caption is gone")
+        self.assertIn("Drafting a direction…", SRC,
+                      "the in-flight state is gone")
         self.assertIn("brief drafted — edit freely, ships as written", SRC,
                       "the drafted caption is gone")
         self.assertIn("re-draft", SRC, "the re-draft text button is gone")

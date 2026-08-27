@@ -53,8 +53,10 @@ class IdentityDialDeclarationTests(unittest.TestCase):
 
     def test_identity_edit_declares_its_dials_in_the_authors_ranges(self):
         dials = {d["key"]: d for d in server.RECIPE_SPECS["identity_edit"]["dials"]}
-        # Brief 9.15 added the bypass variant choice to the same declaration.
-        self.assertEqual(set(dials), {"ref_boost", "grounding", "bypass_variant"})
+        # Brief 9.15 added the bypass variant choice, 9.56 the identity patch
+        # build choice, to the same declaration.
+        self.assertEqual(set(dials), {"ref_boost", "grounding", "bypass_variant",
+                                      "identity_build"})
         likeness = dials["ref_boost"]
         self.assertEqual((likeness["min"], likeness["max"]), (0.0, 10.0))
         self.assertEqual(likeness["default"], server.IDENTITY_REF_BOOST)
@@ -163,10 +165,12 @@ class IdentityDialOptionsTests(unittest.TestCase):
                  patch.object(server, "_LORA_TITLE_CACHE", root / "titles.json"):
                 options = server.Hub().options()
         identity = next(r for r in options["recipes"] if r["id"] == "identity_edit")
-        # bypass_variant (brief 9.15) rides the same declaration; with an empty
-        # catalog its live choices are simply empty.
+        # bypass_variant (brief 9.15) and identity_build (brief 9.56) ride the
+        # same declaration; with an empty catalog their live choices are
+        # simply empty.
         self.assertEqual([d["key"] for d in identity["dials"]],
-                         ["ref_boost", "grounding", "bypass_variant"])
+                         ["ref_boost", "grounding", "bypass_variant",
+                          "identity_build"])
         likeness = identity["dials"][0]
         self.assertEqual(likeness["label"], "Likeness")
         self.assertEqual(likeness["default"], server.IDENTITY_REF_BOOST)

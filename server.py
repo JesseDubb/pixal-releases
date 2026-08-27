@@ -382,7 +382,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.0.10b"
+PIXAL_VERSION = "1.1.0b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -440,7 +440,10 @@ def load_config():
            # installed ESRGAN-style model, the video side runs the RTX VSR filter.
            "upscale": {"image_model": "", "image_mode": UPSCALE_IMAGE_DEFAULT_MODE,
                        "video_mode": UPSCALE_VIDEO_DEFAULT_MODE,
-                       "video_scale": 2.0},
+                       "video_scale": 2.0,
+                       # 0 = the clip's own rate (9.53); 30/48/60 RIFE-
+                       # interpolates the finisher pass to that rate.
+                       "video_fps": 0},
            # Which Qwen-Image-Edit release runs an instruction edit. "" = the
            # recipe default. Releases differ in encoder node (see
            # set_qwen_edit_encoder), so this is a real choice, not a preference.
@@ -473,8 +476,13 @@ def load_config():
            # A/B (no opening blip, no cue read aloud); "tags" is MiniMax's
            # trained <d>[Lang] ... </d>, which some seeds open with a
            # half-second of gibberish.
+           # "h3_resolution" (9.55) is the Resolution row's opening position
+           # under the same contract as "upscale_2x": the popup still picks
+           # the canvas per clip, and the bigger tiers multiply the render's
+           # time (a 10s Max clip is ~20 min on a 5090).
            "video": {"default_engine": "", "default_model": "",
-                     "upscale_2x": False, "h3_dialogue_tags": "quotes"},
+                     "upscale_2x": False, "h3_resolution": "standard",
+                     "h3_dialogue_tags": "quotes"},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -645,6 +653,10 @@ UPSCALE_IMAGE_MODES = ("model", "pid")
 UPSCALE_IMAGE_DEFAULT_MODE = "model"
 UPSCALE_VIDEO_DEFAULT_MODE = "VSR High"
 UPSCALE_VIDEO_SCALE_RANGE = (1.0, 4.0)
+# 9.53: frame-rate finishing on the clip finisher. 0 = the clip's own rate;
+# anything else is RIFE-interpolated in the same graph as the VSR pass.
+# RIFE multipliers are integers, so the offered rates are a closed set.
+UPSCALE_VIDEO_FPS_OPTIONS = (0, 30, 48, 60)
 
 def model_catalog(kind=None, ttl=30):
     """Recursive scan of every model root, 30s TTL. Entries carry the relpath ComfyUI
@@ -804,7 +816,7 @@ async def refresh_comfy_nodes(ttl=300):
             # ("linear/euler", "bong_tangent") that a stock KSampler rejects, and
             # both lists grow whenever a node pack is updated.
             enums = {}
-            for cls in {seat["class"] for seat in SAMPLER_SEATS.values()}:
+            for cls in {seat["class"] for seat in SAMPLER_SEATS.values()} | {ZIMAGE_V4_SEAT["class"]}:
                 required = ((data.get(cls) or {}).get("input") or {}).get("required") or {}
                 picked = {}
                 for field in ("sampler_name", "scheduler"):
@@ -1581,6 +1593,23 @@ BYPASS_VARIANT_DIAL = {"key": "bypass_variant", "kind": "choice",
                        "help": ("How many vectors of the text-fusion projector the "
                                 "bypass moves. 2 is what every render so far used; "
                                 "3 is the stronger CivitAI variant.")}
+# The identity patch's own variant choice (brief 9.56): the author's v1.2
+# ships as three builds - the full weights and the r128/r64 rank reductions,
+# near-identical likeness per the model card - all loading as the same LoRA
+# at strength 1.0. Same shape as the bypass dial above: "key" IS the
+# build_zara_edit parameter, "choices_from" names the scan that fills the
+# live options at /api/options time, and the value is a build-id STRING
+# ("full"/"r128"/"r64"), not an int. "stage" binds it to the identity
+# patch's own card, so it sits in the same drawer as Likeness and Grounding.
+# The default is r128 - the pinned IDENTITY_LORA - so an untouched composer
+# renders exactly today's graph.
+IDENTITY_BUILD_DIAL = {"key": "identity_build", "kind": "choice",
+                       "choices_from": "identity_patch", "stage": "identity_edit",
+                       "label": "Build", "default": "r128",
+                       "help": ("The identity patch's rank. Full is the author's "
+                                "weights; r128 and r64 are rank-reduced, "
+                                "near-identical likeness, smaller and faster to "
+                                "load.")}
 
 
 def recipe_dial_value(dial, value):
@@ -1611,6 +1640,19 @@ def _recipe_dials_payload(spec):
             d["choices"] = [{"value": count, "label": f"{count}-vector",
                              "name": rel}
                             for count, rel in sorted(vector_bypass_variants().items())]
+        elif d.get("choices_from") == "identity_patch":
+            # The build's own name IS the label ("Full" / "r128" / "r64") -
+            # three sized labels measurably overflow the card drawer, whose
+            # grid control cannot shrink below its own labels, so the build's
+            # weight on disk rides the option TITLE instead (brief 9.56).
+            sizes = {e["rel"]: e.get("size") or 0
+                     for e in model_catalog("loras")}
+            d["choices"] = [{"value": build,
+                             "label": "Full" if build == "full" else build,
+                             "name": rel,
+                             "title": f"{_identity_size_label(sizes.get(rel))}"
+                                      f" · {rel}"}
+                            for build, rel in identity_patch_variants().items()]
         out.append(d)
     return out
 
@@ -1621,15 +1663,23 @@ def _recipe_choice_value(dial, value):
     arrives anyway (a stale composer, a file deleted since /api/options)
     lands on the default rather than raising. The default itself always
     passes: it names the authored stage, which runs exactly as it always has.
-    Same degrade-never-die policy as the number dials."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) \
-            or not math.isfinite(value) or value != int(value):
-        return dial["default"]
-    value = int(value)
+    Same degrade-never-die policy as the number dials.
+    The value's TYPE is the scan's own: vector_bypass keys on the int vector
+    count (with the int coercion that always applied), identity_patch on the
+    build-id string (brief 9.56) - membership in the installed set is the
+    whole test, whatever the type."""
     if value == dial["default"]:
         return value
-    installed = vector_bypass_variants() \
-        if dial["choices_from"] == "vector_bypass" else {}
+    if dial["choices_from"] == "vector_bypass":
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(value) or value != int(value):
+            return dial["default"]
+        value = int(value)
+        installed = vector_bypass_variants()
+    elif dial["choices_from"] == "identity_patch":
+        installed = identity_patch_variants()
+    else:
+        installed = {}
     return value if value in installed else dial["default"]
 # New Face repaints the whole frame, so its cap IS the output size - there is
 # nothing underneath to composite back over. Matched to the edit lane's ceiling
@@ -1778,7 +1828,7 @@ ZIMAGE_EXECUTION_PROFILES = {
 # blindly inserted into Krea 2's CLIP/VAE/latent graph.
 RECIPE_SPECS = {
     "realism": {
-        "label": "Realism", "tag": "fast · ~10s", "family": "krea2",
+        "label": "Realism", "tag": "photo · 8 steps", "family": "krea2",
         # Analog Madness is the daily driver (Jesse, 2026-08-15) - the same
         # checkpoint Realism II already defaults to, so the two passes of the
         # same creative direction now open on the same look instead of
@@ -1856,7 +1906,7 @@ RECIPE_SPECS = {
         "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
     },
     "identity_edit": {
-        "label": "Identity Edit", "tag": "anchor's face · ~40s", "family": "krea2",
+        "label": "Identity Edit", "tag": "anchor's face · 10 steps", "family": "krea2",
         "default_model": "Krea 2\\krea2_turbo_int8_convrot.safetensors",
         # The identity patch grafts onto model weights; on GGUF tensors it
         # killed the ComfyUI process outright - no traceback, log just stops
@@ -1865,11 +1915,12 @@ RECIPE_SPECS = {
         "aspect": "9:16 (Portrait Widescreen)", "mp": 2.36,
         "required_loras": [KREA_BYPASS_LORA, IDENTITY_LORA],
         # The recipe-card extender's advanced dials (Likeness, Grounding) plus
-        # the bypass variant A/B (brief 9.15). Declared here so intake
-        # validation, the re-roll and /api/options all read one declaration;
-        # the defaults ARE the recipe's own numbers, so an untouched composer
-        # renders exactly what it did before the dials became reachable.
-        "dials": IDENTITY_DIALS + [BYPASS_VARIANT_DIAL],
+        # the bypass variant A/B (brief 9.15) and the identity patch's build
+        # choice (brief 9.56). Declared here so intake validation, the re-roll
+        # and /api/options all read one declaration; the defaults ARE the
+        # recipe's own numbers, so an untouched composer renders exactly what
+        # it did before the dials became reachable.
+        "dials": IDENTITY_DIALS + [BYPASS_VARIANT_DIAL, IDENTITY_BUILD_DIAL],
         "lora_stack_revision": 1, "lora_boundary": "identity patch",
         "lora_stages": [
             {"slot": "vector_bypass", "name": KREA_BYPASS_LORA, "strength": 1.0,
@@ -1920,7 +1971,7 @@ RECIPE_SPECS = {
     # 12.7 texture points measured against the source photo, which is the
     # whole thing this recipe exists to keep. See build_face_mint.
     "face_mint": {
-        "label": "New Face", "tag": "a new person from a photo · ~6s",
+        "label": "New Face", "tag": "a new person from a photo",
         "family": "krea2",
         "default_model": "Krea 2\\finepornV31TURBOFP8_v3FIXFP8.safetensors",
         "aspect": "", "mp": 0,
@@ -1952,7 +2003,7 @@ RECIPE_SPECS = {
     # Anima has one graph and no style/quality variants, like qwen_image: the
     # model IS the style. 896x1152 is the workflow's own canvas.
     "anima": {
-        "label": "Anima", "tag": "anime illustration - 30 steps", "family": "anima",
+        "label": "Anima", "tag": "anime illustration · 30 steps", "family": "anima",
         "default_model": "Anima\\anima-base-v1.0.safetensors",
         "aspect": "3:4 (Portrait Standard)", "mp": 1.03,
         "required_text_encoders": [ANIMA_CLIP],
@@ -2243,6 +2294,94 @@ def vector_bypass_variants():
     for (count, _sha), rel in sorted(found.items(),
                                      key=lambda item: (item[0][0], item[1].lower())):
         out.setdefault(count, rel)
+    return out
+
+# The identity patch's build ids (brief 9.56): v1.2 is the pinned version, so
+# only its three builds are ever offered - an older v1/v1.1 file on disk is
+# ignored. The optional third group is the SVD rank; no rank suffix = the
+# author's full weights.
+_IDENTITY_PATCH_NAME = re.compile(
+    r"krea2_identity_edit_v(\d+)(?:_(\d+))?(?:_r(\d+))?\.safetensors$", re.I)
+
+
+@lru_cache(maxsize=64)
+def _identity_patch_sha_cached(path_text, mtime_ns, size):
+    """sha256 of an identity-patch build, cached by (path, mtime, size) so a
+    file is hashed once ever per process, never re-hashed on every
+    /api/options call. The hashing itself is the catalog's own Civitai
+    matcher (_sha256_of)."""
+    try:
+        return _sha256_of(Path(path_text))
+    except OSError:
+        return None
+
+
+def _identity_patch_sha(entry, patch_file, stat):
+    """Content identity for the twin dedupe: the Civitai by-hash record is
+    the free answer when that pass already landed one (freshness keys on
+    size+mtime, exactly as in _civ_lookup_one); otherwise the file is hashed
+    once via the cache above."""
+    rec = _civ_data().get(_civ_key("loras", entry["rel"])) or {}
+    if rec.get("sha256") and rec.get("size") == stat.st_size and \
+            abs(rec.get("mtime", 0) - stat.st_mtime) < 2:
+        return rec["sha256"]
+    return _identity_patch_sha_cached(str(patch_file), stat.st_mtime_ns,
+                                      stat.st_size)
+
+
+def _identity_build_order(build):
+    """The author's quality order: full first, then descending rank."""
+    return (0, 0) if build == "full" else (1, -int(build[1:]))
+
+
+def _identity_size_label(size):
+    """A build's weight on disk in the model card's own units: one decimal GB
+    at a gigabyte and up ("1.8 GB"), whole MB below ("914 MB", "457 MB")."""
+    size = size or 0
+    if size >= 1e9:
+        return f"{size / 1e9:.1f} GB"
+    return f"{round(size / 1e6)} MB"
+
+
+def identity_patch_variants():
+    """Installed v1.2 identity-patch builds as {build: catalog rel} (brief
+    9.56), in the author's quality order (full, r128, r64).
+
+    The three builds load as the same LoRA at strength 1.0 - the Build dial
+    swaps only which file the identity stage loads. Two files with the same
+    sha256 are ONE option (this box keeps a byte-identical copy of the full
+    build at the loras/ root beside the Krea 2/ one), and within one build
+    the lowest-sorting rel represents it - the same rule the bypass variant
+    scan uses, since a build-id control cannot express two different files
+    of one build either way. A build with a single file is never hashed
+    (nothing could twin it); a multi-file build hashes each candidate once
+    per (path, mtime, size), the Civitai by-hash record first.
+    Deliberately uncached like vector_bypass_variants: the catalog scan
+    behind it carries a 30s TTL, so a freshly downloaded build appears on
+    the next catalog refresh.
+    """
+    by_build = {}
+    for entry in model_catalog("loras"):
+        match = _IDENTITY_PATCH_NAME.search(str(entry.get("rel") or ""))
+        if not match or match.group(1) != "1" or match.group(2) != "2":
+            continue
+        build = f"r{match.group(3)}" if match.group(3) else "full"
+        by_build.setdefault(build, []).append(entry)
+    out = {}
+    for build in sorted(by_build, key=_identity_build_order):
+        entries = by_build[build]
+        found = {}
+        for entry in entries:
+            try:
+                patch_file = Path(entry["root"]) / entry["kind"] / entry["rel"]
+                stat = patch_file.stat()
+            except (KeyError, TypeError, OSError):
+                continue
+            sha = _identity_patch_sha(entry, patch_file, stat) \
+                if len(entries) > 1 else None
+            found.setdefault(sha, entry["rel"])
+        if found:
+            out[build] = min(found.values(), key=str.lower)
     return out
 
 
@@ -2653,6 +2792,14 @@ STYLE_BASE_IDS = tuple(
 # of ComfyUI's own /object_info instead of shipping a guessed list.
 SAMPLER_SEATS = {
     "realism":    {"node": "30:51", "class": "ClownsharKSampler_Beta"},
+    # Same seat on the identity graph (Jesse, 2026-08-26: "can I edit even
+    # identity edit stuff?") - build_zara_edit applies overrides after the seed.
+    "identity_edit": {"node": "30:51", "class": "ClownsharKSampler_Beta"},
+    # Realism II: the FIRST pass is the sample (8 steps, res_2s/beta); the
+    # 2-step refine at denoise 0.2 (node 274) is what "refined" means and
+    # stays authored. Jesse, 2026-08-26: tuning "always available in any
+    # workflow / recipe".
+    "realism_ii": {"node": "265", "class": "ClownsharKSampler_Beta"},
     "fantasy":    {"node": "8", "class": "KSampler"},
     "anime":      {"node": "8", "class": "KSampler"},
     "zimage":     {"node": "8", "class": "KSampler"},
@@ -2666,7 +2813,25 @@ TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta")
 # queue-time ComfyUI error landing on the user. Unknown classes get the stock
 # four, so a seat added later is conservative until it says otherwise.
 _STOCK_TUNING = ("steps", "cfg", "sampler_name", "scheduler")
-SEAT_TUNING = {"ClownsharKSampler_Beta": _STOCK_TUNING + ("eta",)}
+SEAT_TUNING = {"ClownsharKSampler_Beta": _STOCK_TUNING + ("eta",),
+               "KSamplerSelect": ("steps", "cfg", "sampler_name")}
+
+# Z-Image Turbo's Amazing v4 graph (see _build_zimage) has no KSampler: the
+# sampler is a KSamplerSelect, the step count lives on the Karras schedule and
+# cfg on both SamplerCustom passes. A seat may therefore MAP a key to the
+# node(s) that carry it; a seat without a map writes every key to its one node.
+ZIMAGE_V4_SEAT = {
+    "node": "z:v4:sampler", "class": "KSamplerSelect",
+    "map": {"sampler_name": [("z:v4:sampler", "sampler_name")],
+            "steps": [("z:v4:sigmas", "steps")],
+            "cfg": [("z:v4:high", "cfg"), ("z:v4:low", "cfg")]},
+}
+
+
+def seat_targets(seat, key):
+    """(node, input) pairs one tuning key writes to on this seat."""
+    mapped = (seat.get("map") or {}).get(key)
+    return list(mapped) if mapped else [(seat["node"], key)]
 
 
 def seat_tuning_keys(seat):
@@ -2697,14 +2862,13 @@ def sampler_seat(base_id, model=None):
         _profile, settings = _zimage_settings(entry)
     except (ValueError, KeyError):
         return None
+    if settings.get("sampler_graph") == "amazing_v4":
+        return ZIMAGE_V4_SEAT
     return seat if settings.get("sampler_graph") == "ksampler" else None
 
 
 def fixed_schedule_reason(base_id, model=None):
     """Why this pairing has no tunable sampler, in a sentence for the editor."""
-    if base_id == "realism_ii":
-        return ("Realism II samples three times at three denoise levels - that "
-                "schedule is what “refined” means, so it is not tunable.")
     if base_id not in SAMPLER_SEATS:
         return f"{RECIPE_SPECS[base_id]['label']} has no tunable sampler."
     if RECIPE_SPECS[base_id]["family"] == "zimage":
@@ -2728,8 +2892,9 @@ def sampler_defaults(base_id, model=None):
     node = (TEMPLATES.get(base_id) or {}).get(seat["node"], {}).get("inputs", {})
     if RECIPE_SPECS[base_id]["family"] == "zimage":
         _profile, s = _zimage_settings(resolve_model_entry(model))
-        return {"steps": s["steps"], "cfg": s["cfg"],
-                "sampler_name": s["sampler"], "scheduler": s.get("scheduler", "simple")}
+        found = {"steps": s["steps"], "cfg": s["cfg"],
+                 "sampler_name": s["sampler"], "scheduler": s.get("scheduler", "simple")}
+        return {k: v for k, v in found.items() if k in seat_tuning_keys(seat)}
     if base_id == "anima":
         entry = resolve_model_entry(model) or {}
         s = ANIMA_SETTINGS["turbo" if entry.get("variant") == "turbo" else "base"]
@@ -2748,6 +2913,75 @@ def sampler_choices(node_class):
     return dict((_COMFY_NODES.get("enums") or {}).get(node_class) or {})
 
 
+# Stock samplers on a Clownshark seat (Jesse, 2026-08-26: "re_sde ... can you
+# make those available"). RES4LYF's node has its own sampler family; the plain
+# ComfyUI names (er_sde, re_sde, dpmpp_2m, ...) live on the stock KSampler. A
+# choice from that list swaps the seat's node for a KSampler wired the same way
+# (model / positive / negative / latent_image -> LATENT) when the graph is
+# built - eta and bongmath do not exist there and are simply not applied.
+STOCK_SAMPLER_CLASS = "KSampler"
+
+
+def seat_choices(seat):
+    """sampler/scheduler options a seat accepts, stock names included on a
+    non-stock seat (each list keeps the seat's own names first)."""
+    own = sampler_choices(seat["class"])
+    if seat["class"] == STOCK_SAMPLER_CLASS:
+        return own
+    stock = sampler_choices(STOCK_SAMPLER_CLASS)
+    out = {}
+    for key in ("sampler_name", "scheduler"):
+        mine = list(own.get(key) or ())
+        out[key] = mine + [v for v in (stock.get(key) or ()) if v not in mine]
+    return out
+
+
+def seat_choice_groups(seat):
+    """The same options split by the node they belong to, for the picker's
+    inline labels. Empty on a stock seat - one family, no split."""
+    if seat["class"] == STOCK_SAMPLER_CLASS:
+        return {}
+    own = sampler_choices(seat["class"])
+    stock = sampler_choices(STOCK_SAMPLER_CLASS)
+    groups = {}
+    for key in ("sampler_name", "scheduler"):
+        mine = list(own.get(key) or ())
+        extra = [v for v in (stock.get(key) or ()) if v not in mine]
+        if mine or extra:
+            groups[key] = [{"label": "RES4LYF", "ids": mine},
+                           {"label": "ComfyUI KSampler", "ids": extra}]
+    return groups
+
+
+def sampler_swap(seat, tuning):
+    """The KSampler swap a tuning block asks for on this seat, or None."""
+    name = (tuning or {}).get("sampler_name")
+    if not seat or not name or seat["class"] == STOCK_SAMPLER_CLASS:
+        return None
+    if name in (sampler_choices(seat["class"]).get("sampler_name") or ()):
+        return None
+    stock = sampler_choices(STOCK_SAMPLER_CLASS)
+    if name not in (stock.get("sampler_name") or ()):
+        return None
+    scheduler = (tuning or {}).get("scheduler")
+    if scheduler not in (stock.get("scheduler") or ()):
+        scheduler = "simple"
+    return {"node": seat["node"], "sampler_name": name, "scheduler": scheduler}
+
+
+def swap_sampler_node(g, swap):
+    """Replace the seat's node with a stock KSampler carrying the same links
+    and the numbers the overrides already wrote (steps, cfg, seed)."""
+    old = g[str(swap["node"])]
+    i = old["inputs"]
+    g[str(swap["node"])] = {"class_type": STOCK_SAMPLER_CLASS, "inputs": {
+        "model": i["model"], "positive": i["positive"], "negative": i["negative"],
+        "latent_image": i["latent_image"], "seed": i.get("seed", 0),
+        "steps": i.get("steps", 8), "cfg": i.get("cfg", 1.0),
+        "sampler_name": swap["sampler_name"], "scheduler": swap["scheduler"],
+        "denoise": i.get("denoise", 1.0)}}
+
+
 def tuning_overrides(base_id, model, tuning):
     """A style's sampler tuning as builder overrides.
 
@@ -2758,8 +2992,75 @@ def tuning_overrides(base_id, model, tuning):
     seat = sampler_seat(base_id, model)
     if not seat or not tuning:
         return []
-    return [{"node": seat["node"], "input": key, "value": tuning[key]}
-            for key in seat_tuning_keys(seat) if key in tuning]
+    # A stock sampler is a node swap, not an input: its name, scheduler and
+    # eta never get written into the Clownshark node they would break.
+    skip = {"sampler_name", "scheduler", "eta"} if sampler_swap(seat, tuning) else set()
+    return [{"node": node, "input": inp, "value": tuning[key]}
+            for key in seat_tuning_keys(seat) if key in tuning and key not in skip
+            for node, inp in seat_targets(seat, key)]
+
+
+_RECOMMENDED_RE = re.compile(
+    r"(?:recommended\s+(?:sampler\s+)?settings?|推荐设置|推荐参数)\s*[:：]?\s*(.{0,240})",
+    re.I | re.S)
+
+
+def cfg_locked(base_id, model=None):
+    """True when the pairing samples at cfg 1 by its own authoring - a distilled
+    build (Krea 2 turbo, Anima turbo, Z-Image Turbo) whose guidance is baked in.
+    Raising cfg there doubles the time and burns the image, so the composer
+    shows the box greyed. Data-driven: the seat's authored cfg, not a name."""
+    return sampler_defaults(base_id, model).get("cfg") == 1
+
+
+def model_recommended_tuning(base_id, model):
+    """The model page's own "Recommended settings" line as a tuning block.
+
+    Lora-Manager's sidecar carries the Civitai description (HTML); a line such
+    as "推荐设置: re_sde + simple, 8-16 steps, 1 cfg" becomes
+    {sampler_name, scheduler, steps, cfg}, keeping only values this seat's node
+    actually offers. None when the page says nothing - the control then greys
+    with "no recommendation on the model page" rather than inventing one."""
+    seat = sampler_seat(base_id, model)
+    entry = resolve_model_entry(model) if model else None
+    if not seat or not entry:
+        return None
+    md = adjacent_metadata(entry["kind"], entry["rel"]) or {}
+    desc = md.get("modelDescription") or ((md.get("civitai") or {}).get("model") or {}).get("description") or ""
+    if not desc:
+        return None
+    text = html_mod.unescape(re.sub(r"<[^>]+>", " ", str(desc)))
+    text = re.sub(r"\s+", " ", text)
+    m = _RECOMMENDED_RE.search(text)
+    if not m:
+        return None
+    tail = m.group(1)
+    low = tail.lower()
+    choices = sampler_choices(seat["class"])
+    keys = seat_tuning_keys(seat)
+    out = {}
+    for key in ("sampler_name", "scheduler"):
+        if key not in keys:
+            continue
+        best = ""
+        for name in choices.get(key) or ():
+            stem = name.lower().rsplit("/", 1)[-1]
+            if re.search(r"(?<![a-z0-9_])" + re.escape(stem) + r"(?![a-z0-9_])", low)                     and len(stem) > len(best.rsplit("/", 1)[-1]):
+                best = name
+        if best:
+            out[key] = best
+    if "steps" in keys:
+        ms = re.search(r"(\d+)(?:\s*[-~–to]+\s*(\d+))?\s*steps?", low)
+        if ms:
+            out["steps"] = int(ms.group(1))
+    if "cfg" in keys:
+        mc = re.search(r"(\d+(?:\.\d+)?)\s*cfg|cfg\s*(?:scale)?\s*[:=]?\s*(\d+(?:\.\d+)?)", low)
+        if mc:
+            out["cfg"] = float(mc.group(1) or mc.group(2))
+    if not out:
+        return None
+    out["_text"] = tail[:140].strip()
+    return out
 
 
 def validate_style_tuning(tuning):
@@ -2842,6 +3143,23 @@ def style_slug(text):
     return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")[:64]
 
 
+def _style_prompt_text(value, field):
+    """An optional free-text clause on a style (negative, prompt_tail).
+
+    Whitespace-collapsed and capped: these ride inside shared files and end up
+    as single clauses in a caption, so a paste with newlines must not explode
+    into one. Empty means absent - the key simply leaves the record.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    text = " ".join(value.split())
+    if len(text) > 600:
+        raise ValueError(f"{field} is longer than 600 characters")
+    return text or None
+
+
 def validate_saved_style(raw, default_id=""):
     """recipes/*.json record -> a normalized style, or ValueError with a reason.
 
@@ -2893,6 +3211,8 @@ def validate_saved_style(raw, default_id=""):
     provenance = raw.get("provenance")
     if provenance is not None and not isinstance(provenance, dict):
         raise ValueError("provenance must be an object")
+    negative = _style_prompt_text(raw.get("negative"), "negative")
+    prompt_tail = _style_prompt_text(raw.get("prompt_tail"), "prompt_tail")
     record = {
         "schema_version": RECIPE_SCHEMA_VERSION,
         "id": style_id, "name": name, "base": base_id, "model": model,
@@ -2909,6 +3229,10 @@ def validate_saved_style(raw, default_id=""):
         record["mp"] = mp
     if plan is not None:
         record["lora_plan"] = plan
+    if negative:
+        record["negative"] = negative
+    if prompt_tail:
+        record["prompt_tail"] = prompt_tail
     return record
 
 
@@ -2946,7 +3270,7 @@ def check_style_runnable(record):
     if unsupported:
         raise ValueError(f"{seat['class']} has no "
                          f"{', '.join(sorted(unsupported))} setting")
-    options = sampler_choices(seat["class"])
+    options = seat_choices(seat)
     for key in ("sampler_name", "scheduler"):
         allowed = options.get(key) or ()
         if key in tuning and allowed and tuning[key] not in allowed:
@@ -3087,9 +3411,34 @@ def _bypass_variant_stage(stage, variant):
     rel = vector_bypass_variants().get(variant)
     return {**stage, "name": rel} if rel else stage
 
+def _identity_build_stage(stage, build):
+    """Swap the locked identity-edit stage's file for the chosen build
+    (brief 9.56). Only the NAME changes - slot, strength, role, zone and the
+    chain's order are the stage's own, so an r64 graph is today's graph with
+    one loader's lora_name swapped and nothing else. Anything uninstalled
+    keeps the authored stage: intake validation has already landed bad
+    values on the default, so this is the builder-side guard for direct
+    calls, and it degrades rather than dies.
+    Untouched (None), the authored r128 runs wherever it is installed - the
+    byte-identical contract. A box that owns ONLY one other build (an
+    r64-only install) runs that one instead: required_loras calls any
+    installed build ready, so the graph keeps that promise."""
+    if stage.get("slot") != "identity_edit":
+        return stage
+    variants = identity_patch_variants()
+    if isinstance(build, str):
+        rel = variants.get(build)
+        return {**stage, "name": rel} if rel else stage
+    if build is not None:
+        return stage
+    if stage["name"] in variants.values() or len(variants) != 1:
+        return stage
+    return {**stage, "name": next(iter(variants.values()))}
+
 
 def resolve_recipe_lora_stack(recipe_id, loras=(), lora_plan=None,
-                              family=None, variant=None, bypass_variant=None):
+                              family=None, variant=None, bypass_variant=None,
+                              identity_build=None):
     """Recipe stages + either legacy appended extras or a replacement editable lane.
 
     Structural/core stages always come from RECIPE_SPECS. A new lora_plan owns the
@@ -3112,7 +3461,9 @@ def resolve_recipe_lora_stack(recipe_id, loras=(), lora_plan=None,
         if override.get("enabled") is False:
             continue
         core.append(_resolved_recipe_stage(
-            recipe_id, _bypass_variant_stage(stage, bypass_variant),
+            recipe_id,
+            _identity_build_stage(_bypass_variant_stage(stage, bypass_variant),
+                                  identity_build),
             override.get("strength")))
     # Recomputed from what SURVIVED: a bypassed core LoRA is no longer a locked
     # stage, so the user may add it back by name in the editable lane.
@@ -3241,7 +3592,7 @@ def validate_job_model_info(template, info, graph=None):
 
 def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                   character=None, lora_plan=None):
+                   character=None, lora_plan=None, negative=None, prompt_tail=None):
     g = json.loads(json.dumps(TEMPLATES["realism"]))
     model_entry = pick_recipe_model(model, "realism")
     set_unet_loader(g, "30:10", model_entry)
@@ -3253,6 +3604,8 @@ def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
         if not nsfw:   # nsfw=true = the user ASKED for explicit - the lock would
             cap += " " + wardrobe_lock_for(ch)   # override their ask from the
                                                  # strongest (closing) position
+    if prompt_tail:   # the style's closing clause, after even the wardrobe lock
+        cap = (cap + " " + prompt_tail).strip()
     g["30:19"]["inputs"]["value"] = cap
     g["30:51"]["inputs"]["seed"] = seed
     g["30:24"]["inputs"]["value"] = False                 # --no-expand: VLM expander fights the caption
@@ -3270,12 +3623,25 @@ def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
         "realism", loras, lora_plan, family="krea2")
     tail = apply_lora_nodes(g, "30:10", entries, "30:lora")
     g["30:51"]["inputs"]["model"] = [tail, 0]
+    if negative:
+        # A real negative replaces the template's ConditioningZeroOut (30:13),
+        # encoded by the SAME clip the positive uses. Absent keeps the ZeroOut:
+        # a style without the clause builds the graph it always has.
+        g["30:neg"] = {"class_type": "CLIPTextEncode",
+                       "inputs": {"text": negative,
+                                  "clip": list(g["30:6"]["inputs"]["clip"])},
+                       "_meta": {"title": "CLIP Text Encode (Negative)"}}
+        g["30:51"]["inputs"]["negative"] = ["30:neg", 0]
     g["29"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene)}"
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
             "size": f"{g['30:5']['inputs']['width']}x{g['30:5']['inputs']['height']}",
             "character": ch["name"] if ch else None}
+    if negative:
+        info["negative"] = negative
+    if prompt_tail:
+        info["prompt_tail"] = prompt_tail
     return g, cap, info
 
 
@@ -3348,7 +3714,7 @@ def build_face_mint(scene, seed, image=None, denoise=None, eta=None,
 def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
                     ref_boost=IDENTITY_REF_BOOST, overrides=(), model=None, aspect=None,
                     mp=None, loras=(), character=None, lora_plan=None, pid=None,
-                    bypass_variant=None):
+                    bypass_variant=None, identity_build=None):
     """THE settled moments recipe (2026-08-07), captured verbatim from
     edit_fast.py: mxfp8 + Wan VAE, linear/euler + simple, 10 steps, cfg 1.0,
     eta 0.0, no base realism LoRA, 1152x2048. RawGirlV3 rode along in the
@@ -3388,13 +3754,13 @@ def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
         g["30:5"]["inputs"]["width"], g["30:5"]["inputs"]["height"] = w, h
     # Rebuild the complete pre-patch chain. In particular, vector bypass is a
     # locked first stage: UNET -> bypass -> identity LoRA -> editable lane ->
-    # patch. bypass_variant (brief 9.15) swaps only that stage's FILE - the
-    # chain's shape and order never change.
+    # patch. bypass_variant (brief 9.15) and identity_build (brief 9.56) swap
+    # only those stages' FILES - the chain's shape and order never change.
     for node_id in ("30:15", "30:22", "ed:lora", "ed:extra0"):
         g.pop(node_id, None)
     entries, dropped = resolve_recipe_lora_stack(
         "identity_edit", loras, lora_plan, family="krea2",
-        bypass_variant=bypass_variant)
+        bypass_variant=bypass_variant, identity_build=identity_build)
     tail = apply_lora_nodes(g, "30:10", entries, "ed:lora")
     g["ed:patch"]["inputs"]["model"] = [tail, 0]
     use_pid = load_config()["pid"]["identity_finish"] if pid is None else bool(pid)
@@ -4009,7 +4375,7 @@ def _character_caption(scene, character=None, standing=True, nsfw=False,
 
 def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(),
                      standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                     character=None, lora_plan=None):
+                     character=None, lora_plan=None, negative=None, prompt_tail=None):
     """The supplied Realism II workflow, hardened into an API graph.
 
     Preserves Selfora + filter-bypass, the 8-step detail pass, 2-step latent
@@ -4021,6 +4387,8 @@ def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(
     model_entry = pick_recipe_model(model, "realism_ii")
     set_unet_loader(g, "316", model_entry)
     cap, ch = _character_caption(scene, character, standing, nsfw)
+    if prompt_tail:   # the style's closing clause, after even the wardrobe lock
+        cap = (cap + " " + prompt_tail).strip()
     g["6"]["inputs"]["text"] = cap
     for nid in ("265", "274", "333"):
         g[nid]["inputs"]["seed"] = int(seed)
@@ -4039,6 +4407,17 @@ def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(
     tail = apply_lora_nodes(g, "316", entries, "r2:lora")
     for nid in ("265", "274", "333"):
         g[nid]["inputs"]["model"] = [tail, 0]
+    if negative:
+        # This graph has no ZeroOut: all three sampling passes take the
+        # POSITIVE encode as their negative (["6", 0] - moot at the authored
+        # cfg 1). A style's real negative replaces that on every pass, encoded
+        # by the same clip; absent keeps the wiring it always had.
+        g["r2:neg"] = {"class_type": "CLIPTextEncode",
+                       "inputs": {"text": negative,
+                                  "clip": list(g["6"]["inputs"]["clip"])},
+                       "_meta": {"title": "CLIP Text Encode (Negative)"}}
+        for nid in ("265", "274", "333"):
+            g[nid]["inputs"]["negative"] = ["r2:neg", 0]
     g["336"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene)}"
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
@@ -4047,6 +4426,10 @@ def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(
     info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
             "size": f"{round(w * scale)}x{round(h * scale)} (2× finish)",
             "character": ch["name"] if ch else None}
+    if negative:
+        info["negative"] = negative
+    if prompt_tail:
+        info["prompt_tail"] = prompt_tail
     return g, cap, info
 
 
@@ -4384,9 +4767,41 @@ H3_TURBO = {"steps": 8, "sampler": "euler", "scheduler": "beta", "strength": 1.0
 H3_LENGTHS = (5, 10, 15)
 H3_FRAMES = {5: 124, 10: 243, 15: 362}  # 24 fps, MiniMax's 17k+5 grid
 H3_CANVAS_MULTIPLE = 32
-H3_BASE_SHORT_EDGE = 768
-H3_MAX_PIXELS = 768 * 1344
 H3_ASPECT_TOLERANCE = 0.005
+# Resolution tiers (9.55): H3 renders natively at the canvas the tier names -
+# detail comes from the model, not an upscaler, and the 2026-08-26 native A/B
+# put 1536x2048 visibly ahead of the 2x row on skin and hair. "standard" is
+# the pre-9.55 cap and stays the default; the tiers above it re-frame at the
+# bigger canvas (composition can shift - the first frame anchors geometry, not
+# framing) and multiply the render's time: a 10s Max clip is ~20 min on a 5090
+# and fills the card. After this change the 2x row is the BUDGET option
+# (render small, upscale) and these are the quality one; both can be on at
+# once, and the butler prices info["canvas_mp"] either way, so the gate does
+# not change.
+H3_RESOLUTIONS = {
+    "standard": {"short_edge": 768, "max_pixels": 768 * 1344,
+                 "label": "Standard", "mp": 1.0},
+    "high": {"short_edge": 1152, "max_pixels": 1152 * 1536,
+             "label": "High", "mp": 1.8},
+    "max": {"short_edge": 1536, "max_pixels": 1536 * 2048,
+            "label": "Max", "mp": 3.1},
+}
+H3_RESOLUTION_DEFAULT = "standard"
+# The pre-9.55 names stay as the "standard" tier's aliases so nothing else
+# moves.
+H3_BASE_SHORT_EDGE = H3_RESOLUTIONS["standard"]["short_edge"]
+H3_MAX_PIXELS = H3_RESOLUTIONS["standard"]["max_pixels"]
+
+
+def h3_resolution(tier=None):
+    """Resolve a resolution tier id to (id, spec). The empty ask is the
+    default; an unknown one raises naming the option list - /api/animate and
+    /api/settings both word their 400 from this."""
+    key = str(H3_RESOLUTION_DEFAULT if tier is None else tier).strip().lower()
+    if key not in H3_RESOLUTIONS:
+        raise ValueError(f"unknown H3 resolution: {tier} "
+                         f"(one of {', '.join(H3_RESOLUTIONS)})")
+    return key, H3_RESOLUTIONS[key]
 
 # Multishot rides ComfyUI-H3-Multishot, whose sampler runs the same stack the
 # single-shot builder wires by hand; what it adds is the chain between shots.
@@ -4413,6 +4828,30 @@ H3_UPSCALE_STEPS = 6
 H3_UPSCALE_DENOISE = 0.22
 H3_UPSCALE_TILE = 896
 H3_UPSCALE_OVERLAP = 224
+# A 5s+ clip through the 3D latent upscaler as ONE temporal block grows a
+# sparkle lattice in dark regions; 51-frame chunks (17 overlap, pinned
+# anchor) collapsed it to a few faint dots in the 2026-08-26 A/B. A clip
+# that fits in one chunk is the clean case already measured, so the node is
+# only wired when frames > chunk.
+H3_UPSCALE_CHUNK = 51
+H3_UPSCALE_CHUNK_OVERLAP = 17
+H3_UPSCALE_ANCHOR = 0.999
+
+
+def _h3_temporal_split_ok(chunk, overlap, anchor):
+    """MMH3TemporalSplitParams rejects a chunk or overlap that is not a
+    multiple of 17 (H3's 17k+5 latent grid), an overlap >= the chunk, or an
+    anchor outside 0-1. A function so the test suite can exercise the rule
+    without re-importing the module; the assert below is what stops a bad
+    edit from shipping a graph ComfyUI refuses."""
+    return (chunk % 17 == 0 and overlap % 17 == 0 and 0 < overlap < chunk
+            and 0.0 <= anchor <= 1.0)
+
+
+assert _h3_temporal_split_ok(H3_UPSCALE_CHUNK, H3_UPSCALE_CHUNK_OVERLAP,
+                             H3_UPSCALE_ANCHOR), (
+    "H3 upscale temporal split: chunk/overlap must be multiples of 17 with "
+    "overlap < chunk, anchor within 0-1")
 # The memory variant is a superset: it splits the KEYFRAME (the previous shot's
 # last frame, which is all the plain sampler chains on) from MEMORY - a
 # persistent anchor taken from the start of the chain plus the last N shot-end
@@ -4676,18 +5115,20 @@ def h3_frame_count(seconds):
     return H3_FRAMES[int(value)]
 
 
-def h3_adapt_canvas(width, height):
-    """Largest in-spec H3 canvas for a source aspect, ported from the proven tool."""
+def h3_adapt_canvas(width, height, resolution=H3_RESOLUTION_DEFAULT):
+    """Largest in-spec H3 canvas for a source aspect
+    at a resolution tier, ported from the proven tool."""
+    _tier, spec = h3_resolution(resolution)
     width, height = int(width), int(height)
     if width <= 0 or height <= 0:
         raise ValueError("MiniMax H3 needs a non-empty source image")
     ratio = width / height
     if ratio >= 1.0:
-        nw, nh = H3_BASE_SHORT_EDGE * ratio, H3_BASE_SHORT_EDGE
+        nw, nh = spec["short_edge"] * ratio, spec["short_edge"]
     else:
-        nw, nh = H3_BASE_SHORT_EDGE, H3_BASE_SHORT_EDGE / ratio
-    if nw * nh > H3_MAX_PIXELS:
-        scale = math.sqrt(H3_MAX_PIXELS / (nw * nh))
+        nw, nh = spec["short_edge"], spec["short_edge"] / ratio
+    if nw * nh > spec["max_pixels"]:
+        scale = math.sqrt(spec["max_pixels"] / (nw * nh))
         nw, nh = nw * scale, nh * scale
     width = max(H3_CANVAS_MULTIPLE,
                 round(nw / H3_CANVAS_MULTIPLE) * H3_CANVAS_MULTIPLE)
@@ -4697,7 +5138,7 @@ def h3_adapt_canvas(width, height):
     # over it - a 9:19.5 phone frame landed 2.6% above, an ultrawide 2.1%. Walk
     # the long edge down until it fits; prepare_h3_frame's crop then squares the
     # aspect up, so the only cost is a slightly tighter crop.
-    while width * height > H3_MAX_PIXELS:
+    while width * height > spec["max_pixels"]:
         if width >= height and width > H3_CANVAS_MULTIPLE:
             width -= H3_CANVAS_MULTIPLE
         elif height > H3_CANVAS_MULTIPLE:
@@ -4707,7 +5148,7 @@ def h3_adapt_canvas(width, height):
     return width, height
 
 
-def prepare_h3_frame(src):
+def prepare_h3_frame(src, resolution=H3_RESOLUTION_DEFAULT):
     """Stage a content-addressed, exact-canvas first frame in ComfyUI/input.
 
     MiniMaxH3ImageToVideo otherwise stretches a mismatched first frame. The same
@@ -4721,8 +5162,12 @@ def prepare_h3_frame(src):
     src = Path(src)
     if not src.is_file():
         raise ValueError(f"source image is missing: {src.name}")
+    resolution, _spec = h3_resolution(resolution)
     digest = hashlib.sha1(src.read_bytes()).hexdigest()[:12]
-    name = f"pixal_h3_{digest}.png"
+    # The tier rides the content address: without it a Standard render's
+    # staged file would shadow a later Max render of the same still and hand
+    # back the wrong canvas.
+    name = f"pixal_h3_{digest}_{resolution}.png"
     dst = CDIR / "input" / name
     if dst.is_file():
         with Image.open(dst) as staged:
@@ -4731,7 +5176,7 @@ def prepare_h3_frame(src):
     with Image.open(src) as opened:
         image = opened.convert("RGB")
     sw, sh = image.size
-    width, height = h3_adapt_canvas(sw, sh)
+    width, height = h3_adapt_canvas(sw, sh, resolution)
     target_aspect, source_aspect = width / height, sw / sh
     error = abs(source_aspect - target_aspect) / target_aspect
     if error > H3_ASPECT_TOLERANCE:
@@ -5162,6 +5607,20 @@ def video_engine_options():
         for engine in engines:
             if engine["id"] == "h3":
                 engine["upscale_2x_default"] = True
+    # The H3 resolution row (9.55), same 9.31 discipline once more: the tier
+    # list is a capability fact and always rides the one engine that has the
+    # row, and the Settings-chosen opening position is a flag beside it. The
+    # popup still picks per clip; a stale config value degrades to the
+    # default rather than hiding the row.
+    want_resolution = video_cfg.get("h3_resolution")
+    if want_resolution not in H3_RESOLUTIONS:
+        want_resolution = H3_RESOLUTION_DEFAULT
+    for engine in engines:
+        if engine["id"] == "h3":
+            engine["h3_resolutions"] = [
+                {"id": tier_id, "label": spec["label"], "mp": spec["mp"]}
+                for tier_id, spec in H3_RESOLUTIONS.items()]
+            engine["resolution_default"] = want_resolution
     return engines
 
 
@@ -7024,7 +7483,7 @@ def _h3_prepared_canvas(image, width=None, height=None):
 
 def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
                   overrides=(), model=None, lora_plan=None, turbo=False,
-                  last_image=None, sparse=True, upscale=False):
+                  last_image=None, sparse=True, upscale=False, resolution=H3_RESOLUTION_DEFAULT):
     """MiniMax H3 FL2VA I2V, based on the locally proven native ComfyUI graph.
 
     The first frame must already be prepared to the exact adaptive canvas by
@@ -7042,6 +7501,11 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     on the render, not an action on a finished clip. Opt-in (it ~triples the
     render's cost), and only honoured where the pack and its 3D upscaler
     weights are both installed; anywhere else the plain graph is built.
+    
+    ``resolution`` (9.55) names the canvas tier the first frame was prepared
+    at - the width/height arriving with it already ARE that tier's canvas, so
+    the builder only validates the id and records it: size/canvas_mp keep
+    reading the real width*height, which is what the butler prices on.
     """
     model_id = str(model or H3_MODEL_ID).strip().lower()
     model_rel = h3_model_rel(model_id)
@@ -7061,6 +7525,7 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     if missing:
         raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
 
+    resolution, _res_spec = h3_resolution(resolution)
     image, width, height = _h3_prepared_canvas(image, width, height)
 
     frames = h3_frame_count(seconds)
@@ -7205,6 +7670,19 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
             "sampler": ["7", 0], "sigmas": ["h3:up:sigmas", 0], "cfg": 1.0,
             "latent_upscale_param": ["h3:up:param", 0],
             "spatial_split_param": ["h3:up:tiles", 0]}}
+        # Longer than one chunk, the whole clip goes through the 3D upscaler
+        # as ONE temporal block and dark regions grow a sparkle lattice
+        # (5s hero clip, 2026-08-26 A/B) - chunked re-sampling with a pinned
+        # anchor collapsed it to a few faint dots. A single-block short clip
+        # is the clean case already measured, so the node stays out there.
+        if frames > H3_UPSCALE_CHUNK:
+            graph["h3:up:time"] = {"class_type": "MMH3TemporalSplitParams",
+                                   "inputs": {
+                "chunk_length": H3_UPSCALE_CHUNK,
+                "temporal_overlap": H3_UPSCALE_CHUNK_OVERLAP,
+                "anchor_strength": H3_UPSCALE_ANCHOR}}
+            graph["h3:up:sample"]["inputs"]["temporal_split_param"] = \
+                ["h3:up:time", 0]
         graph["h3:up:decode"] = {"class_type": "VAEDecode", "inputs": {
             "samples": ["h3:up:sample", 0], "vae": ["3", 0]}}
         # One video output, the 2x. Audio stays the render's own decode - the
@@ -7235,13 +7713,16 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
         "speed_mode": ((h3_speed_mode(turbo) or {}).get("id", H3_SPEED_DEFAULT)
                        if turbo_rows else H3_SPEED_DEFAULT),
         "sparse_attention": h3_sparse_active(sparse),
+        # 9.55: the canvas tier the first frame was prepared at.
+        "resolution": resolution,
         # Only ever present when the 2x pass was actually wired in - and when
         # it was, size/canvas_mp below report the canvas the delivered clip
         # actually has, the 2x one. canvas_mp is also what the VRAM butler
         # prices on, and the job's peak (30.9 GB of 32.6, measured) sits in
         # the tiled pass, so the bigger number is the true one in both
         # places - same convention as LTX 2.5's clip upscale.
-        **({"upscale": "2x"} if upscale_on else {}),
+        **({"upscale": "2x", "upscale_chunk": H3_UPSCALE_CHUNK}
+           if upscale_on else {}),
         "h3_warnings": h3_brief_lint(brief, frames / 24),
         **lora_info,
         "lora_triggers": lora_triggers,
@@ -7256,7 +7737,8 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
 
 def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
                        height=None, overrides=(), model=None, lora_plan=None,
-                       anchor=None, memory=None, turbo=False, sparse=True):
+                       anchor=None, memory=None, turbo=False, sparse=True,
+                       resolution=H3_RESOLUTION_DEFAULT):
     """MiniMax H3 FL2VA multishot: one chained take per script prompt.
 
     ComfyUI-H3-Multishot's sampler runs the same stack build_h3_i2v wires by
@@ -7288,6 +7770,7 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
     h3_assets, missing = _h3_asset_paths(model_rel)
     if missing:
         raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
+    resolution, _res_spec = h3_resolution(resolution)
     image, width, height = _h3_prepared_canvas(image, width, height)
     frames = h3_frame_count(seconds)
 
@@ -7385,6 +7868,8 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
         "sparse_attention": h3_sparse_active(sparse),
         "h3_warnings": [w for shot in script[:count]
                         for w in h3_brief_lint(shot, frames / 24)],
+        # 9.55: the canvas tier the first frame was prepared at.
+        "resolution": resolution,
         **lora_info,
         "lora_triggers": lora_triggers,
         "size": f"{width}x{height}",
@@ -7409,7 +7894,7 @@ _H3_REF2V_REF_NODES = ("5", "5b", "5c", "5d", "5e", "5f", "5g", "5h", "5i")
 
 def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
                    overrides=(), model=None, lora_plan=None, turbo=False,
-                   sparse=True):
+                   sparse=True, resolution=H3_RESOLUTION_DEFAULT):
     """MiniMax H3 REF2VA: put THIS subject in a new scene. Sibling of
     build_h3_i2v; the model chip is the lane switch, per render.
 
@@ -7445,6 +7930,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     if missing:
         raise ValueError("MiniMax H3 is unavailable: " + ", ".join(missing))
 
+    resolution, _res_spec = h3_resolution(resolution)
     refs = [input_ref_name(r) for r in (refs or [])]
     refs = [r for r in refs if r]
     # Zero refs is silently t2va-on-ref2va-weights (minimax.py's falsy path:
@@ -7468,7 +7954,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
         # the first reference's aspect through the same adaptive-canvas logic.
         from PIL import Image
         with Image.open(CDIR / "input" / refs[0]) as opened:
-            width, height = h3_adapt_canvas(*opened.size)
+            width, height = h3_adapt_canvas(*opened.size, resolution)
     width, height = int(width), int(height)
     if width <= 0 or height <= 0 or width % H3_CANVAS_MULTIPLE or \
             height % H3_CANVAS_MULTIPLE:
@@ -7573,6 +8059,9 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
                        if turbo_rows else H3_SPEED_DEFAULT),
         "references": len(refs),
         "sparse_attention": h3_sparse_active(sparse),
+        # 9.55: the canvas tier - this lane derives the canvas itself (no
+        # prepared first frame), so the id also drove h3_adapt_canvas above.
+        "resolution": resolution,
         "h3_warnings": (tag_warnings
                         + h3_ref2v_unnamed_lint(brief, len(refs))
                         + h3_brief_lint(brief, frames / 24)),
@@ -7851,13 +8340,17 @@ def build_upscale_image(scene, seed, image=None, model=None, mode=None, override
 
 
 def build_upscale_video(scene, seed, video=None, mode=None, scale=None,
-                        prompt=None, overrides=()):
+                        fps=None, prompt=None, overrides=()):
     """Run a finished clip through RTX Video Super Resolution, audio intact.
 
     Frames come back through VHS at the clip's own rate (read from the file, not
     assumed) and the source audio track is re-attached, so a MiniMax H3 clip
-    keeps its native sound. The LTX 2.5 mode branches to a generative 2x
-    re-render instead of the VSR filter."""
+    keeps its native sound. A non-zero fps (9.53) RIFE-interpolates to that
+    rate in the SAME graph - interpolate small, then enlarge - with a
+    decimate when the target is not a whole multiple, and the combine's
+    frame_rate becomes the literal target so duration and audio hold. The
+    LTX 2.5 mode branches to a generative 2x re-render instead of the VSR
+    filter; it re-renders at the clip's own rate and ignores fps."""
     path = Path(str(video or ""))
     if not video or not path.is_file():
         raise ValueError("upscale needs the rendered clip on disk")
@@ -7887,18 +8380,71 @@ def build_upscale_video(scene, seed, video=None, mode=None, scale=None,
         g["uv:vsr"]["inputs"] = {"images": ["uv:load", 0],
                                  "resize_type": "Scale",
                                  "quality": chosen_mode.rsplit(" ", 1)[-1].upper()}
+    try:
+        target_fps = int(fps if fps is not None else cfg.get("video_fps", 0) or 0)
+    except (TypeError, ValueError):
+        target_fps = 0
+    target_fps = max(target_fps, 0)      # a negative rate is native, never a graph
+    shape = clip_shape(path)
+    new_frames = None
+    if target_fps:
+        src_fps = shape[3] if shape else 0
+        if not src_fps:
+            raise ValueError("cannot read the clip's frame rate to interpolate it")
+        if target_fps != src_fps:
+            # Probed-and-missing is a loud refusal; unprobed stays optimistic,
+            # the same contract _video_upscale_node keeps.
+            if not _node_available("RIFE VFI"):
+                raise ValueError(
+                    "frame interpolation needs ComfyUI-Frame-Interpolation")
+            # t/s reduced: 24->30 is x5 keep every 4th, 24->48 is x2, 24->60
+            # is x5 keep every 2nd - uniformly spaced frames, integer
+            # multiplier only, never a float fps.
+            div = math.gcd(src_fps, target_fps)
+            mult, nth = target_fps // div, src_fps // div
+            g["uv:rife"] = {
+                "class_type": "RIFE VFI",
+                "inputs": {"ckpt_name": "rife49.pth",
+                           "frames": ["uv:load", 0],
+                           "clear_cache_after_n_frames": 10,
+                           "multiplier": mult,
+                           "fast_mode": True,
+                           "ensemble": True,
+                           "scale_factor": 1.0},
+                "_meta": {"title": "Frame Interpolation"}}
+            tail = "uv:rife"
+            if nth > 1:
+                g["uv:decimate"] = {
+                    "class_type": "VHS_SelectEveryNthImage",
+                    "inputs": {"images": ["uv:rife", 0],
+                               "select_every_nth": nth},
+                    "_meta": {"title": "Select Every Nth"}}
+                tail = "uv:decimate"
+            g["uv:vsr"]["inputs"]["images"] = [tail, 0]
+            # The literal target, not uv:info: the frame count now matches
+            # the new rate at the same duration, and the copied audio track
+            # keeps sync (the h3-audio-pitfalls rule binds the COMBINE rate).
+            g["uv:save"]["inputs"]["frame_rate"] = target_fps
+            # RIFE emits mult*(N-1)+1 frames; the decimate keeps every nth.
+            new_frames = -(-(mult * (shape[2] - 1) + 1) // nth)
     g["uv:save"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene) or 'upscaled'}"
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
-    info = {"upscaler": f"RTX {chosen_mode}", "video_scale": chosen_scale,
+    label = f"RTX {chosen_mode}"
+    if new_frames:
+        # At scale 1.0 there is no enlargement to name - fps is the whole pass.
+        label = (f"{label} · {target_fps} fps" if chosen_scale > 1
+                 else f"{target_fps} fps")
+    info = {"upscaler": label, "video_scale": chosen_scale,
             "source_video": path.name}
-    shape = clip_shape(path)
+    if new_frames:
+        info["fps"] = target_fps
     if shape:
-        width, height, frames = shape
+        width, height, frames, _rate = shape
         out = (int(width * chosen_scale), int(height * chosen_scale))
         info["canvas_mp"] = (out[0] * out[1]) / 1e6
-        info["frames"] = frames
-        info["size"] = f"{out[0]}x{out[1]} · {frames}f"
+        info["frames"] = new_frames or frames
+        info["size"] = f"{out[0]}x{out[1]} · {info['frames']}f"
     return g, scene, info
 
 
@@ -7956,7 +8502,7 @@ def _build_ltx25_upscale_video(scene, seed, path, prompt, overrides):
     # same bracket as the RTX VSR filter, which is a pure image-space pass.
     shape = clip_shape(path)
     if shape:
-        width, height, frames = shape
+        width, height, frames, _rate = shape
         info["canvas_mp"] = (width * height * 4) / 1e6      # after the x2
         info["frames"] = frames
         info["size"] = f"{width * 2}x{height * 2} · {frames}f"
@@ -9568,7 +10114,15 @@ class Hub:
             if not any(rid in meta["compatible_recipes"] for meta in model_meta.values()):
                 missing.append(f"compatible {spec['family']} diffusion model")
             for nm in spec.get("required_loras", []):
-                if not _catalog_has("loras", nm):
+                # The identity stage runs ANY installed v1.2 build (brief
+                # 9.56): the Build dial swaps the file at graph time, so a
+                # box owning only r64 is as ready as one owning r128. The
+                # message still names the authored r128 - it is the
+                # download a fresh install should fetch.
+                if rid == "identity_edit" and nm == IDENTITY_LORA:
+                    if not identity_patch_variants():
+                        missing.append("LoRA: " + nm)
+                elif not _catalog_has("loras", nm):
                     missing.append("LoRA: " + nm)
             for nm in spec.get("required_vaes", []):
                 if not _catalog_has("vae", nm):
@@ -9695,6 +10249,8 @@ class Hub:
         # than filtered away below, then stamped onto info so it reaches the
         # card, the event stream and history together.
         style_tag = spec_args.pop("_style", None)
+        tuning_tag = spec_args.pop("_tuning", None)
+        sampler_swap_tag = spec_args.pop("_sampler_swap", None)
         job = {"id": job_id, "cid": cid, "template": template, "scene": scene,
                "seed": base_seed, "count": count, "started": time.time(), "parent": parent,
                "images": [], "seen": set(), "done_pids": set(), "prompt_ids": [],
@@ -9716,12 +10272,16 @@ class Hub:
             async with aiohttp.ClientSession() as s:
                 for i in range(count):
                     g, full, info = BUILDERS[template](scene, base_seed + i, **spec_args)
+                    if sampler_swap_tag:
+                        swap_sampler_node(g, sampler_swap_tag)
                     validate_job_model_info(template, info, g)
                     if i == 0:
                         await self.ensure_vram(template, g, job, info)
                     if not job.get("info"):
                         if style_tag:
                             info["style"] = style_tag
+                        if tuning_tag:
+                            info["tuning"] = tuning_tag
                         job["info"] = info
                         self.broadcast(type="jobinfo", job_id=job_id, **info)
                         warn = _lora_warning_text(info.get("lora_warnings"))
@@ -13229,6 +13789,17 @@ def _apply_opts(args, opts):
                                          style.get("tuning"))
             if overrides:
                 args["overrides"] = overrides
+            swap = sampler_swap(sampler_seat(style["base"], style["model"]),
+                                style.get("tuning"))
+            if swap:
+                args["_sampler_swap"] = swap
+            # The style's prompt clauses ride the same gate as its tuning: they
+            # belong to the base graph, so they apply only when that graph is
+            # what runs (any other builder's SIGS filter drops them anyway).
+            if style.get("negative"):
+                args["negative"] = style["negative"]
+            if style.get("prompt_tail"):
+                args["prompt_tail"] = style["prompt_tail"]
 
     if not style:
         # No saved preset - but a style DIRECTION is still something the user
@@ -13293,6 +13864,37 @@ def _apply_opts(args, opts):
                             if lora_profile(l.get("name", ""))["family"] == "krea2"]
         if picked_loras:
             args["loras"] = [f"{l['name']}:{l['strength']}" for l in picked_loras]
+    # Quick tuning (Jesse, 2026-08-26): the composer's sampler/steps/cfg
+    # override for THIS render, over a saved style's tuning where one is
+    # selected, on whichever seat the running graph has. Sparse like the
+    # dials: an untouched card sends nothing and the graph is byte-identical.
+    # Values the seat cannot take are dropped, never queued to fail.
+    tuning = opts.get("tuning")
+    if isinstance(tuning, dict) and tuning:
+        try:
+            tuning = validate_style_tuning(tuning)
+        except ValueError as exc:
+            raise ValueError(f"tuning: {exc}") from None
+        seat = sampler_seat(recipe, args.get("model"))
+        if seat:
+            keys = seat_tuning_keys(seat)
+            choices = seat_choices(seat)
+            clean = {k: v for k, v in tuning.items() if k in keys
+                     and (k not in ("sampler_name", "scheduler")
+                          or not choices.get(k) or v in choices[k])}
+            if clean:
+                style_tuning = dict(style.get("tuning") or {})                     if style and recipe == style["base"] else {}
+                merged = {**style_tuning, **clean}
+                args["overrides"] = tuning_overrides(recipe, args.get("model"), merged)
+                swap = sampler_swap(seat, merged)
+                if swap:
+                    args["_sampler_swap"] = swap
+                else:
+                    args.pop("_sampler_swap", None)
+                # What actually ran, for the card and history - every seat
+                # key, so the line reads whole ("euler · simple · 8 steps").
+                args["_tuning"] = {**sampler_defaults(recipe, args.get("model")),
+                                   **merged}
     if opts.get("aspect"):
         args["aspect"] = opts["aspect"]
     if opts.get("mp"):
@@ -14871,6 +15473,7 @@ async def settings_get(_req):
                     "image_modes": list(UPSCALE_IMAGE_MODES),
                     "pid_available": _pid_upscale_available(),
                     "video_modes": list(UPSCALE_VIDEO_MODES),
+                    "video_fps_options": list(UPSCALE_VIDEO_FPS_OPTIONS),
                     "video_available": bool(_video_upscale_node()),
                     "ltx25_video_available": not _ltx25_upscale_missing()},
         "edit": {**cfg["edit"],
@@ -14897,6 +15500,15 @@ async def settings_get(_req):
 
                   "upscale_2x": bool(cfg["video"].get("upscale_2x", False)),
                   "upscale_2x_available": h3_upscale_available(),
+                  # The 9.55 Resolution row's standing default, published with
+                  # the tier list itself - the same discipline as
+                  # upscale_2x_available: this endpoint carries what its own
+                  # controls draw (Settings never fetches /api/options).
+                  "h3_resolution": cfg["video"].get("h3_resolution",
+                                                    H3_RESOLUTION_DEFAULT),
+                  "h3_resolutions": [
+                      {"id": tier_id, "label": spec["label"], "mp": spec["mp"]}
+                      for tier_id, spec in H3_RESOLUTIONS.items()],
                   # The 9.38 tags/quotes switch (MiniMax-H3 #76), published
                   # with its default so an old config still reads "quotes".
                   "h3_dialogue_tags": cfg["video"].get("h3_dialogue_tags",
@@ -15043,6 +15655,16 @@ async def settings_post(req):
                 {"ok": False,
                  "error": f"not a bool: {video_cfg['upscale_2x']}"}, status=400)
         cfg["video"]["upscale_2x"] = video_cfg["upscale_2x"]
+    if "h3_resolution" in video_cfg:
+        # 9.55: the same refusal "not a console style" gives - a typo would
+        # stand a silent fallback as the Resolution row's opening position.
+        want = video_cfg["h3_resolution"]
+        if not isinstance(want, str) or want not in H3_RESOLUTIONS:
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not one of {'|'.join(H3_RESOLUTIONS)}: {want}"},
+                status=400)
+        cfg["video"]["h3_resolution"] = want
     if "h3_dialogue_tags" in video_cfg:
         # 9.38: tags is the trained form, quotes the #76 workaround - the
         # same refusal "not a console style" gives, or a typo would stand a
@@ -15069,6 +15691,17 @@ async def settings_post(req):
             cfg["upscale"]["video_scale"] = min(max(float(upscale["video_scale"]), low), high)
         except (TypeError, ValueError):
             pass
+    if upscale.get("video_fps") is not None:
+        # Clamp to the offered rates (9.53): RIFE multipliers are integers,
+        # so an in-between value snaps to the nearest option - same degrade-
+        # never-die policy as the number dials, never a 400 for a dial guess.
+        try:
+            want = int(upscale["video_fps"])
+        except (TypeError, ValueError):
+            want = None
+        if want is not None:
+            cfg["upscale"]["video_fps"] = min(
+                UPSCALE_VIDEO_FPS_OPTIONS, key=lambda o: (abs(o - want), o))
     if isinstance(body.get("extra_model_roots"), list):
         cfg["extra_model_roots"] = [r.strip() for r in body["extra_model_roots"]
                                     if isinstance(r, str) and r.strip()]
@@ -15343,6 +15976,10 @@ async def style_sampler(req):
     """
     base_id = str(req.query.get("base") or "")
     model = str(req.query.get("model") or "")
+    # The combo lists come from ComfyUI's object_info. The probe used to ride
+    # only /api/settings, so the composer's tuning card (and the style editor
+    # before Settings was ever opened) got empty dropdowns; ask here, cached.
+    await refresh_comfy_nodes()
     if base_id not in STYLE_BASE_IDS:
         return web.json_response(
             {"ok": False, "error": f"unknown base recipe: {base_id or '(missing)'}"},
@@ -15355,8 +15992,13 @@ async def style_sampler(req):
         # carries eta; a stock KSampler does not, so the editor must not draw a
         # box that would fail on save.
         "keys": list(seat_tuning_keys(seat)),
-        "options": sampler_choices(seat["class"]) if seat else {},
+        "options": seat_choices(seat) if seat else {},
+        "groups": seat_choice_groups(seat) if seat else {},
         "defaults": sampler_defaults(base_id, model),
+        # The composer's quick-tuning card (2026-08-26): a distilled build
+        # keeps cfg at 1, and the model page's own recommendation is one click.
+        "cfg_locked": bool(seat) and cfg_locked(base_id, model),
+        "recommended": model_recommended_tuning(base_id, model) if seat else None,
         "reason": "" if seat else fixed_schedule_reason(base_id, model),
     })
 
@@ -15587,6 +16229,16 @@ def prepare_animate(body):
         args["seed"] = seed
     try:
         if engine == "h3":
+            # 9.55: the canvas tier. Validated here so a typo 400s naming the
+            # option list instead of silently rendering Standard; absent is
+            # the default - today's canvas, and what the trailer and chat
+            # lanes keep sending (the Settings value only sets the popup's
+            # opening position, the 9.31 contract).
+            try:
+                resolution = h3_resolution(body.get("resolution"))[0]
+            except ValueError as exc:
+                return web.json_response(
+                    {"ok": False, "error": str(exc)}, status=400)
             if variant == H3_REF2V_MODEL_ID:
                 # The picked still becomes ref_images.ref_image_0, staged as a
                 # RAW copy - never through prepare_h3_frame, which center-crops
@@ -15603,11 +16255,11 @@ def prepare_animate(body):
                 # adaptive-canvas logic.
                 from PIL import Image
                 with Image.open(src) as still:
-                    width, height = h3_adapt_canvas(*still.size)
-                args.update(refs=[dst], width=width, height=height)
+                    width, height = h3_adapt_canvas(*still.size, resolution)
+                args.update(refs=[dst], width=width, height=height, resolution=resolution)
             else:
-                dst, width, height = prepare_h3_frame(src)
-                args.update(image=dst, width=width, height=height)
+                dst, width, height = prepare_h3_frame(src, resolution)
+                args.update(image=dst, width=width, height=height, resolution=resolution)
             if last_entry:
                 limg = next((i for i in last_entry["images"]
                              if i.get("media", "image") == "image"),
@@ -15946,13 +16598,16 @@ def _ffmpeg_exe():
 
 @lru_cache(maxsize=64)
 def _clip_shape(path_text, size, mtime_ns):
-    """(width, height, frames) of a finished clip, or None when unreadable.
+    """(width, height, frames, fps) of a finished clip, or None when unreadable.
 
     Cheap enough to run at build time - ffprobe reads the container header, not
     the stream - and cached on (path, size, mtime) so a re-upscale of the same
     clip costs nothing. The frame count is what the butler needs: an LTX 2.5
     clip upscale re-encodes EVERY frame at twice the resolution, and pricing
     that flat put a 22B two-pass job in the same bracket as an RTX VSR filter.
+    The fps (r_frame_rate rounded to an int, 0 when unknown) is what 9.53's
+    RIFE finishing needs - the interpolation multiplier divides the clip's own
+    rate, which is read here, never assumed to be 24.
     """
     exe = _ffmpeg_tool("ffprobe")
     if not exe:
@@ -15971,20 +16626,22 @@ def _clip_shape(path_text, size, mtime_ns):
     if not width or not height:
         return None
     frames = int(stream.get("nb_frames") or 0)
+    try:
+        num, _, den = (stream.get("r_frame_rate") or "0/1").partition("/")
+        rate = float(num) / float(den or 1)
+    except (TypeError, ValueError, ZeroDivisionError):
+        rate = 0.0
     if not frames:
         # nb_frames is absent in plenty of containers; duration x rate is the
         # standard fallback and only has to be close.
-        try:
-            num, _, den = (stream.get("r_frame_rate") or "0/1").partition("/")
-            rate = float(num) / float(den or 1)
-            frames = int(round(float(stream.get("duration") or 0) * rate))
-        except (TypeError, ValueError, ZeroDivisionError):
-            frames = 0
-    return width, height, max(frames, 1)
+        frames = int(round(float(stream.get("duration") or 0) * rate)) \
+            if rate else 0
+    return width, height, max(frames, 1), int(round(rate))
 
 
 def clip_shape(path):
-    """_clip_shape keyed on a path's identity, so an edited file re-probes."""
+    """_clip_shape keyed on a path's identity, so an edited file re-probes.
+    (width, height, frames, fps) or None."""
     try:
         st = Path(path).stat()
     except OSError:
@@ -16577,7 +17234,7 @@ async def upscale(req):
     else:
         # VHS reads the clip straight off disk - no staging copy needed.
         args = {"video": str(src)}
-        for key in ("mode", "scale"):
+        for key in ("mode", "scale", "fps"):
             if body.get(key) is not None:
                 args[key] = body[key]
         # The LTX 2.5 mode refines generatively; the clip's own brief keeps
@@ -16806,7 +17463,10 @@ async def chats_post(req):
 # what the brain derived from the scene (standing, nsfw, ...).
 _REROLL_COMPOSER_OWNED = (
     "model", "loras", "lora_plan", "aspect", "mp", "overrides", "_style",
-    "character", "ref", "seed",
+    "_tuning", "_sampler_swap", "character", "ref", "seed",
+    # negative/prompt_tail are style-file clauses: a reroll after the style
+    # moves on must not keep steering from the old one's words.
+    "negative", "prompt_tail",
 ) + tuple(d["key"] for d in RECIPE_SPECS["identity_edit"].get("dials", ()))
 
 
@@ -16955,6 +17615,41 @@ async def history(_req):
 async def options(_req):
     await refresh_lm_cache()
     return web.json_response(HUB.options())
+
+async def h3_canvas(req):
+    """GET /api/h3/canvas?id=<generation>&resolution=<tier> -> the canvas THIS
+    still would render at on that tier (9.55).
+
+    The Animate popup's Resolution row hints from it. An endpoint rather than
+    a JS port of h3_adapt_canvas for two reasons: the walk-down rule keeps ONE
+    implementation (the one the render uses - a hint from a second
+    implementation can drift off the canvas the render gets), and the popup
+    never learns the still's pixels this way (ledger image entries carry no
+    dimensions)."""
+    entry = next((e for e in HUB.ledger_read()
+                  if e["id"] == str(req.rel_url.query.get("id") or "")), None)
+    if not entry:
+        return web.json_response({"ok": False, "error": "no such generation"},
+                                 status=404)
+    img = next((i for i in entry["images"] if i.get("media", "image") == "image"),
+               entry["images"][0] if entry["images"] else None)
+    if not img:
+        return web.json_response({"ok": False, "error": "no still on that entry"},
+                                 status=400)
+    src = CDIR / "output" / (img.get("subfolder") or "") / img["filename"]
+    if not src.is_file():
+        return web.json_response(
+            {"ok": False, "error": "file gone: " + img["filename"]}, status=404)
+    try:
+        tier, _spec = h3_resolution(req.rel_url.query.get("resolution"))
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    from PIL import Image
+    with Image.open(src) as still:
+        width, height = h3_adapt_canvas(*still.size, tier)
+    return web.json_response({"ok": True, "resolution": tier,
+                              "width": width, "height": height})
+
 
 async def quant_alternatives(req):
     """GET /api/quant_alternatives?engine=ltx25 - the lighter-build ladder for
@@ -18878,14 +19573,22 @@ async def ensure_comfy_running():
         COMFY_BOOT.update(at=None, error=f"could not start {launcher.name}: {exc}")
         print("[pixal] " + COMFY_BOOT["error"], flush=True)
         return
+    # Snapshot the boot stamp: another path (an adopt, a reset, a rival boot)
+    # can clear COMFY_BOOT["at"] while this watcher sleeps, and the first
+    # reachable poll then subtracted None and took the whole task down
+    # (sidecar.log, 2026-08-26, mid H3 2x clip).
+    started = COMFY_BOOT["at"]
     for _ in range(180):                                    # 6 minutes of grace
         await asyncio.sleep(2)
         if await comfy_reachable(timeout=3):
-            took = round(time.time() - COMFY_BOOT["at"], 1)
-            print(f"[pixal] ComfyUI up in {took}s", flush=True)
-            cfg = load_config()                    # calibrate the next boot meter
-            cfg["comfy_boot_seconds"] = took
-            save_config(cfg)
+            stamp = COMFY_BOOT["at"] or started
+            took = round(time.time() - stamp, 1) if stamp else None
+            print(f"[pixal] ComfyUI up in {took}s" if took is not None
+                  else "[pixal] ComfyUI up", flush=True)
+            if took is not None:
+                cfg = load_config()                # calibrate the next boot meter
+                cfg["comfy_boot_seconds"] = took
+                save_config(cfg)
             # Hold the boot state until the hub's own watcher agrees. Clearing it
             # the moment the port answers blinks the UI through a frame that says
             # "waiting for ComfyUI" with no meter, right at the finish line.
@@ -19420,6 +20123,7 @@ def main():
     app.router.add_get("/api/history", history)
     app.router.add_post("/api/history/delete", history_delete)
     app.router.add_get("/api/options", options)
+    app.router.add_get("/api/h3/canvas", h3_canvas)
     app.router.add_get("/api/quant_alternatives", quant_alternatives)
     app.router.add_post("/api/quant_fetch", quant_fetch)
     app.router.add_post("/api/upload", upload)

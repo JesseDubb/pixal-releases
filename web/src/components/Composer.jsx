@@ -22,8 +22,9 @@ import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { MiniSlider } from "../lib/MiniSlider.jsx";
 import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
-import { familyName, variantName } from "../lib/names.js";
-import { inputImages, inputImgUrl, setInputRefType, upload } from "../transport.js";
+import { Picker } from "../lib/Picker.jsx";
+import { familyName, tuningLine, variantName } from "../lib/names.js";
+import { inputImages, inputImgUrl, setInputRefType, styleSampler, upload } from "../transport.js";
 
 const REF_KINDS = [
   { key: "identity", label: "identity", Icon: UserFocus },
@@ -970,8 +971,178 @@ const LORA_PICKER_VIEWS = ["grid", "list"];
 // profile's family open, the rest collapsed.
 const LORA_PICKER_GROUPS_KEY = "pixal.loraPicker.groups.v1";
 
+
+// ── quick tuning ─────────────────────────────────────────────────────────────
+// Jesse, 2026-08-26: "under the LoRA explorer - a minimized by default
+// Sampler, Scheduler, Steps easy adjustment ... only for advanced users". One
+// card under the recipe card, closed to a single line stating the schedule
+// the render will run at. Which boxes exist, their options and the model's
+// own recommendation all come from /api/styles/sampler for the base+model
+// pair - the same answer the style editor gets - so nothing here can offer a
+// value the graph would refuse. Sparse overrides, like the dials: a key rides
+// only while it deviates from what the recipe (or the selected style) runs at.
+const TUNE_STEPS = { min: 1, max: 40, step: 1 };
+const TUNE_CFG = { min: 1, max: 10, step: 0.5 };
+const TUNE_ETA = { min: 0, max: 1, step: 0.05 };
+const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase,
+                      open, onToggle }) => {
+  const [seat, setSeat] = useState(null);
+  useEffect(() => {
+    let live = true;
+    if (!recipeId) { setSeat(null); return undefined; }
+    styleSampler(recipeId, model || "")
+      .then((d) => { if (live) setSeat(d?.ok ? d : null); })
+      .catch(() => { if (live) setSeat(null); });
+    return () => { live = false; };
+  }, [recipeId, model]);
+  if (!seat?.tunable) return null;
+  const keys = seat.keys || [];
+  const has = (k) => keys.includes(k);
+  const choices = seat.options || {};
+  // Home = what runs untouched: the recipe's authored numbers under the
+  // selected style's saved tuning. An override equal to home is no override.
+  const home = { ...(seat.defaults || {}), ...(styleTuning || {}) };
+  const resolved = { ...home, ...overrides };
+  const isSet = (k) => overrides[k] !== undefined;
+  const any = keys.some(isSet);
+  const change = (k, v) => onTuning(k, v === home[k] ? null : v);
+  const reset = () => keys.forEach((k) => { if (isSet(k)) onTuning(k, null); });
+  const reco = seat.recommended;
+  const applyReco = () => {
+    if (!reco) return;
+    for (const k of keys)
+      if (reco[k] !== undefined && !(k === "cfg" && seat.cfg_locked)) change(k, reco[k]);
+  };
+  const recoLine = reco ? tuningLine(reco) : "";
+  const recoActive = !!reco && keys.every((k) => reco[k] === undefined || resolved[k] === reco[k]);
+  const labelStyle = { fontSize: TYPE.label, fontWeight: W.label, color: "var(--textSec)",
+                       display: "flex", alignItems: "center", gap: SPACE[6], minWidth: 0,
+                       height: 16, whiteSpace: "nowrap", overflow: "hidden" };
+  // One line, always: the way home is right-aligned and clips rather than
+  // wrapping under the label (a wrapped mark pushed the control down and
+  // broke the row's rhythm - Jesse, 2026-08-26).
+  const homeMark = (k) => isSet(k) && (
+    <span title={`back to ${home[k]}`} style={{ marginLeft: "auto", minWidth: 0,
+      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      fontFamily: "ui-monospace, Consolas, monospace", fontSize: TYPE.micro,
+      color: "var(--textMut)" }}>recipe {home[k]}</span>
+  );
+  const field = (label, k, control, tip) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[4], minWidth: 0 }}>
+      <span style={labelStyle}>{label}{tip}{homeMark(k)}</span>
+      {control}
+    </div>
+  );
+  // Grouped when the seat offers two families (RES4LYF's own list, then the
+  // stock KSampler's - a pick from the second swaps the node at render time).
+  const groupOf = (k) => {
+    const map = new Map();
+    for (const g of (seat.groups || {})[k] || [])
+      for (const id of g.ids || []) map.set(id, g.label);
+    return map;
+  };
+  const select = (k) => (choices[k] || []).length ? (
+    <Picker label={k} value={resolved[k]}
+      options={(() => { const gm = groupOf(k);
+        return choices[k].map((v) => ({ id: v, label: v, group: gm.get(v) })); })()}
+      onChange={(v) => change(k, v)} />
+  ) : (
+    <span style={{ fontSize: TYPE.label, color: "var(--textMut)" }}>{resolved[k]}</span>
+  );
+  return (
+    <div style={{ ...rowBase, display: "flex", flexDirection: "column",
+                  alignItems: "stretch", gap: 0, marginBottom: SPACE[8] }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE[10], minWidth: 0 }}>
+        <SlidersHorizontal size={18} weight="duotone" style={{ color: "var(--accent)", flexShrink: 0 }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
+                        fontSize: TYPE.body, fontWeight: W.nav, color: "var(--text)",
+                        lineHeight: 1.35 }}>
+            Sampler
+            <InfoTip size={12} text={"Sampler, scheduler and step overrides for this render, on "
+              + "this recipe. “model” applies the settings from the model's own page. Save "
+              + "the composer as a style to keep them; another recipe or style starts clean."} />
+          </div>
+          <div title={tuningLine(resolved)}
+               style={{ fontSize: TYPE.label, lineHeight: 1.4, overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        fontFamily: "ui-monospace, Consolas, monospace",
+                        color: any ? "var(--accent)" : "var(--textTer)" }}>
+            {!any && "follows the recipe · "}{tuningLine(resolved)}
+          </div>
+        </div>
+        <button type="button" onClick={onToggle} aria-expanded={open}
+          aria-label="sampler settings" title={open ? "collapse sampler settings" : "expand sampler settings"}
+          style={{ height: 24, width: 24, display: "inline-flex", alignItems: "center",
+                   justifyContent: "center", flexShrink: 0, padding: 0,
+                   border: "1px solid var(--border)", borderRadius: RADIUS.control,
+                   cursor: "pointer", background: "var(--bg2)", color: "var(--textTer)" }}>
+          <AccordionChevron open={open} />
+        </button>
+      </div>
+      <AccordionPanel open={open}>
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE[12],
+                      marginTop: SPACE[12], paddingTop: SPACE[12],
+                      borderTop: "1px solid var(--border)" }}>
+          <SegmentedControl variant="flex" size="sm" ariaLabel="tuning preset"
+            value={!any ? "recipe" : recoActive ? "model" : "custom"}
+            onChange={(v) => { if (v === "recipe") reset(); else if (v === "model") applyReco(); }}
+            options={[
+              { v: "recipe", label: "recipe", title: "the recipe's own schedule" },
+              { v: "model", label: "model", disabled: !reco,
+                title: reco ? `the model page recommends ${recoLine}`
+                            : "no recommendation on the model page" },
+              { v: "custom", label: "custom", disabled: !any || recoActive,
+                title: "your own settings" },
+            ]} />
+          {reco && (
+            <div title={reco._text}
+                 style={{ fontSize: TYPE.micro, color: "var(--textMut)",
+                          fontFamily: "ui-monospace, Consolas, monospace",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              model page · {recoLine}
+            </div>
+          )}
+          {/* Full width each: RES4LYF's names ("exponential/res_3s_non-monotonic")
+              need the whole rail, and so does the list that opens under them. */}
+          <div style={{ display: "grid", gap: SPACE[8], gridTemplateColumns: "1fr" }}>
+            {has("sampler_name") && field("Sampler", "sampler_name", select("sampler_name"))}
+            {has("scheduler") && field("Scheduler", "scheduler", select("scheduler"))}
+          </div>
+          {has("steps") && field("Steps", "steps",
+            <MiniSlider value={resolved.steps} {...TUNE_STEPS} resetTo={home.steps}
+              emphasis={isSet("steps")} ariaLabel="steps"
+              format={(v) => String(Math.round(v))}
+              onChange={(v) => change("steps", Math.round(v))} />)}
+          {has("cfg") && (
+            <div style={{ opacity: seat.cfg_locked ? 0.55 : 1 }}>
+              {field("CFG", "cfg",
+                <MiniSlider value={resolved.cfg} {...TUNE_CFG} resetTo={home.cfg}
+                  disabled={!!seat.cfg_locked} emphasis={isSet("cfg")} ariaLabel="cfg"
+                  format={(v) => Number(v).toFixed(1)}
+                  onChange={(v) => change("cfg", Math.round(v * 2) / 2)} />,
+                seat.cfg_locked && (
+                  <InfoTip size={11} text={"Distilled build - guidance is baked in at cfg 1. "
+                    + "Above 1 doubles the render time and burns the image, so it stays put."} />
+                ))}
+            </div>
+          )}
+          {has("eta") && field("Eta", "eta",
+            <MiniSlider value={resolved.eta || 0} {...TUNE_ETA} resetTo={home.eta || 0}
+              emphasis={isSet("eta")} ariaLabel="eta"
+              format={(v) => Number(v).toFixed(2)}
+              onChange={(v) => change("eta", Math.round(v * 20) / 20)} />,
+            <InfoTip size={11} text={"How much fresh noise an SDE sampler re-injects each step "
+              + "(0 = none). Only SDE samplers read it."} />)}
+        </div>
+      </AccordionPanel>
+    </div>
+  );
+};
+
 export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan,
-                            setCoreEnabled, setCoreStrength, onDial, rail = false }) => {
+                            setCoreEnabled, setCoreStrength, onDial, onTuning,
+                            rail = false }) => {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -1068,6 +1239,16 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   // through onDial -> store.setRecipeDial. A dial back on the recipe's own
   // number clears the override there - always a way home.
   const dialOverridesMap = ((opts?.dials || {}))[recipeId] || {};
+  // Quick tuning rides beside the dials: same sparse map, keyed by recipe.
+  const tuneOverrides = ((opts?.tuning || {}))[recipeId] || {};
+  const tuneAny = Object.keys(tuneOverrides).length > 0;
+  const savedStyle = opts?.saved_style
+    ? (options?.saved_styles || []).find((s) => s.id === opts.saved_style) : null;
+  const styleTuning = savedStyle && savedStyle.base === recipeId ? (savedStyle.tuning || {}) : {};
+  const tuneModel = opts?.model || recipe?.default_model || "";
+  // Open while overridden, like the dial cards: an override never hides.
+  const [tuneOpen, setTuneOpen] = useState(tuneAny);
+  useEffect(() => { if (tuneAny) setTuneOpen(true); }, [tuneAny]);
   const isSet = (key) => dialOverridesMap[key] !== undefined;
   const resolvedDial = (dial) => dialOverridesMap[dial.key] ?? dial.default;
   // A choice dial's display label is the option's own ("2-vector"), not the
@@ -1338,7 +1519,11 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
         dialRunnable(dial) ? (
           <SegmentedControl variant="grid" size="sm" ariaLabel={`${dial.label} variant`}
             options={(dial.choices || []).map((c) =>
-              ({ v: c.value, label: c.label, title: c.name }))}
+              // An option may carry its own title: the Build dial's labels
+              // stay short (Full / r128 / r64 - sized labels overflow the
+              // drawer's unshrinkable grid) and the size rides the tooltip
+              // (9.56). The bypass dial has no title and shows its rel.
+              ({ v: c.value, label: c.label, title: c.title || c.name }))}
             value={resolvedDial(dial)}
             onChange={(v) => onDial(dial.key, v)} />
         ) : (
@@ -1360,6 +1545,12 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   const rowBase = {
     display: "grid", gridTemplateColumns: "24px minmax(0,1fr) 56px auto",
     alignItems: "center", gap: SPACE[10], minHeight: 52,
+    // Never a flex item that shrinks: the list is a scrolling flex column,
+    // and an explicit minHeight lets flexbox squeeze a row to 52px when the
+    // rail overflows - an open dial drawer then spilled over the rows below
+    // instead of pushing them (Jesse, 2026-08-26). The list scrolls; rows do
+    // not give.
+    flexShrink: 0,
     padding: `${SPACE[8]}px ${SPACE[10]}px`, borderRadius: RADIUS.inner,
     background: "var(--bg2)", border: "1px solid var(--border)",
   };
@@ -1630,6 +1821,14 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
               .join(" · ")}
           </div>
         )}
+        {tuneAny && (
+          <div title="expand the chain to change these"
+               style={{ marginTop: SPACE[6],
+                        fontFamily: "ui-monospace, Consolas, monospace", fontSize: 9,
+                        lineHeight: 1.5, color: "var(--accent)" }}>
+            sampler · {tuningLine(tuneOverrides)}
+          </div>
+        )}
         </>
       ) : (
         <>
@@ -1647,8 +1846,11 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
         <div style={{ ...rowBase, display: "flex", flexDirection: "column",
                       alignItems: "stretch", gap: 0, marginBottom: SPACE[8] }}>
           <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-            <SlidersHorizontal size={14} weight="duotone"
-              style={{ color: "var(--accent)", flexShrink: 0 }} />
+            {/* Identity Edit is about a face (Jesse, 2026-08-26: UserFocus);
+                the other recipes keep the sliders glyph. */}
+            {recipe.id === "identity_edit"
+              ? <UserFocus size={18} weight="duotone" style={{ color: "var(--accent)", flexShrink: 0 }} />
+              : <Palette size={18} weight="duotone" style={{ color: "var(--accent)", flexShrink: 0 }} />}
             <div style={{ minWidth: 0 }}>
               {/* What you have selected: the graph by name, in the text
                   colour and body size a selection deserves, with what it
@@ -1720,6 +1922,11 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
             </AccordionPanel>
           )}
         </div>
+      )}
+      {typeof onTuning === "function" && (
+        <TuningCard recipeId={recipeId} model={tuneModel} styleTuning={styleTuning}
+          overrides={tuneOverrides} onTuning={onTuning} rowBase={rowBase}
+          open={tuneOpen} onToggle={() => setTuneOpen((v) => !v)} />
       )}
       {rail && allDials.length === 0 && (
         <div style={{ padding: `0 ${SPACE[8]}px ${SPACE[8]}px`,

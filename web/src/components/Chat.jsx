@@ -250,6 +250,7 @@ export const applyThemeCss = (tk) => {
     .px-msg { animation: px-msg-in 420ms cubic-bezier(0.16,1,0.3,1) both; }
     /* the status dot breathes while it waits for ComfyUI to come up */
     @keyframes px-dot-wait { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    @keyframes px-spin { to { transform: rotate(360deg); } }
     .px-dot-wait { animation: px-dot-wait 2.4s ease-in-out infinite; }
     /* connected: a brighter-green layer strobes slowly over the dot - alive,
        not busy. Opacity-only, so it stays compositor-cheap while sampling. */
@@ -1187,6 +1188,7 @@ export const Chat = () => {
               <LoraChain opts={store.opts} options={store.options}
                          recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
                          onDial={(key, value) => store.setRecipeDial(key, value)}
+                         onTuning={(key, value) => store.setTuning(key, value)}
                          setEntries={(entries) => store.setActiveLoraEntries(entries)}
                          setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
                          setCoreStrength={(slot, value) =>
@@ -1452,6 +1454,7 @@ export const Chat = () => {
           <LoraChain rail opts={store.opts} options={store.options}
                      recipeId={store.activeRecipeId} plan={store.activeLoraPlan}
                      onDial={(key, value) => store.setRecipeDial(key, value)}
+                     onTuning={(key, value) => store.setTuning(key, value)}
                      setEntries={(entries) => store.setActiveLoraEntries(entries)}
                      setCoreEnabled={(slot, on) => store.setCoreStageEnabled(slot, on)}
                      setCoreStrength={(slot, value) =>
@@ -1523,10 +1526,10 @@ export const Chat = () => {
         <MotionDirector options={store.options} onClose={() => setAnimFor(null)}
           history={store.history} sourceId={animFor}
           onAction={(hint, secs, engine, model, loraPlan, fps, shots, script, speed,
-                     endId, sparse, upscale) => {
+                     endId, sparse, upscale, resolution) => {
             followLatest();
             store.animate(animFor, hint, secs, engine, model, loraPlan, fps,
-                          shots, script, speed, endId, sparse, upscale);
+                          shots, script, speed, endId, sparse, upscale, resolution);
           }} />
       )}
 

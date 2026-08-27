@@ -62,7 +62,11 @@ export const MiniSlider = ({
         <Icon size={15} weight="duotone"
           style={{ color: "var(--textSec)", justifySelf: "center" }} />
       )}
-      <div style={{ position: "relative", height: 16 }}>
+      {/* The track is inset by half a thumb on each side so the thumb stays
+          inside the box at both ends - at the minimum it used to hang 6px
+          past the left edge and get clipped (Jesse, 2026-08-26). */}
+      <div style={{ position: "relative", height: 16, padding: "0 6px" }}>
+        <div style={{ position: "relative", height: "100%" }}>
         <div style={{ position: "absolute", left: 0, right: 0, top: "50%",
                       height: 4, marginTop: -2, background: "var(--bg3)",
                       borderRadius: 2 }} />
@@ -79,6 +83,7 @@ export const MiniSlider = ({
                       background: "var(--bg1)", border: "1.5px solid var(--text)",
                       borderRadius: "50%", boxShadow: "0 1px 2px rgba(0,0,0,0.18)",
                       pointerEvents: "none" }} />
+        </div>
         <input type="range" min={min} max={max} step={step} value={clamped}
           onChange={handleChange} aria-label={ariaLabel} disabled={disabled}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%",

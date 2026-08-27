@@ -6,7 +6,7 @@ The point is repeatability. Model files remain interchangeable within their supp
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.0.10b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.1.0b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 
@@ -297,6 +297,24 @@ queue it.
 Choosing a saved style and then changing the model, style, quality or LoRA stack
 by hand releases the style, because the composer no longer matches what was
 saved.
+
+### Sampler settings
+
+Under the recipe card in the LoRA chain sits a **Sampler** card. Closed, it
+states the schedule the next render runs at; open, it offers the sampler,
+scheduler, steps, CFG and (on RES4LYF's Clownshark seats) eta for this render
+only. Each control shows the recipe's own value as the way back, the "model"
+preset applies the settings from the model's page when it carries any, and the
+job card and history record what actually ran. **Save current** carries the
+override into a style; picking another recipe or style starts clean.
+
+Every recipe has a seat: Realism II tunes its first pass (the 2-step refine is
+the "refined" part and stays authored), Z-Image Turbo exposes sampler, steps
+and CFG on its Amazing v4 schedule (no scheduler - the schedule is the graph),
+and CFG is greyed at 1 on distilled builds. On the Krea 2 recipes the sampler
+menu lists RES4LYF's samplers first and ComfyUI's stock KSampler list
+(`er_sde`, `dpmpp_2m_sde`, `res_multistep`…) under its own label; a stock pick
+swaps a stock KSampler into the seat for that render, so eta does not apply.
 
 ### Frame: Straight or Cinematic
 

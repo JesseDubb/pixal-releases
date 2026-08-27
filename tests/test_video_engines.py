@@ -635,7 +635,7 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(args[2], "h3_i2v")
         self.assertEqual(args[4], {
             "seconds": 10, "model": "fl2va", "image": "pixal_h3_ready.png",
-            "width": 1344, "height": 768, "lora_plan": plan})
+            "width": 1344, "height": 768, "resolution": "standard", "lora_plan": plan})
 
     def test_animate_sends_a_pasted_script_verbatim_and_counts_its_own_shots(self):
         """A script is the user's own words: the motion director is not called at
@@ -1359,6 +1359,53 @@ class MiniMaxH3UpscaleTests(unittest.TestCase):
         self.assertEqual(tiles["min_tile_size"], 256)
         self.assertEqual(tiles["overlap_mode"], "earlier")
         self.assertEqual(tiles["overlap_blend"], "smoothstep")
+
+    def test_long_clips_are_resampled_in_anchored_time_chunks(self):
+        """The 2026-08-26 A/B: a 5s clip (124 frames) through the 3D
+        upscaler as ONE temporal block grows a sparkle lattice in dark
+        regions; 51-frame chunks at 17 overlap with the anchor pinned
+        collapsed it to a few faint dots (tsplit5s.mp4)."""
+        graph, _b, info = self.build()
+        self.assertEqual(graph["h3:up:time"]["class_type"],
+                         "MMH3TemporalSplitParams")
+        self.assertEqual(graph["h3:up:time"]["inputs"], {
+            "chunk_length": server.H3_UPSCALE_CHUNK,
+            "temporal_overlap": server.H3_UPSCALE_CHUNK_OVERLAP,
+            "anchor_strength": server.H3_UPSCALE_ANCHOR})
+        self.assertEqual(
+            graph["h3:up:sample"]["inputs"]["temporal_split_param"],
+            ["h3:up:time", 0])
+        # history says which recipe produced the clip
+        self.assertEqual(info["upscale"], "2x")
+        self.assertEqual(info["upscale_chunk"], server.H3_UPSCALE_CHUNK)
+
+    def test_a_single_chunk_clip_skips_the_temporal_split(self):
+        """A clip that fits in one chunk IS the clean case already measured
+        (2s/49 frames was lattice-free with the same settings), so the node
+        stays out. Simulated by lifting the chunk past 124 frames."""
+        with patch.object(server, "H3_UPSCALE_CHUNK", 136):
+            graph, _b, info = self.build()
+        self.assertNotIn("h3:up:time", graph)
+        self.assertNotIn("temporal_split_param",
+                         graph["h3:up:sample"]["inputs"])
+        self.assertEqual(info["upscale_chunk"], 136)
+
+    def test_the_temporal_split_constants_pass_the_nodes_own_rules(self):
+        # chunk 51 / overlap 17 / anchor 0.999 - the measured recipe
+        self.assertEqual((server.H3_UPSCALE_CHUNK,
+                          server.H3_UPSCALE_CHUNK_OVERLAP,
+                          server.H3_UPSCALE_ANCHOR), (51, 17, 0.999))
+        ok = server._h3_temporal_split_ok
+        self.assertTrue(ok(server.H3_UPSCALE_CHUNK,
+                           server.H3_UPSCALE_CHUNK_OVERLAP,
+                           server.H3_UPSCALE_ANCHOR))
+        # ...and the import-time assert cannot be edited into a graph
+        # ComfyUI rejects: off the 17k+5 grid, or overlap >= chunk
+        self.assertFalse(ok(50, 17, 0.999))
+        self.assertFalse(ok(51, 16, 0.999))
+        self.assertFalse(ok(51, 51, 0.999))
+        self.assertFalse(ok(51, 68, 0.999))
+        self.assertFalse(ok(51, 17, 1.5))
 
     def test_option_off_builds_the_old_graph_byte_for_byte(self):
         asked, _b, info = self.build(upscale=False)
@@ -2186,6 +2233,167 @@ class LTX25ClipUpscaleTests(unittest.TestCase):
         self.assertIn("uv:vsr", graph)
         self.assertNotIn("lu:sample", graph)
         self.assertEqual(info["upscaler"], "RTX VSR High")
+
+
+class ClipFrameRateTests(unittest.TestCase):
+    """9.53: frame-rate finishing on the clip finisher. RIFE interpolates in
+    the SAME graph as the VSR pass - splice uv:rife (+ uv:decimate for
+    non-multiples) between uv:load and uv:vsr, set the combine's frame_rate
+    to the literal target, and the copied audio track keeps sync. The source
+    rate is read from the file (clip_shape), never assumed 24: with source s
+    and target t, g = gcd(s, t), multiplier = t//g, select_every_nth = s//g."""
+
+    CFG = {"upscale": {"video_mode": "VSR High", "video_scale": 2.0,
+                       "video_fps": 0}}
+    RIFE = "RIFE VFI"
+    # The proven H3 clip: 5.167 s at 24 fps.
+    SHAPE = (768, 1024, 124, 24)
+
+    def build(self, clip, cfg=None, names=None, shape=SHAPE, **kwargs):
+        with patch.object(server, "load_config",
+                          return_value=cfg or self.CFG), \
+             patch.object(server, "_video_upscale_node",
+                          return_value="DenoRTXVFXEasyUpscale"), \
+             patch.object(server, "clip_shape", return_value=shape), \
+             patch.dict(server._COMFY_NODES,
+                        {"names": names if names is not None
+                         else frozenset({self.RIFE})}):
+            return server.build_upscale_video("test clip", 7, video=str(clip),
+                                              **kwargs)
+
+    def test_24_to_30_interpolates_x5_and_keeps_every_4th(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            graph, _scene, info = self.build(clip, fps=30)
+        rife = graph["uv:rife"]
+        self.assertEqual(rife["class_type"], "RIFE VFI")
+        self.assertEqual(rife["inputs"]["frames"], ["uv:load", 0])
+        self.assertEqual(rife["inputs"]["ckpt_name"], "rife49.pth")
+        self.assertEqual(rife["inputs"]["multiplier"], 5)
+        self.assertTrue(rife["inputs"]["fast_mode"])
+        self.assertTrue(rife["inputs"]["ensemble"])
+        self.assertEqual(rife["inputs"]["scale_factor"], 1.0)
+        self.assertEqual(rife["inputs"]["clear_cache_after_n_frames"], 10)
+        self.assertEqual(graph["uv:decimate"]["class_type"],
+                         "VHS_SelectEveryNthImage")
+        self.assertEqual(graph["uv:decimate"]["inputs"],
+                         {"images": ["uv:rife", 0], "select_every_nth": 4})
+        # interpolate at the SMALL size, then enlarge.
+        self.assertEqual(graph["uv:vsr"]["inputs"]["images"],
+                         ["uv:decimate", 0])
+        # The literal target, not the source rate - duration and audio hold.
+        self.assertEqual(graph["uv:save"]["inputs"]["frame_rate"], 30)
+        self.assertEqual(graph["uv:save"]["inputs"]["audio"], ["uv:load", 2])
+        self.assertEqual(info["fps"], 30)
+        self.assertEqual(info["frames"], 154)      # ceil((5*123+1) / 4)
+        self.assertEqual(info["upscaler"], "RTX VSR High · 30 fps")
+
+    def test_24_to_48_doubles_without_a_decimate(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            graph, _scene, info = self.build(clip, fps=48)
+        self.assertEqual(graph["uv:rife"]["inputs"]["multiplier"], 2)
+        self.assertNotIn("uv:decimate", graph)
+        self.assertEqual(graph["uv:vsr"]["inputs"]["images"], ["uv:rife", 0])
+        self.assertEqual(graph["uv:save"]["inputs"]["frame_rate"], 48)
+        self.assertEqual(info["fps"], 48)
+        self.assertEqual(info["frames"], 247)      # 2*123+1
+        self.assertEqual(info["upscaler"], "RTX VSR High · 48 fps")
+
+    def test_24_to_60_comes_from_the_config_when_no_fps_is_posted(self):
+        cfg = {"upscale": {"video_mode": "VSR High", "video_scale": 2.0,
+                           "video_fps": 60}}
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            graph, _scene, info = self.build(clip, cfg=cfg)
+        self.assertEqual(graph["uv:rife"]["inputs"]["multiplier"], 5)
+        self.assertEqual(graph["uv:decimate"]["inputs"]["select_every_nth"], 2)
+        self.assertEqual(graph["uv:save"]["inputs"]["frame_rate"], 60)
+        self.assertEqual(info["frames"], 308)      # ceil((5*123+1) / 2)
+
+    def test_native_rate_splices_nothing(self):
+        # Unset, explicit 0, and a target equal to the clip's own rate all
+        # keep the template exactly as it ships.
+        for fps in (None, 0, 24):
+            with self.subTest(fps=fps), TemporaryDirectory() as td:
+                clip = Path(td) / "clip.mp4"
+                clip.write_bytes(b"x")
+                graph, _scene, info = self.build(clip, fps=fps)
+                self.assertNotIn("uv:rife", graph)
+                self.assertNotIn("uv:decimate", graph)
+                self.assertEqual(graph["uv:vsr"]["inputs"]["images"],
+                                 ["uv:load", 0])
+                self.assertEqual(graph["uv:save"]["inputs"]["frame_rate"],
+                                 ["uv:info", 0])
+                self.assertNotIn("fps", info)
+                self.assertEqual(info["upscaler"], "RTX VSR High")
+                self.assertEqual(info["frames"], 124)
+
+    def test_fps_only_at_unit_scale_names_no_upscale(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            graph, _scene, info = self.build(clip, scale=1.0, fps=48)
+        self.assertIn("uv:rife", graph)
+        self.assertEqual(info["upscaler"], "48 fps")
+
+    def test_ltx_mode_ignores_fps(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            with patch.object(server, "load_config", return_value=self.CFG), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets), \
+                 patch.dict(server._COMFY_NODES, {"names": frozenset()}):
+                graph, _scene, _info = server.build_upscale_video(
+                    "test clip", 7, video=str(clip),
+                    mode=server.LTX25_UPSCALE_MODE, fps=30)
+        self.assertNotIn("uv:rife", graph)
+        self.assertIn("lu:sample", graph)
+        self.assertEqual(graph["lu:save"]["inputs"]["frame_rate"],
+                         ["lu:info", 0])
+
+    def test_a_missing_rife_pack_is_a_loud_error_never_a_silent_24(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            with self.assertRaisesRegex(
+                    ValueError, "frame interpolation needs "
+                                "ComfyUI-Frame-Interpolation"):
+                self.build(clip, fps=48, names=frozenset({"KSampler"}))
+
+    def test_an_unreadable_clip_rate_is_a_loud_error_too(self):
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            with self.assertRaisesRegex(ValueError, "cannot read the clip"):
+                self.build(clip, fps=48, shape=None)
+
+    def test_settings_clamp_snaps_to_the_offered_rates(self):
+        for posted, want in ((0, 0), (30, 30), (48, 48), (60, 60),
+                             (1, 0), (25, 30), (47, 48), (100, 60)):
+            with self.subTest(posted=posted):
+                saved = []
+                cfg = {"llm": {}, "critic": {}, "edit": {}, "vae": {},
+                       "pid": {}, "video": {}, "extra_model_roots": [],
+                       "upscale": {"video_mode": "VSR High",
+                                   "video_scale": 2.0, "video_fps": 0},
+                       "comfy_editor": False, "comfy_console": "tui",
+                       "explicit": "auto", "vram_profile": "auto"}
+                with patch.object(server, "load_config", return_value=cfg), \
+                     patch.object(server, "save_config",
+                                  side_effect=lambda c: saved.append(c)):
+                    response = asyncio.run(server.settings_post(
+                        FakeRequest({"upscale": {"video_fps": posted}})))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(saved[0]["upscale"]["video_fps"], want)
+
+    def test_settings_publishes_the_rate_options(self):
+        self.assertEqual(list(server.UPSCALE_VIDEO_FPS_OPTIONS),
+                         [0, 30, 48, 60])
 
 
 class CameraNoteRepairTests(unittest.TestCase):

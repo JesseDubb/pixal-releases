@@ -117,7 +117,7 @@ export const reroll = (id, cid, seed, loraPlans, model, aspect, mp, dials, opts)
                         ...(opts ? { opts } : {}) });
 export const stop = (jobId) => post("/api/stop", { job_id: jobId });
 export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
-                        shots, script, speed, lastId, sparse, upscale) =>
+                        shots, script, speed, lastId, sparse, upscale, resolution) =>
   post("/api/animate", { id, cid, hint, seconds, engine, model,
     ...(loraPlan ? { lora_plan: loraPlan } : {}),
     ...(fps ? { fps } : {}),
@@ -134,12 +134,16 @@ export const animate = (id, cid, hint, seconds, engine, model, loraPlan, fps,
     // 2x upscale is the opposite default: opt-in, because it ~triples the
     // render's time. It rides INSIDE the render job (it re-samples the
     // latent the sampler just produced), never an action on a finished clip.
-    ...(upscale ? { upscale: true } : {}) });
+    ...(upscale ? { upscale: true } : {}),
+    // 9.55: the canvas tier H3 renders at natively. "standard" is the
+    // server's own default, so only a real pick rides - an absent key renders
+    // today's 1 MP canvas.
+    ...(resolution ? { resolution } : {}) });
 // 9.36: the brief WITHOUT the render. The body is animate's minus `script`
 // and `cid` (the thinking notes are cid-agnostic in the lane), so the
 // director writes for exactly the configuration the commit would send.
 export const animateBrief = (id, hint, seconds, engine, model, loraPlan, fps,
-                             shots, speed, lastId, sparse, upscale) =>
+                             shots, speed, lastId, sparse, upscale, resolution) =>
   post("/api/animate/brief", { id, hint, seconds, engine, model,
     ...(loraPlan ? { lora_plan: loraPlan } : {}),
     ...(fps ? { fps } : {}),
@@ -147,7 +151,8 @@ export const animateBrief = (id, hint, seconds, engine, model, loraPlan, fps,
     ...(speed ? { speed } : {}),
     ...(lastId ? { last_id: lastId } : {}),
     ...(sparse === false ? { sparse: false } : {}),
-    ...(upscale ? { upscale: true } : {}) });
+    ...(upscale ? { upscale: true } : {}),
+    ...(resolution ? { resolution } : {}) });
 export const review = (id, cid) => post("/api/review", { id, cid });
 
 // Saved styles — user-authored recipes in recipes/*.json.
@@ -174,7 +179,10 @@ export const edit = (id, cid, instruction, input, mask, reference) =>
 // Stage a finished render's still into ComfyUI/input (no edit queued) so it
 // can be picked like an upload — the character form adopts edit results this way.
 export const stageInput = (id) => post("/api/input/stage", { id });
-export const upscale = (id, cid, model) => post("/api/upscale", { id, cid, model });
+// fps (9.53) rides only when a caller sets one; omitted it falls to the
+// Settings default, same as mode/scale which no caller sends today.
+export const upscale = (id, cid, model, fps) =>
+  post("/api/upscale", { id, cid, model, ...(fps ? { fps } : {}) });
 export const histDelete = (id) => post("/api/history/delete", { id });
 
 // The full anchor record (style, notes, wardrobe_lock, identity_ref) — more

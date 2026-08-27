@@ -1,0 +1,191 @@
+{
+  "brief": "She turns toward the window.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+  "graph": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "10": {
+      "class_type": "RandomNoise",
+      "inputs": {
+        "noise_seed": 987
+      }
+    },
+    "11": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+        "guider": [
+          "9",
+          0
+        ],
+        "latent_image": [
+          "6",
+          1
+        ],
+        "noise": [
+          "10",
+          0
+        ],
+        "sampler": [
+          "7",
+          0
+        ],
+        "sigmas": [
+          "8",
+          0
+        ]
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "11",
+          0
+        ],
+        "vae": [
+          "3",
+          0
+        ]
+      }
+    },
+    "13": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {
+        "samples": [
+          "11",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ]
+      }
+    },
+    "14": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "audio": [
+          "13",
+          0
+        ],
+        "crf": 14,
+        "filename_prefix": "pixal_dm/h3_she_turns_toward_the_win",
+        "format": "video/h264-mp4",
+        "frame_rate": 24,
+        "images": [
+          "12",
+          0
+        ],
+        "loop_count": 0,
+        "pingpong": false,
+        "pix_fmt": "yuv420p",
+        "save_output": true
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "device": "default",
+        "type": "minimax"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+      }
+    },
+    "5": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "prepared.png"
+      }
+    },
+    "6": {
+      "class_type": "MiniMaxH3ImageToVideo",
+      "inputs": {
+        "clip": [
+          "2",
+          0
+        ],
+        "first_frame": [
+          "5",
+          0
+        ],
+        "height": 1344,
+        "length": 243,
+        "prompt": "She turns toward the window.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+        "vae": [
+          "3",
+          0
+        ],
+        "width": 768
+      }
+    },
+    "7": {
+      "class_type": "KSamplerSelect",
+      "inputs": {
+        "sampler_name": "res_multistep"
+      }
+    },
+    "8": {
+      "class_type": "BasicScheduler",
+      "inputs": {
+        "denoise": 1.0,
+        "model": [
+          "1",
+          0
+        ],
+        "scheduler": "simple",
+        "steps": 20
+      }
+    },
+    "9": {
+      "class_type": "BasicGuider",
+      "inputs": {
+        "conditioning": [
+          "6",
+          0
+        ],
+        "model": [
+          "1",
+          0
+        ]
+      }
+    }
+  },
+  "info": {
+    "audio": "native synchronized audio",
+    "canvas_mp": 1.032192,
+    "duration": "10.12s @ 24fps",
+    "engine": "MiniMax H3",
+    "engine_id": "h3",
+    "execution_profile": "minimax_h3_fl2va_i2v",
+    "frames": 243,
+    "h3_warnings": [],
+    "lora_stack": [],
+    "lora_triggers": [],
+    "lora_warnings": [],
+    "loras": [],
+    "model": "MiniMax H3 FL2VA",
+    "model_family": "minimax_h3",
+    "model_path": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "model_variant": "fl2va",
+    "sampler": "res_multistep \u00b7 simple \u00b7 20 steps",
+    "size": "768x1344",
+    "sparse_attention": false,
+    "speed_mode": "quality",
+    "text_encoder": "Qwen3-VL 32B \u00b7 NVFP4 AWQ"
+  }
+}

@@ -134,8 +134,8 @@ class PopoversRenderTheSharedEntrance(unittest.TestCase):
                       "the add-LoRA popover still appears out of nothing")
 
     def test_model_picker_dropdown(self):
-        block = _block(_src("MotionDirector.jsx"),
-                       "const ModelPicker", "const ENGINE_ICONS")
+        # The model picker is the shared lib Picker since 2026-08-26.
+        block = (SRC / "lib" / "Picker.jsx").read_text(encoding="utf-8")
         self.assertIn("px-ov-pop", block,
                       "the model picker dropdown still appears out of nothing")
 

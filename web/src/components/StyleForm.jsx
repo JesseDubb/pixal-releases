@@ -20,6 +20,7 @@ import { styleSampler } from "../transport.js";
 import { buildLoraPlan, defaultLoraEntries } from "../store.js";
 import { Disclosure } from "../lib/Disclosure.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
+import { InfoTip } from "./InfoTip.jsx";
 import { LoraChain } from "./Composer.jsx";
 
 const MONO = "ui-monospace, Consolas, monospace";
@@ -102,6 +103,8 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
   const [model, setModel] = useState(seed.model || "");
   const [tuning, setTuning] = useState(seed.tuning || {});
   const [plan, setPlan] = useState(seed.lora_plan || null);
+  const [negative, setNegative] = useState(seed.negative || "");
+  const [promptTail, setPromptTail] = useState(seed.prompt_tail || "");
   const [sampler, setSampler] = useState(null);   // server's answer for base+model
   // The tuning cluster opens only when there is something to see: a style that
   // already overrides the recipe. A fresh save is "name it, save it".
@@ -237,6 +240,8 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
       ...(opts?.aspect ? { aspect: opts.aspect } : {}),
       ...(opts?.mp ? { mp: opts.mp } : {}),
       ...(plan ? { lora_plan: plan } : {}),
+      ...(negative.trim() ? { negative: negative.trim() } : {}),
+      ...(promptTail.trim() ? { prompt_tail: promptTail.trim() } : {}),
       ...(editId ? { id: editId } : {}),
       ...(existing?.provenance ? { provenance: existing.provenance } : {}),
     };
@@ -361,6 +366,19 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
             {sampler?.reason || "Choose a model to see its sampler settings."}
           </span>
         )}
+        <Field label={<>Negative <InfoTip size={12} text="Only does anything above cfg 1.0." /></>}
+               hint="What the sampler steers away from">
+          <input {...hoverable} value={negative}
+            onChange={(e) => setNegative(e.target.value)}
+            style={{ ...controlBase, padding: `0 ${SPACE[12]}px`,
+                     transition: `border-color ${MOTION.hover}` }} />
+        </Field>
+        <Field label="Prompt tail" hint="Appended after the caption">
+          <input {...hoverable} value={promptTail}
+            onChange={(e) => setPromptTail(e.target.value)}
+            style={{ ...controlBase, padding: `0 ${SPACE[12]}px`,
+                     transition: `border-color ${MOTION.hover}` }} />
+        </Field>
 
         {/* loraPlanFor refused the live stack (its revision predates the
             recipe's current one). Say so - the default chain the effect

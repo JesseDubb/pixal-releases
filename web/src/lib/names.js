@@ -141,3 +141,12 @@ export const prettyResolvedModel = (info, template) => {
   const profile = PROFILE_LABELS[info.execution_profile] || info.execution_profile;
   return family === "zimage" && profile ? `${model} · ${profile}` : model;
 };
+
+// One line for a sampler schedule, everywhere it is stated: the tuning card's
+// collapsed summary and the job card's record of what ran.
+export const tuningLine = (t) => !t ? "" : [
+  t.sampler_name, t.scheduler,
+  t.steps !== undefined && t.steps !== null ? `${t.steps} steps` : null,
+  t.cfg !== undefined && t.cfg !== null ? `cfg ${t.cfg}` : null,
+  t.eta ? `eta ${t.eta}` : null,
+].filter(Boolean).join(" · ");

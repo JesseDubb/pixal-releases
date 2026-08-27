@@ -55,7 +55,7 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 # default); upscale owns three (its Image-tab controls, its Video-tab
 # controls, and the Image-tab installed-count gloss); editCfg owns two (the
 # picker and its count gloss).
-GATES = {"cfg": 13, "videoCfg": 4, "upscale": 3, "editCfg": 2,
+GATES = {"cfg": 13, "videoCfg": 5, "upscale": 3, "editCfg": 2,
          "vae": 1, "pidCfg": 1, "upd": 1}
 
 GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<LineGhost", "<ValueGhost", "<Bar")

@@ -776,7 +776,8 @@ class AnimateRoutingTests(unittest.TestCase):
             self.assertEqual(args[2], "h3_ref2v")
             self.assertEqual(args[4], {"seconds": 5, "model": "ref2va",
                                        "refs": ["pixal_ref_abc123.png"],
-                                       "width": 1344, "height": 768})
+                                       "width": 1344, "height": 768,
+                                       "resolution": "standard"})
             # the director was handed the model id and picked the variant
             self.assertEqual(director.await_args.kwargs.get("model"), "ref2va")
             # the submitted brief is the six-section format, wrapped around

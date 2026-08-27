@@ -989,9 +989,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
 
         <Section title="Model folders"
                  gloss={cfg ? (
-                   <span className="px-ghost-in">{`Where your checkpoints and LoRAs live. Found ${cfg.catalog_size} files.`}</span>
+                   <span className="px-ghost-in">{`Where checkpoints and LoRAs live. Found ${cfg.catalog_size} files.`}</span>
                  ) : (
-                   <>Where your checkpoints and LoRAs live. <ValueGhost w={92} /></>
+                   <>Where checkpoints and LoRAs live. <ValueGhost w={92} /></>
                  )}>
           {cfg ? (<>
             {roots.map((r) => (
@@ -1061,7 +1061,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         {tab === "video" && (<>
         <GroupLabel>defaults</GroupLabel>
         <Section title={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}
-                 gloss="Which engine the Animate popup opens on.">
+                 gloss="Which engine the popup opens on.">
           {videoCfg ? (
             <SegmentedControl className="px-ghost-in" ariaLabel="Default video engine"
               value={videoCfg.default_engine || ""}
@@ -1112,7 +1112,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Section>
         <Section title={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}
-                 gloss="How H3 briefs write spoken lines.">
+                 gloss="How H3 briefs write speech.">
           {videoCfg ? (
             <SegmentedControl className="px-ghost-in" ariaLabel="Dialogue format"
               value={videoCfg.h3_dialogue_tags || "quotes"}
@@ -1133,7 +1133,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
         <GroupLabel>finishing</GroupLabel>
         <Section title="Upscaler"
-                 gloss="Used by the upscale button on a finished clip.">
+                 gloss="The upscale button on finished clips.">
           {/* Two different things, not one five-step ladder. RTX Super
               Resolution is NVIDIA's image-space filter and its Low..Ultra are
               ITS quality tiers; LTX 2.5 re-renders the clip through the latent
@@ -1145,10 +1145,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           {upscale ? (<>
             <Field className="px-ghost-in" label="video clips"
                    hint={vidLtx
-                     ? "2× re-render: real new detail, far heavier VRAM."
+                     ? "2× re-render: real new detail, heavier VRAM."
                      : upscale.video_available
                        ? undefined
-                       : "Install the Deno RTX VFX node pack to upscale clips."}>
+                       : "Install the Deno RTX VFX node pack."}>
               <SegmentedControl ariaLabel="Video upscale engine"
                 value={vidLtx ? "ltx" : "vsr"}
                 onChange={(id) => {
@@ -1186,15 +1186,37 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                     .map((m) => ({ v: m, label: m.replace("VSR ", "") }))} />
               </Field>
             )}
+            {/* 9.53: RIFE interpolation in the same finisher pass as VSR, so
+                fps + 2x land in one graph. The tip carries the whole story;
+                the control itself states the rate (tip XOR hint). */}
+            {!vidLtx && upscale.video_available && (
+              <Field className="px-ghost-in" sub
+                     label={<>frame rate <InfoTip size={12} text="RIFE interpolation, in the same pass as the upscale. Doubles or more the frames, audio kept. Lips can ghost above 2×. LTX 2.5 ignores it — that mode re-renders at the clip's own rate." /></>}>
+                <SegmentedControl ariaLabel="Clip frame rate"
+                  value={String(upscale.video_fps || 0)}
+                  onChange={(id) => {
+                    const f = Number(id);
+                    setUpscale({ ...upscale, video_fps: f });
+                    apply({ upscale: { video_fps: f } },
+                          f ? `${f} fps applied` : "native rate applied");
+                  }}
+                  options={(upscale.video_fps_options || [0, 30, 48, 60])
+                    .map((f) => ({ v: String(f),
+                                   label: f ? String(f) : "Native" }))} />
+              </Field>
+            )}
           </>) : (<>
-            {/* the ghost is the default shape: engine row + quality row
-                (a stored LTX clip drops the quality row - that one-time
-                shrink is the stored setting correcting itself, not a load
-                reflow) */}
+            {/* the ghost is the default shape: engine row + quality row +
+                frame rate row (a stored LTX clip drops the two sub rows -
+                that one-time shrink is the stored setting correcting itself,
+                not a load reflow) */}
             <Field label="video clips">
               <SegGhost segments={2} />
             </Field>
             <Field sub label="quality">
+              <SegGhost segments={4} />
+            </Field>
+            <Field sub label="frame rate">
               <SegGhost segments={4} />
             </Field>
           </>)}
@@ -1234,6 +1256,36 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Field>
           ) : (
             <SegGhost segments={2} />
+          )}
+        </Section>
+        <Section title={<>H3 resolution <InfoTip text="The canvas H3 renders at natively — detail comes from the model, not an upscaler. A bigger canvas re-frames the shot (composition can shift) and multiplies the render time: a 10 s Max clip is ~20 min on a 5090 and fills the card. The 2× row stays the budget option — render small, then upscale." /></>}
+                 gloss="The popup still decides per clip — this sets the default.">
+          {/* 9.55: same contract as Video model above - the standing default
+              the Animate popup's Resolution row opens on. The tier list rides
+              the settings payload (h3_resolutions); the inline fallback only
+              covers an out-of-date server. */}
+          {videoCfg ? (
+            <SegmentedControl className="px-ghost-in" ariaLabel="H3 resolution"
+              value={videoCfg.h3_resolution || "standard"}
+              onChange={(id) => {
+                setVideoCfg((v) => ({ ...(v || {}), h3_resolution: id }));
+                const label = ((videoCfg.h3_resolutions || [])
+                  .find((r) => r.id === id) || {}).label || id;
+                apply({ video: { h3_resolution: id } },
+                      `${label} default applied`);
+              }}
+              options={(videoCfg.h3_resolutions || [
+                { id: "standard", label: "Standard", mp: 1.0 },
+                { id: "high", label: "High", mp: 1.8 },
+                { id: "max", label: "Max", mp: 3.1 },
+              ]).map((r) => ({
+                v: r.id, label: r.label,
+                title: r.id === "standard"
+                  ? `${r.mp} MP — the fast default.`
+                  : `${r.mp} MP — ~${Math.round(r.mp)}x the render time.`,
+              }))} />
+          ) : (
+            <SegGhost segments={3} />
           )}
         </Section>
         </>)}
@@ -1384,8 +1436,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             explaining and the state that did not got the same sentence. */}
         <Section title={<>VAE decode <InfoTip maxWidth={300} text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}>
           <Field hint={pidCfg?.identity_finish
-            ? "Experimental: canvas snaps to 1024-class presets and returns 4×."
-            : "Wan VAE decode at the canvas you chose."}>
+            ? "Experimental: canvas snaps to 1024-class presets, returns 4×."
+            : "Wan VAE decode at your canvas."}>
             {pidCfg ? (
               <SegmentedControl className="px-ghost-in" ariaLabel="VAE decode"
                 value={!!pidCfg.identity_finish}

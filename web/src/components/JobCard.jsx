@@ -2,6 +2,7 @@
 // the image(s) as they land, and the recipe line (model · canvas · LoRA stack)
 // with re-roll / iterate / open actions.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { tuningLine } from "../lib/names.js";
 import { ArrowClockwise, ArrowBendUpLeft, ArrowsOutSimple,
          Check, Copy, FilmStrip, LockSimple, LockSimpleOpen, MagnifyingGlass,
          PencilSimple, Play } from "@phosphor-icons/react";
@@ -344,6 +345,15 @@ export const JobCard = ({ job, onOpen, onIterate, onReroll, onAnimate, onReview,
               overflow: "hidden", textOverflow: "ellipsis",
             }}>
               {info.loras.map(prettyLora).join("  ·  ")}
+            </div>
+          )}
+          {info && info.tuning && (
+            <div title="the sampler schedule this render ran at" style={{
+              fontFamily: FONT,
+              fontSize: TYPE.label, color: "var(--textTer)", whiteSpace: "nowrap",
+              overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {tuningLine(info.tuning)}
             </div>
           )}
           </div>

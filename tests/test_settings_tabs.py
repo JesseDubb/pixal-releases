@@ -48,7 +48,8 @@ TAB_KEYS = {
                 "/api/settings/rescan"],
     "image": ["zimage", "edit: { model", "image_mode", "image_model",
               "identity_finish"],
-    "video": ["default_engine", "default_model", "video_mode", "upscale_2x"],
+    "video": ["default_engine", "default_model", "video_mode", "upscale_2x",
+              "video_fps", "h3_resolution"],
     "brain": ["base_url", "local_model", "local_keep", "local_gpu_layers",
               "api_key", "critic: { model", "onClick={test}"],
     # 9.30's library is read-only: an empty reach is the contract - a control
@@ -130,7 +131,11 @@ class SettingsTabs(unittest.TestCase):
         for tab, body in BLOCKS.items():
             for chunk in body.split("<Section "):
                 n = chunk.count("<SegmentedControl")
-                assert n <= 2, f"{tab} has a section stacking {n} segmented rows"
+                # 9.53's sanctioned exception (DESIGN.md): the clip finisher
+                # stacks engine + quality + frame rate, each sub row existing
+                # only because of the one above it.
+                assert n <= 2 or 'label="video clips"' in chunk, \
+                    f"{tab} has a section stacking {n} segmented rows"
 
 
     def test_brain_model_list_clips_on_whole_rows(self):

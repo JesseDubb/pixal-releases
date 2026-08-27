@@ -132,22 +132,29 @@ class SavedStyleSchemaTests(unittest.TestCase):
 class SamplerSeatTests(unittest.TestCase):
     def test_the_seat_belongs_to_the_pairing_not_the_recipe(self):
         """Z-Image Turbo's Amazing v4 profile DELETES the KSampler and builds a
-        two-pass sigma schedule instead (see _build_zimage), so a steps box on a
-        Turbo build would write into a node that is not in the graph. Base keeps
-        its KSampler and stays tunable."""
+        two-pass sigma schedule instead (see _build_zimage). Base keeps its
+        KSampler; Turbo gets the v4 seat, whose keys MAP to the nodes that
+        carry them (Jesse, 2026-08-26: tuning in every recipe) - the sampler on
+        the KSamplerSelect, steps on the Karras schedule, cfg on both passes,
+        and no scheduler box, since the schedule IS the graph."""
         with catalog(ZBASE):
-            self.assertIsNotNone(server.sampler_seat("zimage", ZBASE["rel"]))
+            self.assertEqual(server.sampler_seat("zimage", ZBASE["rel"])["node"], "8")
         with catalog(ZTURBO):
-            self.assertIsNone(server.sampler_seat("zimage", ZTURBO["rel"]))
-            self.assertIn("Amazing v4",
-                          server.fixed_schedule_reason("zimage", ZTURBO["rel"]))
+            seat = server.sampler_seat("zimage", ZTURBO["rel"])
+            self.assertIs(seat, server.ZIMAGE_V4_SEAT)
+            self.assertEqual(server.seat_tuning_keys(seat), ("steps", "cfg", "sampler_name"))
+            self.assertNotIn("scheduler", server.sampler_defaults("zimage", ZTURBO["rel"]))
 
-    def test_realism_ii_is_never_tunable(self):
-        """Three sampler nodes at three denoise levels; one steps box would be a
-        lie about what runs."""
-        self.assertNotIn("realism_ii", server.SAMPLER_SEATS)
-        self.assertIsNone(server.sampler_seat("realism_ii", KREA["rel"]))
-        self.assertIn("three times", server.fixed_schedule_reason("realism_ii"))
+    def test_realism_ii_tunes_its_first_pass_only(self):
+        """The first pass is the sample; the 2-step refine at denoise 0.2 (node
+        274) is what "refined" means and stays authored."""
+        template = server.TEMPLATES["realism_ii"]
+        seat = server.SAMPLER_SEATS["realism_ii"]
+        self.assertEqual(seat["node"], "265")
+        self.assertEqual(template["265"]["inputs"]["denoise"], 1.0)
+        with catalog(KREA):
+            got = server.tuning_overrides("realism_ii", KREA["rel"], {"steps": 12})
+        self.assertEqual(got, [{"node": "265", "input": "steps", "value": 12}])
 
     def test_seats_point_at_nodes_that_exist_in_their_template(self):
         """A seat naming a node the template does not have would raise KeyError
@@ -171,11 +178,17 @@ class SamplerSeatTests(unittest.TestCase):
             {"node": "8", "input": "sampler_name", "value": "euler"},
             {"node": "8", "input": "scheduler", "value": "beta"},
         ])
-        # A style whose model was later swapped for a Turbo build degrades to
-        # the recipe's own schedule rather than crashing on a missing node.
+        # On a Turbo build the same tuning lands on the v4 graph's own nodes:
+        # steps on the schedule, cfg on both passes, the sampler on the
+        # selector - and the scheduler key, which has no node, is dropped.
         with catalog(ZTURBO):
             self.assertEqual(
-                server.tuning_overrides("zimage", ZTURBO["rel"], tuning), [])
+                server.tuning_overrides("zimage", ZTURBO["rel"], tuning), [
+                    {"node": "z:v4:sigmas", "input": "steps", "value": 12},
+                    {"node": "z:v4:high", "input": "cfg", "value": 2.5},
+                    {"node": "z:v4:low", "input": "cfg", "value": 2.5},
+                    {"node": "z:v4:sampler", "input": "sampler_name", "value": "euler"},
+                ])
 
     def test_eta_belongs_to_the_seat_that_has_it(self):
         """eta is RES4LYF's stochasticity dial and only ClownsharKSampler_Beta
@@ -494,3 +507,121 @@ class SavedStyleStorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuickTuningTests(unittest.TestCase):
+    """The composer's per-render tuning card (2026-08-26): a sparse override
+    that rides /api/chat as opts.tuning, on whatever seat the running graph
+    has, over a selected style's own tuning."""
+
+    ENUMS = {"ClownsharKSampler_Beta": {
+        "sampler_name": ["linear/euler", "res_2s", "re_sde"],
+        "scheduler": ["simple", "beta"]}}
+
+    def test_cfg_is_locked_where_the_seat_is_authored_at_one(self):
+        # Distilled builds sample at cfg 1 by authoring; the composer greys
+        # the box instead of letting a 4 double the time and burn the image.
+        with catalog(KREA):
+            self.assertTrue(server.cfg_locked("realism", KREA["rel"]))
+        with catalog(ZBASE):
+            self.assertFalse(server.cfg_locked("zimage", ZBASE["rel"]))
+
+    def test_the_model_page_recommendation_becomes_a_tuning_block(self):
+        page = {"modelDescription": "<p>intro</p><p>推荐设置: re_sde + simple, "
+                                    "8-16 steps, 1 cfg</p>"}
+        with catalog(KREA), patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}), \
+                patch.object(server, "adjacent_metadata", return_value=page):
+            got = server.model_recommended_tuning("realism", KREA["rel"])
+        self.assertEqual(got["sampler_name"], "re_sde")
+        self.assertEqual(got["scheduler"], "simple")
+        self.assertEqual(got["steps"], 8)
+        self.assertEqual(got["cfg"], 1.0)
+        with catalog(KREA), patch.object(server, "adjacent_metadata",
+                                         return_value={"modelDescription": "no advice"}):
+            self.assertIsNone(server.model_recommended_tuning("realism", KREA["rel"]))
+
+    def test_the_override_rides_the_seat_and_is_recorded(self):
+        opts = {"model": KREA["rel"], "style": "realism",
+                "tuning": {"steps": 12, "sampler_name": "res_2s",
+                           "scheduler": "not_offered"}}
+        args = {}
+        with catalog(KREA), patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            self.assertEqual(server._apply_opts(args, opts), "realism")
+        overrides = {(o["input"], o["value"]) for o in args["overrides"]}
+        self.assertIn(("steps", 12), overrides)
+        self.assertIn(("sampler_name", "res_2s"), overrides)
+        # A value the seat does not offer is dropped, never queued to fail.
+        self.assertNotIn(("scheduler", "not_offered"), overrides)
+        self.assertEqual(args["_tuning"]["steps"], 12)
+        self.assertEqual(args["_tuning"]["scheduler"], "simple")   # the recipe's own
+        self.assertIn("_tuning", server._REROLL_COMPOSER_OWNED)
+
+    def test_an_untouched_card_changes_nothing(self):
+        args = {}
+        with catalog(KREA):
+            server._apply_opts(args, {"model": KREA["rel"], "style": "realism", "tuning": {}})
+        self.assertNotIn("overrides", args)
+        self.assertNotIn("_tuning", args)
+
+    def test_a_bad_value_is_refused_by_name(self):
+        with catalog(KREA):
+            with self.assertRaisesRegex(ValueError, "tuning: steps"):
+                server._apply_opts({}, {"model": KREA["rel"], "style": "realism",
+                                        "tuning": {"steps": "lots"}})
+
+
+class StockSamplerSwapTests(unittest.TestCase):
+    """A stock KSampler name on a Clownshark seat (Jesse, 2026-08-26:
+    "re_sde ... make those available") swaps the node at build time."""
+
+    ENUMS = {"ClownsharKSampler_Beta": {"sampler_name": ["linear/euler", "res_2s"],
+                                        "scheduler": ["simple", "bong_tangent"]},
+             "KSampler": {"sampler_name": ["euler", "re_sde", "er_sde"],
+                          "scheduler": ["simple", "karras"]}}
+
+    def test_the_seat_offers_both_families_split_by_node(self):
+        seat = server.SAMPLER_SEATS["realism"]
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            self.assertEqual(server.seat_choices(seat)["sampler_name"],
+                             ["linear/euler", "res_2s", "euler", "re_sde", "er_sde"])
+            groups = server.seat_choice_groups(seat)["sampler_name"]
+            self.assertEqual([g["label"] for g in groups], ["RES4LYF", "ComfyUI KSampler"])
+            self.assertIn("re_sde", groups[1]["ids"])
+            self.assertEqual(server.seat_choice_groups(server.SAMPLER_SEATS["anima"]), {})
+
+    def test_a_stock_name_swaps_the_node_and_keeps_the_links(self):
+        seat = server.SAMPLER_SEATS["realism"]
+        tuning = {"sampler_name": "re_sde", "scheduler": "bong_tangent", "steps": 12, "eta": 0.5}
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}), catalog(KREA):
+            swap = server.sampler_swap(seat, tuning)
+            self.assertEqual(swap, {"node": "30:51", "sampler_name": "re_sde",
+                                    "scheduler": "simple"})   # not a KSampler scheduler -> simple
+            overrides = server.tuning_overrides("realism", KREA["rel"], tuning)
+        self.assertEqual(overrides, [{"node": "30:51", "input": "steps", "value": 12}])
+        g = {"30:51": {"class_type": "ClownsharKSampler_Beta", "inputs": {
+            "model": ["m", 0], "positive": ["p", 0], "negative": ["n", 0],
+            "latent_image": ["l", 0], "seed": 7, "steps": 12, "cfg": 1.0,
+            "eta": 0.5, "bongmath": True, "denoise": 1.0}}}
+        server.swap_sampler_node(g, swap)
+        node = g["30:51"]
+        self.assertEqual(node["class_type"], "KSampler")
+        self.assertEqual(node["inputs"]["model"], ["m", 0])
+        self.assertEqual(node["inputs"]["latent_image"], ["l", 0])
+        self.assertEqual(node["inputs"]["steps"], 12)
+        self.assertEqual(node["inputs"]["sampler_name"], "re_sde")
+        self.assertNotIn("eta", node["inputs"])
+
+    def test_a_clownshark_name_never_swaps(self):
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            self.assertIsNone(server.sampler_swap(server.SAMPLER_SEATS["realism"],
+                                                  {"sampler_name": "res_2s"}))
+
+    def test_the_composer_override_rides_the_swap_to_submit(self):
+        opts = {"model": KREA["rel"], "style": "realism",
+                "tuning": {"sampler_name": "er_sde", "scheduler": "karras"}}
+        args = {}
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}), catalog(KREA):
+            server._apply_opts(args, opts)
+        self.assertEqual(args["_sampler_swap"],
+                         {"node": "30:51", "sampler_name": "er_sde", "scheduler": "karras"})
+        self.assertIn("_sampler_swap", server._REROLL_COMPOSER_OWNED)

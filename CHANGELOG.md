@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.1.0b — 2026-08-26
+
+Every recipe opens its sampler, and H3 gets three new knobs.
+
+**A Sampler card under the recipe card.** Closed, it states the schedule the
+render will run at (`linear/euler · simple · 8 steps · cfg 1`). Open, it
+offers the sampler, scheduler, steps, CFG and - on RES4LYF seats - eta, for
+this render only, with the recipe's own number one click away. A "model"
+preset applies the settings from the model's own page when it has any. What
+ran is recorded on the job card and in history, and "Save current" carries
+the override into a style. Picking another recipe or style starts clean.
+
+**Every recipe has one.** Realism, Identity Edit, Anime, Fantasy, Z-Image
+Base and Turbo, Qwen Image, Anima - and Realism II, where it tunes the first
+pass (the 2-step refine is what "refined" means and stays put). CFG is
+greyed at 1 on distilled builds, with the reason.
+
+**ComfyUI's own samplers on the Krea 2 recipes.** The sampler menu lists
+RES4LYF's family first and the stock KSampler's (`er_sde`, `dpmpp_2m_sde`,
+`res_multistep`…) under its own label; picking a stock one runs a stock
+KSampler in that seat for the render. Eta does not apply there.
+
+**The H3 rows explain themselves.** The model row says what FL2VA and REF2VA
+are; the 2x row is a switch, off by default, with a tip that says what native
+2x does and what it costs.
+
+**Small fixes.** Recipe sublines state steps, not seconds (a second count
+was only true on one machine). A slider at its minimum no longer clips its
+handle. An open dial drawer in the LoRA chain pushes the rows below instead
+of drawing over them. The style editor's sampler menus fill without Settings
+having been opened first. The model picker and the sampler menus share one
+dropdown.
+
+**H3 renders at Standard, High or Max natively.** A Resolution row in
+the Animate popup: Standard is today's canvas (about 1 MP), High about
+1.8 MP, Max about 3.1 MP (1536×2048 on a 3:4 still). The detail comes from
+the model itself, not an upscaler - the skin-and-hair difference is visible
+at 1:1 - and the row's hint names the exact canvas the picked still will
+get. The big tiers are slow (a 10 s Max clip is about 20 minutes on a 5090)
+and re-frame the shot a little. The 2x row below is now the budget option;
+both can be on at once. Settings → Video → "H3 resolution" sets the default
+the popup opens on.
+
+**A clip can finish at 30, 48 or 60 fps.** The clip finisher's frame-rate
+option interpolates with RIFE 4.9 in the same pass as RTX VSR, so fps and 2x
+land together. Audio is copied untouched and the duration holds, so lip
+sync survives; non-multiple targets are interpolated then decimated.
+
+**Long clips through the 2x row stay clean.** A 5 s+ clip re-sampled as one
+temporal block grew a sparkle lattice in dark regions; the row now
+re-samples in anchored 51-frame chunks (17-frame overlap) and the lattice is
+gone. Clips that fit in one chunk are untouched.
+
+**The identity patch's build is a dial on its card.** Full / r128 / r64 -
+the author's weights and the two rank reductions, near-identical likeness,
+smaller and faster to load. Each option's size on disk rides its tooltip.
+Untouched, the card renders exactly today's graph; a box that owns only one
+build runs that one.
+
+**A style can carry a negative prompt and a prompt tail.** Two optional
+fields in the style editor, under the sampler block: Negative is what the
+sampler steers away from (it only does anything above cfg 1); Prompt tail is
+appended after the caption as the closing clause, after the wardrobe lock. A
+style with a negative encodes it with a real CLIPTextEncode in place of
+Realism's zeroed-out conditioning - without one the graph is exactly what it
+was. Both are recorded in the job's receipt.
+
+The first style built on them is *Phone photo*: stock Krea 2 turbo
+(`krea2_turbo_int8_convrot`), no LoRAs at all, 14 steps, cfg 1.2, 9:16, the
+negative `Bokeh. Shallow depth of field. Professional photo. Background blur.
+Blurry. Illustration. DSLR photo. Film photo. Film grain.` and a tail asking
+for a sharp, high-contrast smartphone photo. On a locked-seed A/B the LoRA
+stacks read waxy next to it. It needs the Krea 2 turbo checkpoint, so it is a
+recipe to save yourself rather than a shipped starter.
+
 ## 1.0.10b — 2026-08-25
 
 Pixal manages the card, and says what it did.

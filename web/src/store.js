@@ -47,13 +47,14 @@ function loadOpts() {
   const defaults = { engine: "auto", style: "realism", quality: "standard",
                      model: "", aspect: "", mp: null, cinematic: false,
                      loras: [], lora_plans: {}, refs: [], character: "",
-                     saved_style: "", dials: {} };
+                     saved_style: "", dials: {}, tuning: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(OPTS_KEY)) || {};
     const o = { ...defaults, ...saved };
     o.loras = Array.isArray(o.loras) ? o.loras : [];
     o.lora_plans = o.lora_plans && typeof o.lora_plans === "object" ? o.lora_plans : {};
     o.dials = o.dials && typeof o.dials === "object" ? o.dials : {};
+    o.tuning = o.tuning && typeof o.tuning === "object" ? o.tuning : {};
     o.refs = Array.isArray(o.refs) ? o.refs : [];
     o.cinematic = o.cinematic === true;
     o.saved_style = typeof o.saved_style === "string" ? o.saved_style : "";
@@ -408,6 +409,14 @@ export function dialOverrides(opts, options) {
   return ((opts?.dials || {})[activeRecipeId(opts, options)]) || {};
 }
 
+// Quick tuning (2026-08-26): the composer's sampler/steps/cfg override for the
+// active recipe, sparse exactly like the dials - a key appears only while it
+// deviates from what the recipe (or the selected style) already runs at.
+// Keyed per recipe, so changing recipe leaves no hidden state behind.
+export function tuningOverrides(opts, options) {
+  return ((opts?.tuning || {})[activeRecipeId(opts, options)]) || {};
+}
+
 // What the composer is LOOKING at: the override where one is set, the recipe's
 // own value where it is not. The re-roll sends these so it lands on the
 // settings on screen rather than the ones the card was born with - the likeness
@@ -454,6 +463,7 @@ export function renderIntent(promptEnhance, o = state.opts) {
   // The recipe-card extender's overrides for the active recipe (sparse: only
   // dials moved off the recipe's own number appear here).
   const dialSet = dialOverrides(o, options);
+  const tuneSet = tuningOverrides(o, options);
   // A held seed counts as composer intent on its own: with no other pick set,
   // `active` stayed false, no body was built, and the frozen seed never left
   // the browser.
@@ -462,7 +472,7 @@ export function renderIntent(promptEnhance, o = state.opts) {
   const active = o.style || o.quality || (o.engine !== "auto") || o.model || o.aspect || o.mp ||
                  o.loras.length || o.refs.length || character || loraPlan || !promptEnhance ||
                  o.editSource || o.cinematic || frozen || savedStyle ||
-                 Object.keys(dialSet).length;
+                 Object.keys(dialSet).length || Object.keys(tuneSet).length;
   if (!active) return { summary: null, body: null };
   const bits = [];
   // Leads the line: on an edit turn the rest of the picks are not consulted,
@@ -495,6 +505,7 @@ export function renderIntent(promptEnhance, o = state.opts) {
     .filter((d) => dialSet[d.key] !== undefined);
   for (const d of liveDials)
     bits.push(`${d.label.toLowerCase()} ${dialSet[d.key]}`);
+  if (Object.keys(tuneSet).length) bits.push("tuned");
   if (o.loras.length) bits.push("+" + o.loras.length + " lora");
   if (o.refs.length) bits.push(o.refs.length + " ref");
   if (frozen) bits.push("seed " + frozen + " locked");
@@ -521,6 +532,7 @@ export function renderIntent(promptEnhance, o = state.opts) {
   // untouched composer submits precisely what it did before the dials
   // became reachable (the byte-identical-graph rule, brief 9.14).
   for (const d of liveDials) body[d.key] = dialSet[d.key];
+  if (Object.keys(tuneSet).length) body.tuning = tuneSet;
   if (o.loras.length) body.loras = o.loras;
   if (loraPlan) body.lora_plan = executableLoraPlan(loraPlan);
   if (o.refs.length) body.refs = o.refs;
@@ -898,6 +910,19 @@ export const api = {
     return true;
   },
 
+  // Quick tuning: null (or the home value, which the card sends as null)
+  // clears the key; an empty map for the recipe is removed outright.
+  setTuning(key, value) {
+    const recipeId = activeRecipeId(state.opts, state.options);
+    const map = { ...(state.opts.tuning || {}) };
+    const current = { ...(map[recipeId] || {}) };
+    if (value === null || value === undefined || value === "") delete current[key];
+    else current[key] = value;
+    if (Object.keys(current).length) map[recipeId] = current;
+    else delete map[recipeId];
+    this.setOpts({ tuning: map });
+  },
+
   get savedStyle() { return savedStyleFor(state.opts, state.options); },
 
   // Selecting a saved style MIRRORS the file into ordinary opts - model,
@@ -916,6 +941,11 @@ export const api = {
       modelSupportsRecipe(style.model, "identity_edit", state.options);
     const patch = { saved_style: id, model: style.model,
                     ...(keepCharacter ? {} : { character: "" }) };
+    // The style file owns the schedule: a quick-tuning override left on its
+    // base would silently ride over the tuning the user just chose.
+    const tuning = { ...(state.opts.tuning || {}) };
+    delete tuning[style.base];
+    patch.tuning = tuning;
     if (style.aspect) patch.aspect = style.aspect;
     if (style.mp) patch.mp = style.mp;
     // Always restate the base's stack, including when the style carries none.
@@ -954,7 +984,9 @@ export const api = {
       ...(state.opts.mp ? { mp: state.opts.mp } : {}),
       ...(plan ? { lora_plan: plan } : {}),
       ...(stackDropped ? { lora_stack_dropped: true } : {}),
-      tuning: {},
+      // A quick-tuning override graduates into the style: "save what I am
+      // looking at" includes the schedule on screen.
+      tuning: { ...tuningOverrides(state.opts, state.options) },
     };
   },
 
@@ -1193,11 +1225,11 @@ export const api = {
   },
 
   async animate(entryId, hint, seconds, engine, model, loraPlan, fps, shots, script,
-                speed, lastId, sparse, upscale) {
+                speed, lastId, sparse, upscale, resolution) {
     try {
       const result = await transport.animate(
         entryId, cid(), hint, seconds, engine, model, loraPlan, fps, shots, script,
-        speed, lastId, sparse, upscale);
+        speed, lastId, sparse, upscale, resolution);
       if (!result?.ok)
         appendMsg({ id: cid(), role: "error",
                     text: result?.error || "animation could not be started",

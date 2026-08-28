@@ -1,5 +1,73 @@
 # Changelog
 
+## 1.1.2b — unreleased
+
+Your character sits for MiniMax H3, every render you own becomes a recipe, and
+Pixal stops running your graphics card to the edge.
+
+**Your character sits for MiniMax H3.** Pick one of H3's reference builds with a
+character anchor active and the still is built from their photograph - the
+reference image goes straight into the model's own reference input. No identity
+LoRA, no edit pass, nothing that thins out as the canvas grows: the likeness
+comes from the picture, at 1536x2048, in about a minute. H3's other builds are
+pickable under a character too; they work from the written description. Until
+now a character greyed out every model that was not Krea 2, which is why H3
+looked locked away.
+
+**H3 opens up to LoRAs.** Style LoRAs sitting in your MiniMax H3 folder now
+appear for H3 stills and ride the model the way they do everywhere else. The
+turbo and step-count distills stay out of that list on purpose - they are speed
+modes for the video lanes, the still lane is the quality path, and the picker
+says so instead of quietly halving your steps.
+
+**Stills sample at the setting that won.** Four sampler and scheduler pairings,
+one locked seed, judged side by side at full size: dpmpp_sde_gpu with beta took
+it, and it is the H3 still default now. The video lanes were not in that
+comparison, so they keep what they had - a still-only verdict has no business
+re-tuning your clips. Your own sampler settings still override both.
+
+**Every render you own is a recipe.** ComfyUI writes the entire workflow into
+every PNG it saves, and Pixal reads it now. "from image" in the style picker
+turns any render - yours, or one somebody posted - into a style draft: model,
+LoRA chain, sampler, scheduler, steps, canvas, and the prompt that made it. It
+never saves behind your back, and it names what it could not map rather than
+filling in a default and hoping. A model you do not have stays on the draft, so
+the save refuses and tells you why.
+
+**A style can ask you a question.** Saved styles carry fill-in slots now, so a
+style that is really a formula stops being a file you edit. The new Cosplay
+photo style ships with two - who is in the shot, and what they are wearing - and
+that second one earns its keep: the captioner formula behind this style has a
+habit of forgetting clothing when nothing insists.
+
+**Pixal stops running your card to the edge.** The chat brain holds several
+gigabytes of video memory, and until now Pixal only put it down when the
+arithmetic said the render would not otherwise fit - arithmetic priced from
+constants that were routinely wrong. Thirty-eight of the last fifty renders
+finished with under 2 GB free. Now the brain steps aside whenever keeping it
+would leave the card under four gigabytes of room, and a render is priced from
+what your own renders actually used rather than from a table. A brain that a
+*different* Pixal install started can be put down too - before, it sat there
+holding about 7 GB nothing could reclaim. Windows never refuses a render for
+want of memory; it pages, and everything crawls.
+
+**Your settings survive a model switch.** Move between MiniMax H3 builds and
+your custom sampler, scheduler and steps come with you instead of snapping back
+to the recipe's.
+
+**One dropdown, and it fits on the screen.** The sampler card's scheduler list
+opened inside its own card and was sliced off at the edge, leaving nothing to
+click. Dropdowns now open above the page and flip upward near the bottom of the
+window. Settings' chat brain and both edit-model pickers use that same
+searchable dropdown instead of two more of their own.
+
+**Selfies animate as selfies.** Animating a Selfie Cam still could still come
+back as a tripod shot watching somebody hold a phone: the brief only had to
+contain the word "selfie" to pass as honouring the note that the camera IS the
+phone. Saying "a selfie" is not saying it, and a brief that writes the phone as
+a prop besides - held, tapped, glowing on a thigh - now has the note put back
+into it.
+
 ## 1.1.1b — 2026-08-27
 
 MiniMax H3 takes stills, and the chat writer learns from Krea's own playbook.

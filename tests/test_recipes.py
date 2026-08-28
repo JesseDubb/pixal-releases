@@ -79,7 +79,7 @@ class RecipeTests(unittest.TestCase):
             server.PUBLIC_RECIPE_IDS,
             ("realism", "realism_ii", "fantasy", "anime", "zimage", "identity_edit",
              "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "klein_edit",
-             "anima", "h3_still", "h3_still_2x"),
+             "anima", "h3_still", "h3_still_2x", "h3_ref_still"),
         )
         self.assertTrue(set(server.PUBLIC_RECIPE_IDS).issubset(server.BUILDERS))
 
@@ -528,6 +528,18 @@ class RecipeTests(unittest.TestCase):
                 ("vector_bypass", server.KREA_BYPASS_LORA, 1.0, "core"),
                 ("identity_edit", server.IDENTITY_LORA, 1.0, "core"),
                 ("rawgirl", server.IDENTITY_STYLE_LORA, 1.0, "editable"),
+            ]),
+            # 9.74: the H3 stills gained one editable style lane (no core
+            # entries, off by default) - the revision moved with the stage
+            # list, as this table's rule requires.
+            "h3_still": (2, [
+                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
+            ]),
+            "h3_still_2x": (2, [
+                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
+            ]),
+            "h3_ref_still": (2, [
+                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
             ]),
         }
         for recipe, (revision, wanted) in expected.items():
@@ -1418,6 +1430,10 @@ class _StubHub:
         self.job_seq = job_seq
         self.flushed = False
         self.texts = []
+    gpu = None        # 9.76: no card read -> the headroom rule stays out
+
+    def ledger_read(self):   # 9.76: no ledger -> the constants price
+        return []
 
     async def flush_comfy_cache(self, why, unload=True, free_memory=True):
         self.flushed = True

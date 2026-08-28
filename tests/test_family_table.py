@@ -282,10 +282,10 @@ class ModelProfileNoRegress(unittest.TestCase):
         ("Klein\\flux2-klein-9b.safetensors", "klein", True),
         ("Flux\\flux1-dev.safetensors", "flux", False),
         # 9.58: H3 builds file under their own family now - fl2va runs the
-        # h3_still recipe, ref2va stays the unsupported marker. LTX keeps the
-        # plain "video" classification.
+        # h3_still recipe; 9.67 gave ref2va its own still (h3_ref_still), so
+        # both are supported. LTX keeps the plain "video" classification.
         ("Minimax H3\\minimax_h3_fl2va.safetensors", "minimax_h3", True),
-        ("Minimax H3\\minimax_h3_ref2va.safetensors", "minimax_h3", False),
+        ("Minimax H3\\minimax_h3_ref2va.safetensors", "minimax_h3", True),
         ("LTX2\\ltx-2.5-22b.safetensors", "video", False),
         ("audio\\melband_roformer.safetensors", "audio", False),
         ("nvidia_pid\\decoder.safetensors", "auxiliary", False),

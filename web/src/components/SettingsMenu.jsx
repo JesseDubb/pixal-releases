@@ -13,6 +13,7 @@ import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, Lo
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 import { Lockup } from "../lib/Lockup.jsx";
 import { ModalShell, OverlayMotionStyle } from "../lib/ModalShell.jsx";
+import { Picker } from "../lib/Picker.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
 import { InfoTip } from "./InfoTip.jsx";
@@ -194,23 +195,26 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
   );
 };
 
-// One edit-lane option (9.29): the product name plus what the build weighs on
-// disk, in MotionDirector's GB format. The raw filename stays the tooltip, and
-// a build heavier than the detected card says so there too - one honest line,
-// advisory only: no badge, no colour, no block. The render-time butler prices
-// the real fit; a null detected_gb or an unknown size says nothing at all.
-// `group` folders the row under a family name (9.44): the whole-frame lane
-// lists Qwen and Klein builds together, and the family is the level someone
-// actually chooses at.
+// One edit-lane option (9.29), in the shared Picker's shape (9.73): `id` is
+// the raw build name the pick posts, `label` the product name plus what the
+// build weighs on disk in MotionDirector's GB format. A build heavier than
+// the detected card says so on the description line - Picker rows have no
+// per-row tooltip, and the filter searches label + description, so the
+// warning rides there (9.70's chips move). One honest line, advisory only:
+// no badge, no colour, no block. The render-time butler prices the real fit;
+// a null detected_gb or an unknown size says nothing at all. `group` folders
+// the row under a family name (9.44): the whole-frame lane lists Qwen and
+// Klein builds together, and the family is the level someone actually
+// chooses at.
 const editLaneOptions = (list, detectedGb, group) => (list || []).map((e) => {
   const gb = e.size ? e.size / 1e9 : 0;
   const heavy = gb > 0 && detectedGb > 0 && gb > detectedGb;
   return {
-    name: e.name,
+    id: e.name,
     label: `${prettyModel(e.name)}${gb ? ` · ${gb.toFixed(1)} GB` : ""}`,
-    title: heavy
-      ? `${e.name}\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
-      : e.name,
+    ...(heavy
+      ? { description: `larger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly` }
+      : {}),
     ...(group ? { group } : {}),
   };
 });
@@ -290,8 +294,6 @@ const LIBRARY_ORDER = ["krea2", "zimage", "klein", "qwen_edit", "qwen_image",
 // reason model_profile writes; an unknown future reason passes through as-is.
 const HUMAN_REASON = {
   "video model": "a video model — used by the Animate lanes",
-  "reference-video build - used by the Animate lanes":
-    "a reference-video build — used by the Animate lanes",
   "Flux needs its own Pixal pipeline": "a Flux model — no lane here runs it yet",
   "audio model": "an audio model — no lane here runs it",
   "auxiliary model, not a standalone image generator":
@@ -478,16 +480,6 @@ const inputStyle = {
   color: "var(--text)", fontFamily: FONT, outline: "none", width: "100%",
 };
 
-// tiny capability tag on model rows: accent = content rating, neutral = capability
-const MiniChip = ({ children, accent }) => (
-  <span style={{
-    fontSize: 8, fontWeight: W.heading, letterSpacing: 0.5, lineHeight: 1,
-    padding: "2px 5px", borderRadius: RADIUS.pill, flexShrink: 0,
-    border: `1px solid ${accent ? "var(--accent)" : "var(--borderStr)"}`,
-    color: accent ? "var(--accent)" : "var(--textTer)",
-  }}>{children}</span>
-);
-
 const Btn = ({ children, onClick, primary, disabled, title }) => (
   <button type="button" onClick={onClick} disabled={disabled} title={title}
     style={{
@@ -524,7 +516,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   ) : (
     <LineGhost w={64} />
   );
-  const scrolledSel = useRef(false);   // scroll the saved pick into view once per open
   const [criticModel, setCriticModel] = useState("");
   const [criticInstalled, setCriticInstalled] = useState([]);
   const [criticBrain, setCriticBrain] = useState(null);
@@ -1336,40 +1327,54 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               was hard-pinned to KLEIN_MODEL and invisible here. The whole-frame
               row lists both families (9.44): a Klein pick routes mask-less
               edits to klein_edit, a Qwen pick to qwen_edit. */}
+          {/* 9.73: both lane picks are the shared Picker (lib/Picker.jsx), as
+              9.70 did for the chat brain - this panel's ScrollPicker predated
+              it, and two controls for one job is the defect. "recipe default"
+              was ScrollPicker's emptyLabel clear row; Picker has no such
+              concept, so it is a real option with id "" - value "" matches it
+              and the trigger reads "recipe default", the same meaning as
+              before. onChange keeps onPick's body: same state write, same
+              apply payload, same toast. */}
           {editCfg ? (<>
             <Field className="px-ghost-in" label={<>whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
-              <ScrollPicker
+              <Picker label="whole frame edit model"
                 value={editCfg.model || ""}
                 placeholder="recipe default"
-                emptyLabel="recipe default"
                 options={[
+                  { id: "", label: "recipe default" },
                   ...editLaneOptions(editCfg.installed, detectedGb, familyName("qwen_edit")),
                   ...editLaneOptions(editCfg.inpaint_installed, detectedGb, familyName("klein")),
                 ]}
-                onPick={(name) => {
+                onChange={(name) => {
                   setEditCfg({ ...editCfg, model: name });
                   apply({ edit: { model: name } },
                         name ? "edit model applied" : "recipe default restored");
                 }} />
             </Field>
             <Field className="px-ghost-in" label={<>masked area <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
-              <ScrollPicker
+              <Picker label="masked area edit model"
                 value={editCfg.inpaint_model || ""}
                 placeholder="recipe default"
-                emptyLabel="recipe default"
-                options={editLaneOptions(editCfg.inpaint_installed, detectedGb)}
-                onPick={(name) => {
+                options={[
+                  { id: "", label: "recipe default" },
+                  ...editLaneOptions(editCfg.inpaint_installed, detectedGb),
+                ]}
+                onChange={(name) => {
                   setEditCfg({ ...editCfg, inpaint_model: name });
                   apply({ edit: { inpaint_model: name } },
                         name ? "masked edit model applied" : "recipe default restored");
                 }} />
             </Field>
           </>) : (<>
+            {/* the shared trigger is a fixed 28px, so the ghost finally IS
+                the control's own box - 9.70's call for the chat brain, here
+                for both lanes (PickerGhost's 38px was the ScrollPicker
+                trigger's height) */}
             <Field label="whole frame">
-              <PickerGhost />
+              <Bar h={28} />
             </Field>
             <Field label="masked area">
-              <PickerGhost />
+              <Bar h={28} />
             </Field>
           </>)}
         </Section>
@@ -1566,60 +1571,32 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </div>
           )}
           {mode === "local" ? (<>
-            {/* maxHeight bounds whole rows — 6 rows × 36px + 5 × 6px gaps
-                = 246. The old 230 sliced a row through its middle at the top
-                edge ("Gemma 3 12B Heretic" cut horizontally), which read as a
-                rendering fault rather than a scroll. */}
+            {/* 9.70: the chat-brain pick is the shared Picker (lib/Picker.jsx,
+                the composer sampler card's dropdown) - this panel's bespoke
+                row list predated it, and two controls for one job is the
+                defect. id = the gguf path the row posted; the VISION / NSFW
+                chips ride the description so the filter still finds them. */}
             {!cfg ? (
-              /* one 36px row ghost - the rows are 36px; the loaded list's
-                 height is the user's own data, so no ghost can match every
-                 case, and one row is the smallest honest hold */
-              <Bar h={36} />
+              /* the shared trigger is a fixed 28px, so the ghost finally IS
+                 the control's own box - the list's 36px row ghost was the
+                 smallest honest hold for a variable-height list */
+              <Bar h={28} />
             ) : (localList.length ? (
-              <div className="px-scroll px-ghost-in" style={{ display: "flex", flexDirection: "column",
-                                                  gap: SPACE[6], maxHeight: 246, overflowY: "auto" }}>
-                {localList.map((m) => {
-                  const sel = localModel === m.path;
-                  return (
-                    <button key={m.path} type="button" title={m.name}
-                      ref={sel ? (el) => {
-                        if (el && !scrolledSel.current) {
-                          scrolledSel.current = true;
-                          el.scrollIntoView({ block: "nearest" });
-                        }
-                      } : null}
-                      onClick={() => {
-                        setLocalModel(m.path);
-                        apply({ llm: mode === "local"
-                                  ? { base_url: LOCAL_URL, model: "local", local_model: m.path }
-                                  : { local_model: m.path } },
-                              "model applied - loads on your next message");
-                      }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: SPACE[8],
-                        height: 36, minHeight: 36, flexShrink: 0, cursor: "pointer",
-                        padding: `0 ${SPACE[12]}px`, borderRadius: RADIUS.pill,
-                        fontFamily: FONT, fontSize: TYPE.ui, border: "1px solid",
-                        borderColor: sel ? "var(--accent)" : "var(--border)",
-                        background: sel ? "var(--accentMut)" : "transparent",
-                        color: sel ? "var(--accent)" : "var(--textSec)",
-                        transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
-                      }}>
-                      {sel && <Check size={13} weight="bold" style={{ flexShrink: 0 }} />}
-                      <span style={{ whiteSpace: "nowrap", overflow: "hidden",
-                                     textOverflow: "ellipsis" }}>{m.title || m.name}</span>
-                      <span style={{ marginLeft: "auto", display: "inline-flex",
-                                     alignItems: "center", gap: SPACE[6], flexShrink: 0 }}>
-                        {m.vision && <MiniChip>VISION</MiniChip>}
-                        {m.nsfw && <MiniChip accent>NSFW</MiniChip>}
-                        <span style={{ fontSize: TYPE.label, fontFamily: MONO,
-                                       color: sel ? "var(--accent)" : "var(--textTer)" }}>
-                          {[m.quant, m.size_gb].filter(Boolean).join(" · ")}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="px-ghost-in">
+                <Picker label="Local brain model" value={localModel}
+                  placeholder="pick a model…"
+                  options={localList.map((m) => ({
+                    id: m.path,
+                    label: m.title || m.name,
+                    description: [m.vision && "VISION", m.nsfw && "NSFW",
+                                  m.quant, m.size_gb].filter(Boolean).join(" · "),
+                  }))}
+                  onChange={(id) => {
+                    setLocalModel(id);
+                    apply({ llm: { base_url: LOCAL_URL, model: "local",
+                                   local_model: id } },
+                          "model applied - loads on your next message");
+                  }} />
               </div>
             ) : (
               <div className="px-ghost-in" style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>

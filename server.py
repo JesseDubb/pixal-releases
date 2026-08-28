@@ -339,6 +339,31 @@ def character_subject(ch):
         line += " " + st[0].upper() + st[1:] + "."
     return line
 
+def character_subject_nonfacial(ch):
+    """character_subject minus what a reference photo already carries (brief
+    9.67). On the h3_ref_still lane the wired photo DEFINES the person, so
+    the composed clause drops the age - identity_edit's own rule, "NEVER
+    describe the face or age (the reference carries it)". Race, hair, build
+    and the style sentence stay: canon that does not fight the photo, and
+    eye colour is the one feature the identity lane states explicitly. A
+    hand-written subject_block passes through verbatim - the author's own
+    canon, the same trust every txt2img lane gives it."""
+    if ch.get("subject_block"):
+        return ch["subject_block"]
+    subj, _obj = PRONOUNS.get(ch.get("sex", "female"), PRONOUNS["other"])
+    noun = {"female": "woman", "male": "man"}.get(ch.get("sex"), "person")
+    parts = []
+    if ch.get("race"):
+        parts.append(ch["race"])
+    parts.append(noun)
+    # The article character_subject borrows from its age part ("a 24-year-old
+    # Korean woman") must not fall away with the age: "a Korean woman".
+    line = f"{subj.capitalize()} is a {' '.join(parts)}."
+    if ch.get("style"):
+        st = ch["style"].rstrip(".").strip()
+        line += " " + st[0].upper() + st[1:] + "."
+    return line
+
 def wardrobe_lock_for(ch):
     """The fineporn base drops clothing unless the LAST clause locks it - per-character
     wording when the anchor defines one, generic otherwise."""
@@ -382,7 +407,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.1b"
+PIXAL_VERSION = "1.1.2b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -1831,12 +1856,22 @@ ZIMAGE_EXECUTION_PROFILES = {
 
 # MiniMax H3's fl2va transformers render stills natively (brief 9.58): the
 # h3_still recipe drives the video model prompt-only at its 5-frame floor and
-# keeps frame 0, the causal VAE's standalone latent. The rest of the H3
-# constants live with the Animate builders below; these three are up here
-# because RECIPE_SPECS names them.
+# keeps frame 0, the causal VAE's standalone latent. 9.67 adds the ref2va
+# build's own still (h3_ref_still), whose ReferenceToVideo node takes the
+# audio VAE as an input even with no audio decoded - so the ref2va weights
+# and the audio VAE moved up here too. The rest of the H3 constants live
+# with the Animate builders below; these are up here because RECIPE_SPECS
+# names them.
 H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 H3_VIDEO_VAE = "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+H3_AUDIO_VAE = "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+# The H3 creative LoRA the still recipes pin as their editable style stage
+# (9.74): a known-good one-click row, OFF by default so the untouched plan
+# renders exactly the pre-9.74 graph. The Animate lanes offer the same file
+# through H3_VIDEO_LORAS (defined with the video tables below).
+H3_HMNSFW_LORA = "Minimax H3\\HMNSFW_AIO_V2.safetensors"
 
 # Public creative recipes are deliberately separate from runtime graph families.
 # "anime" is a creative direction; "zimage" is the compatible execution stack.
@@ -2031,16 +2066,30 @@ RECIPE_SPECS = {
     # MiniMax H3's fl2va builds as a still camera (brief 9.58): the video
     # model renders one frame at its native 2K ceiling. The quality path is
     # the whole point - no turbo distillation ever runs here, so there are no
-    # dials and no LoRA stack. mp_cap is the Max tier's 1536x2048; the
-    # composer's MP ladder dims its rungs above it.
+    # dials, and the 9.74 LoRA lane takes style LoRAs only: lora_variants
+    # ["any"] is how the still rows refuse the speed distills (they stay the
+    # Animate lanes' speed-mode property) while compatible_recipes keeps
+    # gating MODELS on variants. The one editable stage pins a known-good
+    # style LoRA, OFF by default so an untouched plan renders exactly the
+    # pre-9.74 graph. mp_cap is the Max tier's 1536x2048; the composer's MP
+    # ladder dims its rungs above it.
     "h3_still": {
         "label": "MiniMax H3", "tag": "2K still · 20 steps · ~1 min",
         "family": "minimax_h3", "variants": ["fl2va"],
+        "lora_variants": ["any"],
         "default_model": H3_MODEL,
         "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE],
-        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+        # revision 2 (9.74): the editable style lane joined, so plans saved
+        # against revision 1 are discarded rather than replayed.
+        "lora_stack_revision": 2, "lora_boundary": "sampler",
+        "lora_stages": [
+            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
+             "role": "style", "zone": "editable", "order_locked": False,
+             "strength_editable": True, "removable": True,
+             "active_by_default": False},
+        ],
     },
     # What "Refined" means on an H3 build (brief 9.59): the same still, then
     # its own latent re-sampled at 2x through the MMH3 pack's 3D upscaler -
@@ -2051,11 +2100,46 @@ RECIPE_SPECS = {
     "h3_still_2x": {
         "label": "MiniMax H3 2x", "tag": "2K still + 2x latent refine · ~3 min",
         "family": "minimax_h3", "variants": ["fl2va"],
+        "lora_variants": ["any"],
         "default_model": H3_MODEL,
         "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE],
-        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+        # h3_still's 9.74 lane, same revision and stage: the style rides the
+        # first pass and the 2x refine follows the same tail.
+        "lora_stack_revision": 2, "lora_boundary": "sampler",
+        "lora_stages": [
+            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
+             "role": "style", "zone": "editable", "order_locked": False,
+             "strength_editable": True, "removable": True,
+             "active_by_default": False},
+        ],
+    },
+    # The ref2va build as a still camera (brief 9.67): the active character's
+    # identity photo is the ONE wired reference, so the reference IS the
+    # identity mechanism - no identity LoRA, no identity_edit stage, no
+    # bypass chain. The ReferenceToVideo node takes audio_vae even though no
+    # audio is decoded, so the audio VAE is a real requirement here (unlike
+    # h3_still). Same quality-only rule as h3_still: no dials, and the 9.74
+    # LoRA lane takes style LoRAs only (lora_variants ["any"] refuses the
+    # speed distills).
+    "h3_ref_still": {
+        "label": "MiniMax H3 Ref",
+        "tag": "2K still from a reference · 20 steps · ~1 min",
+        "family": "minimax_h3", "variants": ["ref2va"],
+        "lora_variants": ["any"],
+        "default_model": H3_REF2V_MODEL,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "required_text_encoders": [H3_CLIP],
+        "required_vaes": [H3_VIDEO_VAE, H3_AUDIO_VAE],
+        "needs_character": True,
+        "lora_stack_revision": 2, "lora_boundary": "sampler",
+        "lora_stages": [
+            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
+             "role": "style", "zone": "editable", "order_locked": False,
+             "strength_editable": True, "removable": True,
+             "active_by_default": False},
+        ],
     },
 }
 PUBLIC_RECIPE_IDS = tuple(RECIPE_SPECS)
@@ -2221,17 +2305,16 @@ def model_profile(rel, kind="diffusion_models"):
     elif low.startswith("minimax h3\\"):
         # MiniMax H3 transformers ARE video models, so media stays "video"
         # (the Library's grouping and the Animate lanes read it), but the
-        # family is their own: fl2va builds run the h3_still recipe (9.58),
-        # so they are supported; ref2va builds belong to the Animate
-        # reference lane and never take a text-to-image render. No
-        # families.json row can say this - a row classifies media "image",
-        # supported True - so the family stays an elif. The variant rule is
-        # the filename token, ref2va first (h3_model_variant's precedence).
+        # family is their own: fl2va builds run the h3_still recipe (9.58)
+        # and ref2va builds run h3_ref_still (9.67), so both are supported
+        # stills. No families.json row can say this - a row classifies media
+        # "image", supported True - so the family stays an elif. The variant
+        # rule is the filename token, ref2va first (h3_model_variant's
+        # precedence), and the variant stays on the profile so the picker
+        # groups the two architectures.
         variant = "ref2va" if "ref2va" in low.rsplit("\\", 1)[-1] else "fl2va"
         family, media = "minimax_h3", "video"
-        supported = variant == "fl2va"
-        reason = ("" if supported else
-                  "reference-video build - used by the Animate lanes")
+        supported, reason = True, ""
     elif low.startswith("ltx"):
         family, variant, media, supported = "video", "video", "video", False
         reason = "video model"
@@ -2447,6 +2530,19 @@ def identity_patch_variants():
     return out
 
 
+# minimax_h3 can never come out of lora_profile's table walk: the family is
+# deliberately not a families.json row (model_profile's elif explains why -
+# its transformers are media "video", which a row cannot say), so its LoRAs
+# classify by the same elif pattern (9.74). A declared base naming MiniMax H3
+# - CivitAI's baseModel for every H3 file in this box's by-hash cache is
+# exactly "MiniMax H3" - or the folder the video lane itself keeps them in.
+_H3_LORA_BASE = re.compile(r"minimax[ _]h3")
+# The speed distills are speed modes, not style: the still lanes are the
+# 20-step quality path and refuse them by variant. Matched on the file stem:
+# turbo/lightx2v name the distillation, \dstep/step\d its step count.
+_H3_LORA_SPEED = re.compile(r"turbo|lightx2v|\dstep|step\d", re.I)
+
+
 def lora_profile(rel):
     # Two different jobs, two different forms, and conflating them cost a
     # silent Linux defect. The backslash form is Pixal's INTERNAL identity for
@@ -2481,6 +2577,14 @@ def lora_profile(rel):
     if not row:
         row = _family_row_by_path(low)
     if not row:
+        h3_declared = next((cand for cand in (sidecar, by_hash, header)
+                            if _H3_LORA_BASE.search(cand.lower())), "")
+        if h3_declared or low.startswith("minimax h3\\"):
+            return {"family": "minimax_h3",
+                    "variant": ("speed" if _H3_LORA_SPEED.search(base(rel))
+                                else "any"),
+                    "base_model": (sidecar or by_hash or h3_declared) or None,
+                    "supported": True}
         return {"family": "unknown", "variant": "any",
                 "base_model": (sidecar or by_hash) or None, "supported": False}
     return {"family": row["id"],
@@ -2490,10 +2594,18 @@ def lora_profile(rel):
 
 def compatible_recipes(profile):
     out = []
+    # A MODEL profile always carries media; a LoRA profile never does. The
+    # distinction matters only where a recipe gates the two differently:
+    # h3_still's variants list the MODEL builds it runs (fl2va), while its
+    # lora_variants list the LoRA variants its stack accepts ("any" - the
+    # speed distills stay off the still shelf, 9.74).
+    is_lora = "media" not in profile
     for rid, spec in RECIPE_SPECS.items():
         if profile.get("family") != spec["family"]:
             continue
         variants = spec.get("variants")
+        if is_lora:
+            variants = spec.get("lora_variants", variants)
         if variants and profile.get("variant") not in variants:
             continue
         out.append(rid)
@@ -2669,6 +2781,15 @@ def lora_compatible(rel, family=None, variant=None, lp=None):
     gated = {rule["id"] for rule in (row or {}).get("variants", ())}
     if variant in gated and lp["variant"] not in ("any", variant):
         return "variant"
+    # minimax_h3 has no family row to gate from (model_profile's elif: its
+    # transformers are media "video"), so the still lanes' rule sits beside
+    # the table (9.74): the fl2va/ref2va stills are the 20-step quality path
+    # and run style LoRAs only - variant "any", the accepted-variants list
+    # the still recipes declare. The speed distills stay the Animate lanes'
+    # speed-mode property and never ride a still graph.
+    if family == "minimax_h3" and variant in (H3_MODEL_ID, H3_REF2V_MODEL_ID) \
+            and lp["variant"] != "any":
+        return "variant"
     return None
 
 # Every profile the add-LoRA popup can take, as "family:variant" keys: "any"
@@ -2684,10 +2805,14 @@ for _row in FAMILY_TABLE:
     _LORA_PROFILE_VARIANTS[_row["id"]] = tuple(sorted(_vs))
 # minimax_h3 is deliberately NOT a families.json row (its models keep media
 # "video", which a row cannot say), but the add-LoRA popup's key space is how
-# the picker learns a LoRA's verdict for a profile. No LoRA ever classifies
-# minimax_h3, so every verdict is a refusal - the picker greys the whole
-# shelf for an h3_still plan instead of offering video LoRAs it would drop.
-_LORA_PROFILE_VARIANTS["minimax_h3"] = ("any", "fl2va")
+# the picker learns a LoRA's verdict for a profile. Since 9.74 the family's
+# LoRAs DO classify (lora_profile's own elif), so these keys carry real
+# verdicts: a style LoRA (variant "any") is compatible on all three profiles,
+# a speed distill is refused on the two still profiles by lora_compatible's
+# elif - the table gate has no row to read for this family.
+# "ref2va" joined the key space in 9.67: an h3_ref_still selection is a
+# profile the popup can hold, and the tuple's contract is to name every one.
+_LORA_PROFILE_VARIANTS["minimax_h3"] = ("any", "fl2va", "ref2va")
 _LORA_PROFILE_KEYS = tuple(f"{fam}:{v}" for fam, vs in _LORA_PROFILE_VARIANTS.items()
                            for v in vs)
 del _row, _vs, _fixed
@@ -2892,6 +3017,12 @@ SAMPLER_SEATS = {
                     "map": {"sampler_name": [("7", "sampler_name")],
                             "steps": [("8", "steps")],
                             "scheduler": [("8", "scheduler")]}},
+    # h3_ref_still (9.67) keeps h3_still's node ids on the ref2v spine, so
+    # the seat is the same KSamplerSelect + BasicScheduler pair.
+    "h3_ref_still": {"node": "7", "class": "KSamplerSelect",
+                     "map": {"sampler_name": [("7", "sampler_name")],
+                             "steps": [("8", "steps")],
+                             "scheduler": [("8", "scheduler")]}},
 }
 TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta")
 # Which of those a seat can actually take, by the node class sitting in it. eta
@@ -2993,12 +3124,16 @@ def sampler_defaults(base_id, model=None):
         return {"steps": s["steps"], "cfg": s["cfg"],
                 "sampler_name": node.get("sampler_name", "er_sde"),
                 "scheduler": node.get("scheduler", "simple")}
-    if base_id in ("h3_still", "h3_still_2x"):
+    if base_id in ("h3_still", "h3_still_2x", "h3_ref_still"):
         # No TEMPLATES entry to read (the graph is built in code); the
-        # numbers are the still recipe's own constants. h3_still_2x shares
-        # the first pass, so it reports the same trio.
-        return {"steps": H3_STEPS, "sampler_name": H3_SAMPLER,
-                "scheduler": H3_SCHEDULER}
+        # numbers are the still recipe's own constants - since 9.78 the STILL
+        # pair, not the video default the shared constants now name. No H3
+        # video id has a SAMPLER_SEATS entry, so this branch is stills-only
+        # by construction. h3_still_2x shares
+        # the first pass, so it reports the same trio; h3_ref_still (9.67)
+        # runs the same schedule on the ref2v spine.
+        return {"steps": H3_STEPS, "sampler_name": H3_STILL_SAMPLER,
+                "scheduler": H3_STILL_SCHEDULER}
     return {k: node[k] for k in seat_tuning_keys(seat) if k in node}
 
 
@@ -3049,6 +3184,21 @@ def seat_choice_groups(seat):
             groups[key] = [{"label": "RES4LYF", "ids": mine},
                            {"label": "ComfyUI KSampler", "ids": extra}]
     return groups
+
+
+def seat_signature(base_id, model=None):
+    """The seat's identity as a small JSON block for /api/options' recipe
+    rows (9.75): node class, which tuning keys it takes, and the
+    sampler/scheduler lists it offers. The composer compares two recipes'
+    signatures when a pick re-routes the execution recipe - equal signatures
+    on one family mean the quick-tuning overrides can move across the switch
+    instead of resetting to the recipe's own numbers. None when the pairing
+    has no tunable seat (the reset then stays, as before)."""
+    seat = sampler_seat(base_id, model)
+    if not seat:
+        return None
+    return {"class": seat["class"], "keys": list(seat_tuning_keys(seat)),
+            "choices": seat_choices(seat)}
 
 
 def sampler_swap(seat, tuning):
@@ -3242,7 +3392,8 @@ def style_slug(text):
 
 
 def _style_prompt_text(value, field):
-    """An optional free-text clause on a style (negative, prompt_tail).
+    """An optional free-text clause on a style (negative, prompt_prefix,
+    prompt_tail).
 
     Whitespace-collapsed and capped: these ride inside shared files and end up
     as single clauses in a caption, so a paste with newlines must not explode
@@ -3256,6 +3407,93 @@ def _style_prompt_text(value, field):
     if len(text) > 600:
         raise ValueError(f"{field} is longer than 600 characters")
     return text or None
+
+
+# A {slot} token inside a style's prompt frame. The name is free text up to
+# the braces ("outfit top" is a real one), so the pattern is anything that
+# closes cleanly.
+_SLOT_TOKEN_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _style_slots(raw, *clauses):
+    """A style's slot declarations -> {name: {"label", "default"}}.
+
+    The formula is the product; the slots are the per-shoot input (9.77).
+    Declared explicitly as a map, or inferred from the {name} tokens in the
+    prompt frame when the map is absent - an inferred slot's default is "",
+    so an unfilled field collapses its clause rather than inventing words.
+    """
+    if raw is None:
+        names = []
+        for clause in clauses:
+            for token in _SLOT_TOKEN_RE.findall(clause or ""):
+                name = " ".join(token.split())
+                if name and name not in names:
+                    names.append(name)
+        return {name: {"label": "", "default": ""} for name in names}
+    if not isinstance(raw, dict):
+        raise ValueError("slots must be an object of name -> {label, default}")
+    if len(raw) > 32:
+        raise ValueError("a style can declare at most 32 slots")
+    out = {}
+    for key, spec in raw.items():
+        name = " ".join(str(key).split())
+        if not name or len(name) > 64 or "{" in name or "}" in name:
+            raise ValueError(f"slot name {key!r} is not a usable {{token}}")
+        if spec is None:
+            spec = {}
+        if not isinstance(spec, dict):
+            raise ValueError(f"slot {name!r} must be an object of label/default")
+        label, default = spec.get("label"), spec.get("default")
+        if label is not None and not isinstance(label, str):
+            raise ValueError(f"slot {name!r}: label must be a string")
+        if default is not None and not isinstance(default, str):
+            raise ValueError(f"slot {name!r}: default must be a string")
+        label = " ".join((label or "").split())
+        default = " ".join((default or "").split())
+        if len(label) > 64:
+            raise ValueError(f"slot {name!r}: label is longer than 64 characters")
+        if len(default) > 600:
+            raise ValueError(f"slot {name!r}: default is longer than 600 characters")
+        out[name] = {"label": label, "default": default}
+    return out
+
+
+def fill_style_slots(text, slots, fills):
+    """Render a style clause's {slot} tokens (9.77).
+
+    A fill from the composer wins; an unfilled slot renders as its declared
+    default. When the effective value is empty the slot's whole clause - the
+    ;-separated segment it sits in - collapses, so "wearing {outfit top}"
+    with nothing to wear never leaves a dangling "wearing" in the caption,
+    and an undeclared token never leaks literal braces either.
+    """
+    if not text or "{" not in text:
+        return text
+    slots = slots or {}
+    fills = fills if isinstance(fills, dict) else {}
+    out = []
+    for clause in text.split(";"):
+        drop = False
+
+        def repl(match):
+            nonlocal drop
+            name = " ".join(match.group(1).split())
+            value = fills.get(name)
+            if not isinstance(value, str) or not value.strip():
+                value = (slots.get(name) or {}).get("default") or ""
+            value = " ".join(value.split())
+            if not value:
+                drop = True
+            return value
+
+        rendered = _SLOT_TOKEN_RE.sub(repl, clause)
+        if drop:
+            continue
+        rendered = " ".join(rendered.split())
+        if rendered:
+            out.append(rendered)
+    return "; ".join(out)
 
 
 def validate_saved_style(raw, default_id=""):
@@ -3310,7 +3548,9 @@ def validate_saved_style(raw, default_id=""):
     if provenance is not None and not isinstance(provenance, dict):
         raise ValueError("provenance must be an object")
     negative = _style_prompt_text(raw.get("negative"), "negative")
+    prompt_prefix = _style_prompt_text(raw.get("prompt_prefix"), "prompt_prefix")
     prompt_tail = _style_prompt_text(raw.get("prompt_tail"), "prompt_tail")
+    slots = _style_slots(raw.get("slots"), prompt_prefix, prompt_tail)
     record = {
         "schema_version": RECIPE_SCHEMA_VERSION,
         "id": style_id, "name": name, "base": base_id, "model": model,
@@ -3329,8 +3569,12 @@ def validate_saved_style(raw, default_id=""):
         record["lora_plan"] = plan
     if negative:
         record["negative"] = negative
+    if prompt_prefix:
+        record["prompt_prefix"] = prompt_prefix
     if prompt_tail:
         record["prompt_tail"] = prompt_tail
+    if slots:
+        record["slots"] = slots
     return record
 
 
@@ -3389,6 +3633,738 @@ def style_missing(record):
         if name and row.get("enabled") is not False and not resolve_lora(name):
             missing.append(f"LoRA: {base(name)}")
     return missing
+
+
+# ------------------------------------------------ a style from a render's metadata
+#
+# ComfyUI's save nodes embed two JSON documents in every output file
+# (docs.comfy.org/development/api-development/workflow-metadata): "prompt"
+# (the API graph - execution-oriented, {node_id: {class_type, inputs}}) and
+# "workflow" (the editor graph, whose widget values are positional). PNG
+# carries them in tEXt/zTXt/iTXt chunks, animated WebP as EXIF strings, and
+# any re-encode strips them. Pixal's own renders go through the same save
+# node, so a Pixal render's "prompt" chunk is a graph Pixal built and maps
+# back losslessly for everything a style holds. A stranger's render maps as
+# far as its node types are recognisable and says what it could not map.
+#
+# This is a TRANSLATOR between two things that exist: the metadata in a
+# file, and the saved-style record styles_post already validates. It never
+# saves - the draft comes back for review in the style editor.
+
+_MODEL_LOADER_INPUT = {"UNETLoader": "unet_name", "UnetLoaderGGUF": "unet_name",
+                       "CheckpointLoaderSimple": "ckpt_name"}
+_LORA_CLASSES = ("LoraLoader", "LoraLoaderModelOnly")
+# Nodes whose width/height inputs ARE the sampling canvas.
+_LATENT_CLASSES = ("EmptyLatentImage", "EmptySD3LatentImage",
+                   "EmptyHunyuanLatentVideo", "EmptyFlux2LatentImage",
+                   "MiniMaxH3ImageToVideo")
+_SAMPLER_CLASSES = ("KSampler", "KSamplerAdvanced", "SamplerCustom",
+                    "SamplerCustomAdvanced", "ClownsharKSampler_Beta")
+# Scheduler nodes that imply a scheduler name rather than carrying one.
+_SIGMA_SCHEDULER_NAMES = {"KarrasScheduler": "karras",
+                          "PolyexponentialScheduler": "polyexponential",
+                          "SDTurboScheduler": "sgm_uniform"}
+# An LLM node rewrites the prompt at queue time; literals upstream of it are
+# its instructions, not the scene (realism's TextGenerate chain). Never
+# descend into one while looking for the positive text.
+_TEXT_GENERATOR_CLASSES = ("TextGenerate", "TextGenerateLTX2Prompt")
+
+# Classes the translator accounts for silently: they carry no style field,
+# but they are ordinary plumbing (or Pixal's own graph furniture), not
+# something the user needs named. Anything NOT here lands in unmapped with
+# "no Pixal equivalent" - the honesty contract of the draft.
+_KNOWN_CLASSES = frozenset(
+    list(_MODEL_LOADER_INPUT) + list(_LORA_CLASSES) + list(_LATENT_CLASSES) +
+    list(_SAMPLER_CLASSES) + list(_SIGMA_SCHEDULER_NAMES) +
+    list(_TEXT_GENERATOR_CLASSES) + [
+    "CLIPLoader", "CLIPLoaderGGUF", "DualCLIPLoader", "DualCLIPLoaderGGUF",
+    "TripleCLIPLoader", "TripleCLIPLoaderGGUF", "QuadrupleCLIPLoader",
+    "VAELoader", "UpscaleModelLoader", "LatentUpscaleModelLoader",
+    "KSamplerSelect", "BasicScheduler", "VPScheduler", "BasicGuider",
+    "CFGGuider", "RandomNoise", "DisableNoise", "SplitSigmas", "SetFirstSigma",
+    "ExtendIntermediateSigmas", "ManualSigmas",
+    "EmptyImage", "EmptyMochiLatentVideo", "EmptyLTXVLatentVideo",
+    "LoadImage", "ImageScale", "ImageScaleToTotalPixels",
+    "ImageUpscaleWithModel", "GetImageSize", "ImageFromBatch",
+    "LatentUpscale", "LatentUpscaleBy",
+    "CLIPTextEncode", "ConditioningZeroOut", "ConditioningCombine",
+    "ConditioningSetArea", "ConditioningSetTimestepRange", "CLIPSetLastLayer",
+    "FluxGuidance", "ModelSamplingAuraFlow", "ModelSamplingSD3",
+    "ModelSamplingFlux", "ReferenceLatent",
+    "VAEDecode", "VAEEncode", "VAEDecodeTiled", "VAEEncodeForInpaint",
+    "SaveImage", "PreviewImage", "PreviewAny", "SaveAnimatedWEBP",
+    "SaveAnimatedPNG", "CreateVideo", "SaveVideo",
+    # Pixal's own furniture: realism's prompt chain and switch nodes,
+    # identity_edit's patch nodes, realism_ii's finish, the H3 builders,
+    # the video lanes' container/audio nodes and the upscale lane.
+    "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveFloat",
+    "PrimitiveStringMultiline", "StringConcatenate",
+    "Krea2EditGroundedEncode", "Krea2EditModelPatch",
+    "ClownOptions_DetailBoost_Beta", "ColorCorrect", "UltimateSDUpscale",
+    "MMH3LatentUpscaleWithModelParams", "MMH3SpatialSplitParams",
+    "MMH3UltimateUpscale", "EmptyHunyuanLatentVideo",
+    "H3SLAAttention", "LTX2MemoryEfficientSageAttentionPatch",
+    "VHS_VideoCombine", "VHS_LoadVideoPath", "VHS_VideoInfoLoaded",
+    "VAEDecodeAudio", "LTXVAudioVAEDecode", "LTXVAudioVAEEncode",
+    "LTXVEmptyLatentAudio", "LTXVAudioVAELoader", "LTXVConditioning",
+    "LTXVConcatAVLatent", "LTXVSeparateAVLatent", "LTXVLatentUpsampler",
+    "LTXVDualCFGGuider", "LTXVScheduler", "LTXVPreprocess",
+    "LTXVImgToVideoInplace", "LTX2_NAG", "LTX2SamplingPreviewOverride",
+    "LTXAVTextEncoderLoader", "DenoRTXVFXEasyUpscale",
+    "PiDUpscale", "PiDCaptionCreator", "GrowMask", "ImageToMask",
+    "MaskToImage", "KleinEditComposite", "CFGNorm", "TextEncodeQwenImageEdit",
+    "Flux2Scheduler", "ComfyMathExpression", "ResizeImageMaskNode",
+    "ResizeImagesByLongerEdge", "ResolutionSelector", "VRAM_Debug",
+    "ImageResizeKJv2", "INTConstant", "SimpleCalculatorKJ",
+    "Power Lora Loader (rgthree)",
+])
+
+# Graph-shape evidence for which base built a render, checked BEFORE the
+# default-model coincidence: identity_edit's patch nodes exist only on
+# identity graphs, realism_ii's finish only on two-pass builds, the MMH3
+# upscaler only on an H3 2x refine. These are Pixal's own node signatures,
+# not a new family table.
+_GRAPH_BASE_HINTS = (
+    (frozenset(("Krea2EditModelPatch", "Krea2EditGroundedEncode")), "identity_edit"),
+    (frozenset(("UltimateSDUpscale", "ClownOptions_DetailBoost_Beta")), "realism_ii"),
+    (frozenset(("MMH3UltimateUpscale", "MMH3LatentUpscaleWithModelParams")),
+     "h3_still_2x"),
+)
+
+# A1111 sampler names -> the ComfyUI sampler_name for the same algorithm.
+_A1111_SAMPLERS = {
+    "euler a": "euler_ancestral", "euler": "euler", "euler cfg++": "euler_cfg_pp",
+    "lms": "lms", "heun": "heun", "dpm2": "dpm_2", "dpm2 a": "dpm_2_ancestral",
+    "dpm++ 2s a": "dpmpp_2s_ancestral", "dpm++ 2m": "dpmpp_2m",
+    "dpm++ 2m sde": "dpmpp_2m_sde", "dpm++ sde": "dpmpp_sde",
+    "dpm++ 3m sde": "dpmpp_3m_sde", "dpm fast": "dpm_fast",
+    "dpm adaptive": "dpm_adaptive", "ddim": "ddim", "plms": "plms",
+    "uni pc": "uni_pc", "restart": "restart", "lcm": "lcm",
+}
+_A1111_SCHEDULERS = {
+    "uniform": "normal", "karras": "karras", "exponential": "exponential",
+    "sgm uniform": "sgm_uniform", "simple": "simple",
+    "ddim uniform": "ddim_uniform", "beta": "beta",
+}
+_A1111_PARAM_RE = re.compile(r"([\w ]+?)\s*:\s*((?:[^,]|,(?!\s*[\w ]+?:))*)")
+_A1111_LORA_RE = re.compile(r"<lora:([^:>]+):([0-9.]+)>", re.I)
+
+
+def _render_text_chunks(data):
+    """An image's text metadata as {key: str}, or None when not an image.
+
+    Read through PIL, never hand-parsed: PNG's prompt/workflow may sit in
+    tEXt, zTXt (zlib) or iTXt (UTF-8) chunks depending on size, and PIL
+    decodes all three into one dict. Animated WebP carries the same fields
+    as EXIF strings ("prompt:{...}") - scan the tag values for the prefixes.
+    """
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            info = dict(getattr(im, "text", None) or {})
+            info.update(im.info or {})
+            if im.format == "WEBP":
+                try:
+                    values = list(im.getexif().values())
+                except Exception:
+                    values = []
+                for value in values:
+                    if not isinstance(value, str):
+                        continue
+                    for key in ("prompt", "workflow", "parameters"):
+                        if value.startswith(key + ":") and key not in info:
+                            info[key] = value[len(key) + 1:]
+    except Exception:
+        return None
+    return {str(k): v for k, v in info.items() if isinstance(v, str)}
+
+
+def _as_prompt_graph(raw):
+    """JSON text -> a ComfyUI API graph, or None when it is not one."""
+    try:
+        graph = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(graph, dict) or not graph:
+        return None
+    if not any(isinstance(node, dict) and isinstance(node.get("class_type"), str)
+               and isinstance(node.get("inputs"), dict)
+               for node in graph.values()):
+        return None
+    return graph
+
+
+def _as_workflow_graph(raw):
+    """JSON text -> a ComfyUI editor graph, or None when it is not one."""
+    try:
+        wf = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(wf, dict):
+        return None
+    nodes = wf.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return None
+    if not any(isinstance(n, dict) and "id" in n and "type" in n for n in nodes):
+        return None
+    return wf
+
+
+def _link(value):
+    """A graph link's source node id, or None for literal inputs."""
+    if isinstance(value, (list, tuple)) and value \
+            and isinstance(value[0], (str, int)):
+        return str(value[0])
+    return None
+
+
+def _extract_prompt_graph(graph):
+    """ComfyUI API graph -> the normalized field set _style_from_extracted eats."""
+    ex = {"model": None, "loras": [], "scene": "", "notes": []}
+    nodes = [(str(nid), node) for nid, node in graph.items()
+             if isinstance(node, dict) and isinstance(node.get("inputs"), dict)]
+    by_id = dict(nodes)
+    ex["signals"] = {node.get("class_type") for _nid, node in nodes}
+
+    model_nid = None
+    for nid, node in nodes:
+        key = _MODEL_LOADER_INPUT.get(node.get("class_type"))
+        if key and node["inputs"].get(key):
+            model_nid = nid
+            ex["model"] = str(node["inputs"][key])
+            break
+
+    def node_steps(node):
+        if isinstance(node["inputs"].get("steps"), (int, float)):
+            return node["inputs"]["steps"]
+        sig = by_id.get(_link(node["inputs"].get("sigmas")) or "", {})
+        if isinstance(sig.get("inputs", {}).get("steps"), (int, float)):
+            return sig["inputs"]["steps"]
+        return None
+
+    samplers = [(nid, node) for nid, node in nodes
+                if node.get("class_type") in _SAMPLER_CLASSES]
+    chosen = None
+    if samplers:
+        chosen = max(enumerate(samplers),
+                     key=lambda pair: (node_steps(pair[1][1]) or 0, -pair[0]))[1]
+        for nid, _node in samplers:
+            if nid != chosen[0]:
+                ex["notes"].append({
+                    "what": f"second sampler pass (node {nid})",
+                    "why": "a style holds one sampler schedule; kept the main pass"})
+
+    if chosen:
+        nid, node = chosen
+        inputs = node["inputs"]
+        steps = node_steps(node)
+        if steps is not None:
+            ex["steps"] = int(steps)
+        if isinstance(inputs.get("cfg"), (int, float)):
+            ex["cfg"] = float(inputs["cfg"])
+        else:
+            guider = by_id.get(_link(inputs.get("guider")) or "", {})
+            if isinstance(guider.get("inputs", {}).get("cfg"), (int, float)):
+                ex["cfg"] = float(guider["inputs"]["cfg"])
+        if inputs.get("sampler_name"):
+            ex["sampler_name"] = str(inputs["sampler_name"])
+        else:
+            sel = by_id.get(_link(inputs.get("sampler")) or "", {})
+            if sel.get("inputs", {}).get("sampler_name"):
+                ex["sampler_name"] = str(sel["inputs"]["sampler_name"])
+        if inputs.get("scheduler"):
+            ex["scheduler"] = str(inputs["scheduler"])
+        else:
+            sig = by_id.get(_link(inputs.get("sigmas")) or "", {})
+            if sig.get("inputs", {}).get("scheduler"):
+                ex["scheduler"] = str(sig["inputs"]["scheduler"])
+            elif sig.get("class_type") in _SIGMA_SCHEDULER_NAMES:
+                ex["scheduler"] = _SIGMA_SCHEDULER_NAMES[sig["class_type"]]
+        if isinstance(inputs.get("eta"), (int, float)):
+            ex["eta"] = float(inputs["eta"])
+        for key in ("seed", "noise_seed"):
+            if isinstance(inputs.get(key), (int, float)):
+                ex["seed"] = int(inputs[key])
+                break
+        else:
+            noise = by_id.get(_link(inputs.get("noise")) or "", {})
+            if isinstance(noise.get("inputs", {}).get("noise_seed"), (int, float)):
+                ex["seed"] = int(noise["inputs"]["noise_seed"])
+
+    # The canvas: prefer the latent the chosen sampler actually sampled, else
+    # the first latent-shaped node with explicit dimensions.
+    def dims(node):
+        w = node.get("inputs", {}).get("width")
+        h = node.get("inputs", {}).get("height")
+        if isinstance(w, (int, float)) and isinstance(h, (int, float)):
+            return int(w), int(h)
+        return None
+    latent = by_id.get(_link(chosen[1]["inputs"].get("latent_image")) or
+                       _link(chosen[1]["inputs"].get("latent")) or "", {}) \
+        if chosen else {}
+    size = dims(latent) if latent else None
+    if not size:
+        for _nid, node in nodes:
+            if node.get("class_type") in _LATENT_CLASSES:
+                size = dims(node)
+                if size:
+                    break
+    if size:
+        ex["width"], ex["height"] = size
+
+    # LoRAs in chain order: follow the model links out of the UNET loader,
+    # then any side-branch loaders in document order.
+    loras = {nid: node for nid, node in nodes
+             if node.get("class_type") in _LORA_CLASSES}
+    ordered, placed = [], set()
+    tail = model_nid
+    while tail:
+        nxt = next((nid for nid, node in loras.items() if nid not in placed
+                    and _link(node["inputs"].get("model")) == tail), None)
+        if not nxt:
+            break
+        ordered.append(nxt)
+        placed.add(nxt)
+        tail = nxt
+    ordered += [nid for nid in loras if nid not in placed]
+    for nid in ordered:
+        inputs = loras[nid]["inputs"]
+        if not inputs.get("lora_name"):
+            continue
+        try:
+            strength = float(inputs.get("strength_model", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        ex["loras"].append({"name": str(inputs["lora_name"]),
+                            "strength": strength})
+
+    # The positive text: walk the links out of the sampler's positive (and a
+    # custom sampler's guider) through text/conditioning inputs only. The
+    # generator classes are opaque - their upstream literals are
+    # instructions, not the scene.
+    candidates = []
+    queue, seen, depth = [], set(), 0
+    if chosen:
+        for key in ("positive", "guider"):
+            src = _link(chosen[1]["inputs"].get(key))
+            if src:
+                queue.append(src)
+    follow = ("conditioning", "positive", "text", "prompt", "string_a",
+              "string_b", "on_true", "on_false", "value", "guider")
+    while queue and depth < 12:
+        depth += 1
+        nid = queue.pop(0)
+        if nid in seen:
+            continue
+        seen.add(nid)
+        node = by_id.get(nid)
+        if not node or node.get("class_type") in _TEXT_GENERATOR_CLASSES:
+            continue
+        inputs = node["inputs"]
+        for key in ("text", "prompt", "value"):
+            if isinstance(inputs.get(key), str) and inputs[key].strip():
+                candidates.append((nid, inputs[key].strip()))
+        for key in follow:
+            src = _link(inputs.get(key))
+            if src and src not in seen:
+                queue.append(src)
+    if not candidates:
+        # No resolvable wiring: every CLIPTextEncode's literal, with the
+        # editor's own title as the tiebreak before length.
+        titled = [(nid, node) for nid, node in nodes
+                  if node.get("class_type") == "CLIPTextEncode"
+                  and isinstance(node["inputs"].get("text"), str)
+                  and node["inputs"]["text"].strip()]
+        picked = [pair for pair in titled
+                  if "positive" in str((pair[1].get("_meta") or {})
+                                       .get("title", "")).lower()]
+        candidates = [(nid, node["inputs"]["text"].strip())
+                      for nid, node in (picked or titled)]
+    if candidates:
+        candidates.sort(key=lambda pair: len(pair[1]), reverse=True)
+        ex["scene"] = candidates[0][1]
+        if len({text for _nid, text in candidates}) > 1:
+            ex["notes"].append({
+                "what": "positive prompt wiring",
+                "why": "more than one candidate text; kept the longest"})
+
+    for nid, node in nodes:
+        ct = node.get("class_type")
+        if ct not in _KNOWN_CLASSES:
+            ex["notes"].append({"what": f"node {nid} {ct}",
+                                "why": "no Pixal equivalent"})
+    return ex
+
+
+def _extract_workflow_graph(wf):
+    """Editor graph -> the same normalized set. widgets_values are positional,
+    so only the canonical layouts map; anything else is named, not guessed."""
+    ex = {"model": None, "loras": [], "scene": "", "notes": []}
+    nodes = {str(n.get("id")): n for n in wf.get("nodes", [])
+             if isinstance(n, dict) and "id" in n}
+    ex["signals"] = {node.get("type") for node in nodes.values()}
+    links = {l[0]: l for l in wf.get("links", [])
+             if isinstance(l, list) and len(l) >= 5}
+
+    def widgets(node):
+        values = node.get("widgets_values")
+        return values if isinstance(values, list) else []
+
+    def linked(node, input_name):
+        for inp in node.get("inputs") or []:
+            if isinstance(inp, dict) and inp.get("name") == input_name \
+                    and inp.get("link") in links:
+                return str(links[inp["link"]][1])
+        return None
+
+    for nid, node in nodes.items():
+        if node.get("type") in _MODEL_LOADER_INPUT and widgets(node):
+            ex["model"] = str(widgets(node)[0])
+            break
+
+    def node_steps(node):
+        w = widgets(node)
+        layout = {"KSampler": 2, "KSamplerAdvanced": 3}.get(node.get("type"))
+        if layout is not None and len(w) > layout \
+                and isinstance(w[layout], (int, float)):
+            return w[layout]
+        sig = nodes.get(linked(node, "sigmas") or "", {})
+        sw = widgets(sig)
+        if sig.get("type") == "BasicScheduler" and len(sw) > 1 \
+                and isinstance(sw[1], (int, float)):
+            return sw[1]
+        if sig.get("type") in _SIGMA_SCHEDULER_NAMES and sw \
+                and isinstance(sw[0], (int, float)):
+            return sw[0]
+        return None
+
+    samplers = [(nid, node) for nid, node in nodes.items()
+                if node.get("type") in _SAMPLER_CLASSES]
+    chosen = None
+    if samplers:
+        chosen = max(enumerate(samplers),
+                     key=lambda pair: (node_steps(pair[1][1]) or 0, -pair[0]))[1]
+        for nid, _node in samplers:
+            if nid != chosen[0]:
+                ex["notes"].append({
+                    "what": f"second sampler pass (node {nid})",
+                    "why": "a style holds one sampler schedule; kept the main pass"})
+
+    if chosen:
+        nid, node = chosen
+        w, ctype = widgets(node), node.get("type")
+        steps = node_steps(node)
+        if steps is not None:
+            ex["steps"] = int(steps)
+        if ctype == "KSampler" and len(w) >= 6:
+            ex["cfg"] = float(w[3])
+            ex["sampler_name"], ex["scheduler"] = str(w[4]), str(w[5])
+            if isinstance(w[0], (int, float)):
+                ex["seed"] = int(w[0])
+        elif ctype == "KSamplerAdvanced" and len(w) >= 7:
+            ex["cfg"] = float(w[4])
+            ex["sampler_name"], ex["scheduler"] = str(w[5]), str(w[6])
+            if isinstance(w[1], (int, float)):
+                ex["seed"] = int(w[1])
+        else:
+            sel = nodes.get(linked(node, "sampler") or "", {})
+            if widgets(sel):
+                ex["sampler_name"] = str(widgets(sel)[0])
+            sig = nodes.get(linked(node, "sigmas") or "", {})
+            sw = widgets(sig)
+            if sig.get("type") == "BasicScheduler" and sw:
+                ex["scheduler"] = str(sw[0])
+            elif sig.get("type") in _SIGMA_SCHEDULER_NAMES:
+                ex["scheduler"] = _SIGMA_SCHEDULER_NAMES[sig["type"]]
+            guider = nodes.get(linked(node, "guider") or "", {})
+            if widgets(guider) and isinstance(widgets(guider)[0], (int, float)):
+                ex["cfg"] = float(widgets(guider)[0])
+            noise = nodes.get(linked(node, "noise") or "", {})
+            if widgets(noise) and isinstance(widgets(noise)[0], (int, float)):
+                ex["seed"] = int(widgets(noise)[0])
+            if ctype not in ("SamplerCustom", "SamplerCustomAdvanced"):
+                ex["notes"].append({
+                    "what": f"node {nid} {ctype}",
+                    "why": "widget layout not recognised; sampler settings unmapped"})
+
+    latent = nodes.get((linked(chosen[1], "latent_image") or
+                        linked(chosen[1], "latent") or "") if chosen else "", {})
+    latents = ([latent] if latent else []) + [
+        node for _nid, node in nodes.items()
+        if node.get("type") in _LATENT_CLASSES and node is not latent]
+    for node in latents:
+        w = widgets(node)
+        if len(w) >= 2 and all(isinstance(v, (int, float)) for v in w[:2]):
+            ex["width"], ex["height"] = int(w[0]), int(w[1])
+            break
+
+    for nid, node in nodes.items():
+        if node.get("type") not in _LORA_CLASSES:
+            continue
+        w = widgets(node)
+        if len(w) >= 2 and isinstance(w[1], (int, float)):
+            ex["loras"].append({"name": str(w[0]), "strength": float(w[1])})
+
+    pos = nodes.get(linked(chosen[1], "positive") or "" if chosen else "", {})
+    texts = []
+    if pos.get("type") == "CLIPTextEncode" and widgets(pos):
+        texts = [str(widgets(pos)[0])]
+    if not texts or not texts[0].strip():
+        titled = [(node, widgets(node)) for _nid, node in nodes.items()
+                  if node.get("type") == "CLIPTextEncode" and widgets(node)
+                  and str(widgets(node)[0]).strip()]
+        picked = [pair for pair in titled
+                  if "positive" in str(pair[0].get("title", "")).lower()]
+        texts = [str(w[0]).strip() for _node, w in (picked or titled)]
+    texts = [t for t in texts if t]
+    if texts:
+        texts.sort(key=len, reverse=True)
+        ex["scene"] = texts[0]
+        if len(set(texts)) > 1:
+            ex["notes"].append({
+                "what": "positive prompt wiring",
+                "why": "more than one candidate text; kept the longest"})
+
+    for nid, node in nodes.items():
+        if node.get("type") not in _KNOWN_CLASSES:
+            ex["notes"].append({"what": f"node {nid} {node.get('type')}",
+                                "why": "no Pixal equivalent"})
+    return ex
+
+
+def _extract_a1111(text):
+    """A1111 "parameters" text -> the normalized set, best effort."""
+    ex = {"model": None, "loras": [], "scene": "", "notes": []}
+    lines = str(text).splitlines()
+    params_at = next((i for i in range(len(lines) - 1, -1, -1)
+                      if lines[i].lstrip().startswith("Steps:")), None)
+    if params_at is None:
+        return ex
+    params = dict((m.group(1).strip().lower(), m.group(2).strip())
+                  for m in _A1111_PARAM_RE.finditer(" ".join(lines[params_at:])))
+    head = lines[:params_at]
+    negative_at = next((i for i, line in enumerate(head)
+                        if line.startswith("Negative prompt:")), None)
+    positive = head if negative_at is None else head[:negative_at]
+    scene = "\n".join(positive).strip()
+
+    def number(key, cast):
+        try:
+            return cast(float(params[key]))
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    steps = number("steps", int)
+    if steps is not None:
+        ex["steps"] = steps
+    cfg = number("cfg scale", float)
+    if cfg is not None:
+        ex["cfg"] = cfg
+    seed = number("seed", int)
+    if seed is not None:
+        ex["seed"] = seed
+    if params.get("size"):
+        try:
+            w, h = params["size"].lower().split("x", 1)
+            ex["width"], ex["height"] = int(w), int(h)
+        except (ValueError, AttributeError):
+            pass
+    if params.get("model"):
+        ex["model"] = params["model"]
+    if params.get("sampler"):
+        raw = params["sampler"].lower()
+        if raw in _A1111_SAMPLERS:
+            ex["sampler_name"] = _A1111_SAMPLERS[raw]
+        else:
+            ex["notes"].append({"what": f"sampler {params['sampler']}",
+                                "why": "no ComfyUI sampler with that name"})
+    if params.get("schedule type"):
+        ex["scheduler"] = _A1111_SCHEDULERS.get(
+            params["schedule type"].lower(), "normal")
+    for lora_name, strength in _A1111_LORA_RE.findall(scene):
+        try:
+            ex["loras"].append({"name": lora_name, "strength": float(strength)})
+        except ValueError:
+            pass
+    ex["scene"] = _A1111_LORA_RE.sub("", scene).strip()
+    return ex
+
+
+def _style_base_for(entry, signals=()):
+    """The style base one resolved model drives: pick_recipe_model in reverse.
+
+    Acceptance is pick_recipe_model's own verdict per candidate, so this
+    cannot drift from the builder's rules. Precedence: the graph's own node
+    signatures (an identity patch only exists on an identity graph), then
+    the recipe whose default this model IS, then the recipe named after the
+    family, then the first compatible style base in RECIPE_SPECS order."""
+    rel = entry["rel"]
+    candidates = []
+    for rid in RECIPE_SPECS:
+        if rid not in STYLE_BASE_IDS:
+            continue
+        try:
+            pick_recipe_model(rel, rid)
+        except (ValueError, KeyError):
+            continue
+        candidates.append(rid)
+    if not candidates:
+        return None
+    present = set(signals or ())
+    for signature, rid in _GRAPH_BASE_HINTS:
+        if present & signature and rid in candidates:
+            return rid
+    low = rel.replace("/", "\\").lower()
+    for rid in candidates:
+        default = resolve_model_entry(RECIPE_SPECS[rid].get("default_model") or "")
+        if default and default["rel"].replace("/", "\\").lower() == low:
+            return rid
+    if entry.get("family") in candidates:
+        return entry["family"]
+    return candidates[0]
+
+
+def _snap_aspect(width, height):
+    """Nearest ASPECTS entry by ratio, or None when nothing is within 3%."""
+    ratio = width / height
+    best, best_err = None, 0.03
+    for label in ASPECTS:
+        aw, ah = (float(x) for x in label.split(" ")[0].split(":"))
+        err = abs(ratio - aw / ah) / (aw / ah)
+        if err <= best_err:
+            best, best_err = label, err
+    return best
+
+
+def _style_from_extracted(ex, filename, source):
+    """Normalized fields + the catalogs -> the draft record and its ledger."""
+    mapped, unmapped = [], list(ex["notes"])
+    basename = str(filename or "render.png").replace("\\", "/").rsplit("/", 1)[-1]
+    stem = basename.rsplit(".", 1)[0] if "." in basename else basename
+    name = " ".join(stem.replace("_", " ").replace("-", " ").split()).title()
+    if not name:
+        name = "Imported Style"
+    style = {"schema_version": RECIPE_SCHEMA_VERSION,
+             "id": style_slug(name) or "imported_style", "name": name}
+
+    base_id = None
+    if ex.get("model"):
+        entry = resolve_model_entry(ex["model"])
+        if entry:
+            style["model"] = entry["rel"]
+            base_id = _style_base_for(entry, ex.get("signals") or ())
+            if base_id:
+                style["base"] = base_id
+            else:
+                why = ("checkpoints cannot drive a Pixal style "
+                       "(diffusion models only)" if entry["kind"] == "checkpoints"
+                       else "no Pixal recipe family recognizes it"
+                       if entry["family"] == "unknown" else
+                       f"no style base accepts this {entry['family']} build")
+                unmapped.append({"what": f"model {base(entry['rel'])}", "why": why})
+            mapped.append("model")
+        else:
+            style["model"] = str(ex["model"]).strip().replace("/", "\\")
+            unmapped.append({"what": f"model {base(ex['model'])}",
+                             "why": "not installed"})
+
+    tuning = {}
+    for key in ("steps", "cfg", "sampler_name", "scheduler", "eta"):
+        if ex.get(key) is not None:
+            tuning[key] = ex[key]
+            mapped.append(key)
+    if tuning:
+        style["tuning"] = tuning
+
+    width, height = ex.get("width"), ex.get("height")
+    if width and height:
+        mp = round(width * height / 1e6, 1)
+        if not 0.1 <= mp <= 8.0:
+            capped = min(8.0, max(0.1, mp))
+            unmapped.append({"what": f"canvas {width}x{height}",
+                             "why": f"{mp} MP is outside the 0.1-8 MP style "
+                                    f"range; capped at {capped}"})
+            mp = capped
+        style["mp"] = mp
+        aspect = _snap_aspect(width, height)
+        if aspect:
+            style["aspect"] = aspect
+        else:
+            unmapped.append({"what": f"canvas ratio {width}x{height}",
+                             "why": "no Pixal canvas within 3%"})
+        mapped.append("size")
+
+    if ex.get("loras"):
+        catalog = {e["name"].replace("/", "\\").lower(): e["name"]
+                   for e in lora_catalog()}
+        stems = {}
+        for low, rel in catalog.items():
+            stems.setdefault(base(rel).lower(), []).append(rel)
+        entries = []
+        for lora in ex["loras"]:
+            low = str(lora["name"]).replace("/", "\\").lower()
+            match = catalog.get(low)
+            if not match:
+                hits = stems.get(base(low).lower(), [])
+                match = hits[0] if len(hits) == 1 else None
+            if match:
+                entries.append({"name": match,
+                                "strength": float(lora["strength"]),
+                                "enabled": True})
+            else:
+                shown = str(lora["name"]).replace("/", "\\").rsplit("\\", 1)[-1]
+                unmapped.append({"what": shown, "why": "not installed"})
+        if entries:
+            mapped.append("loras")
+            if base_id:
+                style["lora_plan"] = {
+                    "version": 1, "mode": "replace_editable", "recipe": base_id,
+                    "recipe_revision": RECIPE_SPECS[base_id]["lora_stack_revision"],
+                    "entries": entries}
+            else:
+                for entry in entries:
+                    unmapped.append({
+                        "what": entry["name"].rsplit("\\", 1)[-1],
+                        "why": "matched, but no base recipe to plan it under"})
+
+    scene = " ".join(str(ex.get("scene") or "").split())
+    label = "A1111 parameters" if source == "a1111" else "ComfyUI metadata"
+    provenance = {"note": f"Read from {basename}'s {label} on "
+                          f"{time.strftime('%Y-%m-%d')}; unmapped: {len(unmapped)}"}
+    if ex.get("seed") is not None:
+        provenance["seed"] = ex["seed"]
+    style["provenance"] = provenance
+    return {"ok": True, "style": style, "mapped": mapped, "unmapped": unmapped,
+            "scene": scene, "source": source}
+
+
+def style_from_render_metadata(data, filename):
+    """One image file's embedded render metadata -> a saved-style draft.
+
+    Never raises and never saves: bad bytes, truncated files and metadata-
+    free images all come back as {"ok": False, ...}; a readable graph comes
+    back as a partial recipes/*.json record plus what mapped and what did
+    not. The user reviews the draft in the style editor; styles_post stays
+    the only way a style is written.
+    """
+    info = _render_text_chunks(data)
+    if info is None:
+        return {"ok": False, "error": "not an image file Pixal can read"}
+    graph = _as_prompt_graph(info.get("prompt") or "")
+    if graph:
+        return _style_from_extracted(_extract_prompt_graph(graph),
+                                     filename, "comfy_prompt")
+    workflow = _as_workflow_graph(info.get("workflow") or "")
+    if workflow:
+        return _style_from_extracted(_extract_workflow_graph(workflow),
+                                     filename, "comfy_workflow")
+    parameters = info.get("parameters") or ""
+    if not parameters and "Steps:" in (info.get("prompt") or ""):
+        parameters = info["prompt"]
+    if "Steps:" in parameters:
+        return _style_from_extracted(_extract_a1111(parameters),
+                                     filename, "a1111")
+    return {"ok": False, "error": "no render metadata in this image"}
 
 
 def load_saved_styles():
@@ -3690,7 +4666,8 @@ def validate_job_model_info(template, info, graph=None):
 
 def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                   character=None, lora_plan=None, negative=None, prompt_tail=None):
+                   character=None, lora_plan=None, negative=None, prompt_tail=None,
+                   prompt_prefix=None):
     g = json.loads(json.dumps(TEMPLATES["realism"]))
     model_entry = pick_recipe_model(model, "realism")
     set_unet_loader(g, "30:10", model_entry)
@@ -3704,6 +4681,8 @@ def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
                                                  # strongest (closing) position
     if prompt_tail:   # the style's closing clause, after even the wardrobe lock
         cap = (cap + " " + prompt_tail).strip()
+    if prompt_prefix:   # the style's opening clause, ahead of even the subject
+        cap = (prompt_prefix + " " + cap).strip()
     g["30:19"]["inputs"]["value"] = cap
     g["30:51"]["inputs"]["seed"] = seed
     g["30:24"]["inputs"]["value"] = False                 # --no-expand: VLM expander fights the caption
@@ -3738,6 +4717,8 @@ def build_realism(scene, seed, width=None, height=None, loras=(), overrides=(),
             "character": ch["name"] if ch else None}
     if negative:
         info["negative"] = negative
+    if prompt_prefix:
+        info["prompt_prefix"] = prompt_prefix
     if prompt_tail:
         info["prompt_tail"] = prompt_tail
     return g, cap, info
@@ -4473,7 +5454,8 @@ def _character_caption(scene, character=None, standing=True, nsfw=False,
 
 def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(),
                      standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                     character=None, lora_plan=None, negative=None, prompt_tail=None):
+                     character=None, lora_plan=None, negative=None, prompt_tail=None,
+                     prompt_prefix=None):
     """The supplied Realism II workflow, hardened into an API graph.
 
     Preserves Selfora + filter-bypass, the 8-step detail pass, 2-step latent
@@ -4487,6 +5469,8 @@ def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(
     cap, ch = _character_caption(scene, character, standing, nsfw)
     if prompt_tail:   # the style's closing clause, after even the wardrobe lock
         cap = (cap + " " + prompt_tail).strip()
+    if prompt_prefix:   # the style's opening clause, ahead of even the subject
+        cap = (prompt_prefix + " " + cap).strip()
     g["6"]["inputs"]["text"] = cap
     for nid in ("265", "274", "333"):
         g[nid]["inputs"]["seed"] = int(seed)
@@ -4526,6 +5510,8 @@ def build_realism_ii(scene, seed, width=None, height=None, loras=(), overrides=(
             "character": ch["name"] if ch else None}
     if negative:
         info["negative"] = negative
+    if prompt_prefix:
+        info["prompt_prefix"] = prompt_prefix
     if prompt_tail:
         info["prompt_tail"] = prompt_tail
     return g, cap, info
@@ -4767,8 +5753,12 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
     causal VAE's standalone latent (a pure image) while frames 1-4 share one
     motion-carrying chunk and decode darker, softer, banded - so the graph
     keeps frame 0 only. The build is CFG-distilled, so a BasicGuider, never a
-    CFGGuider; the quality path (res_multistep · simple · 20 steps) is the
-    still recipe and no turbo distillation ever runs here.
+    CFGGuider; the quality path (dpmpp_sde_gpu · beta · 20 steps - 9.78's
+    locked-seed A/B winner) is the still recipe and no turbo distillation
+    ever runs here. Style LoRAs
+    (9.74) chain off the loader and feed BOTH consumers; the speed distills
+    never reach the graph - resolve_recipe_lora_stack refuses them by
+    variant, the same verdict the add-LoRA popup shows.
     """
     spec = RECIPE_SPECS["h3_still"]
     entry = pick_recipe_model(model, "h3_still")
@@ -4804,9 +5794,9 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
             "clip": ["2", 0], "vae": ["3", 0], "prompt": prompt,
             "width": width, "height": height, "length": 5}},
         "7": {"class_type": "KSamplerSelect",
-              "inputs": {"sampler_name": H3_SAMPLER}},
+              "inputs": {"sampler_name": H3_STILL_SAMPLER}},
         "8": {"class_type": "BasicScheduler", "inputs": {
-            "model": ["1", 0], "scheduler": H3_SCHEDULER,
+            "model": ["1", 0], "scheduler": H3_STILL_SCHEDULER,
             "steps": H3_STEPS, "denoise": 1.0}},
         "9": {"class_type": "BasicGuider", "inputs": {
             "model": ["1", 0], "conditioning": ["6", 0]}},
@@ -4826,14 +5816,21 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
             "images": ["13", 0],
             "filename_prefix": f"pixal_dm/{slug(scene)}"}},
     }
+    entries, dropped = resolve_recipe_lora_stack(
+        "h3_still", loras, lora_plan,
+        family="minimax_h3", variant=entry["variant"])
+    model_tail = apply_lora_nodes(g, "1", entries, "h3:lora")
+    # Both consumers must see the identical literal chain (build_h3_ref2v's
+    # rule): the scheduler's sigmas and the guider both price the styled
+    # model, never the raw loader output.
+    g["8"]["inputs"]["model"] = [model_tail, 0]
+    g["9"]["inputs"]["model"] = [model_tail, 0]
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(entry, "h3_still"),
             "text_encoder": base(assets["clip"]),
             "vae": base(assets["video_vae"]),
-            # No H3 still LoRA stack exists yet: loras/lora_plan are accepted
-            # and ignored, and the card says none ran.
-            **lora_job_info((), ()),
+            **lora_job_info(entries, dropped),
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
@@ -4861,9 +5858,25 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
     # Nodes 1-14 ARE build_h3_still's, byte for byte; the refine block only
     # appends. Calling the public builder (rather than a factored private
     # graph helper) makes the "untouched" guarantee structural.
+    # The 2x row's LoRA lane IS h3_still's - same stage, same revision, and
+    # the spec-equality test pins them - but a composer plan arrives named
+    # for the ACTIVE recipe ("h3_still_2x" when Refined is on), which
+    # validate_lora_plan would refuse as foreign to the builder that
+    # executes it. Re-key the plan to the recipe that runs the first pass.
+    if lora_plan is not None:
+        lora_plan = {**lora_plan, "recipe": "h3_still"}
     g, cap, info = build_h3_still(scene, seed, width, height, loras, overrides,
                                   standing, nsfw, model, aspect, mp, character,
                                   lora_plan)
+    # The refine pass re-samples with the SAME model the first pass ran:
+    # build_h3_still may have chained style LoRAs off "1" (9.74), so both
+    # refine consumers follow that tail exactly like nodes 8/9 do - a styled
+    # first pass refined by the raw model would repaint the style away. The
+    # tail id is read back from the graph itself, the ground truth of what
+    # the first pass emitted ("h3:lora" + index, apply_lora_nodes' shape).
+    lora_nodes = [nid for nid in g if nid.startswith("h3:lora")]
+    model_tail = (max(lora_nodes, key=lambda nid: int(nid[len("h3:lora"):]))
+                  if lora_nodes else "1")
     width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
     w2, h2 = width * 2, height * 2
     tile_w, ol_w = h3_tile_axis(w2)
@@ -4882,12 +5895,12 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
         "min_tile_size": 256,
         "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
     g["up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
-        "model": ["1", 0], "scheduler": H3_SCHEDULER,
+        "model": [model_tail, 0], "scheduler": H3_STILL_SCHEDULER,
         "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
     g["up:noise"] = {"class_type": "RandomNoise",
                      "inputs": {"noise_seed": int(seed) + 1}}
     g["up:sample"] = {"class_type": H3_UPSCALE_NODE, "inputs": {
-        "model": ["1", 0], "conditioning": ["up:cond", 0],
+        "model": [model_tail, 0], "conditioning": ["up:cond", 0],
         "latent": ["11", 0], "noise": ["up:noise", 0],
         "sampler": ["7", 0], "sigmas": ["up:sigmas", 0], "cfg": 1.0,
         "latent_upscale_param": ["up:param", 0],
@@ -4907,6 +5920,139 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
             # disagreement, on purpose.
             "refine": {"scale": 2, "steps": H3_UPSCALE_STEPS,
                        "denoise": H3_UPSCALE_DENOISE}}
+    return g, cap, info
+
+
+def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
+                       overrides=(), standing=True, nsfw=False, model=None,
+                       aspect=None, mp=None, character=None, lora_plan=None):
+    """MiniMax H3 REF2VA as a still camera with the anchor's own photo as the
+    identity mechanism (brief 9.67): the ReferenceToVideo node takes
+    reference images natively, so the character's identity_ref IS the
+    identity - no identity LoRA, no identity_edit stage, no bypass chain.
+
+    The graph is build_h3_ref2v's spine ported the way build_h3_still ports
+    the i2v spine: length 5 (frame 0 gets the causal VAE's standalone
+    latent), the audio DECODE branch and the VHS tail removed, and
+    h3_still's frame-0 keep + SaveImage tail. The audio_vae LOADER stays
+    wired into node 6 - the node takes the input even when nothing decodes
+    audio. The prompt is a deterministic still-framed brief through
+    assemble_h3_ref2v_prompt: <Subject 1> is defined from <Picture 1> with
+    the fully_preserved retention line, the caption drops the face/age the
+    photo already carries (identity_edit's own rule), and the frame sentence
+    is h3_still's. No brain call, no director pass, no turbo - the quality
+    path is the still recipe. Style LoRAs (9.74) chain off the loader and
+    feed BOTH consumers; the speed distills never reach the graph -
+    resolve_recipe_lora_stack refuses them by variant, the same verdict the
+    add-LoRA popup shows.
+    """
+    ch = resolve_character(character)
+    if not ch or not character_identity_ready(ch):
+        raise ValueError("MiniMax H3 Ref needs an active character with a "
+                         "reference photo")
+    spec = RECIPE_SPECS["h3_ref_still"]
+    entry = pick_recipe_model(model, "h3_ref_still")
+    assets, missing = _h3_asset_paths(entry["rel"])
+    if missing:
+        raise ValueError("MiniMax H3 Ref still needs: " + ", ".join(missing))
+
+    if width and height:
+        width, height = _h3_still_clamp(int(width), int(height))
+    else:
+        asked = min(float(mp), spec["mp_cap"]) if mp else spec["mp"]
+        width, height = dims_for(aspect or spec["aspect"], asked,
+                                 multiple=H3_CANVAS_MULTIPLE)
+        width, height = _h3_still_clamp(width, height)
+
+    # The one wired reference is the anchor's identity photo, staged the
+    # Animate lane's way: the RAW input file, never prepare_h3_frame - a
+    # reference carries identity and the node scales it aspect-preserved
+    # (ref_image_size "match"), so cropping to canvas would throw away
+    # exactly what the ref exists to carry. A list from day one, though only
+    # the character is wired in this brief.
+    refs = [input_ref_name(ch["identity_ref"])]
+    # _character_caption's flow (subject clause + scene + wardrobe lock)
+    # with the NON-FACIAL subject: the photo carries the face and age, so
+    # the caption never restates them.
+    cap = " ".join(scene.split())
+    if standing:
+        cap = " ".join(character_subject_nonfacial(ch).split()) + " " + cap
+        if not nsfw:
+            cap += " " + wardrobe_lock_for(ch)
+    cap = cap.strip()
+    sentence = cap if cap.endswith((".", "!", "?")) else cap + "."
+    brief = ("detailed_description:\n"
+             "[Shot 1] Live-action, a frozen instant held completely still - "
+             + sentence +
+             " The subject holds the pose; nothing in the frame moves.\n\n"
+             "overall_soundscape:\nRoom tone, steady, synchronized.")
+    prompt, _tag_warnings = assemble_h3_ref2v_prompt(
+        brief, [{"kind": "identity"} for _ in refs])
+
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": assets["model"], "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": assets["clip"], "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {
+            "vae_name": assets["video_vae"]}},
+        # The node takes audio_vae even though nothing decodes audio - the
+        # loader stays wired; the decode branch is what goes.
+        "4": {"class_type": "VAELoader", "inputs": {
+            "vae_name": assets["audio_vae"]}},
+        "6": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+            "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
+            "prompt": prompt, "width": width, "height": height,
+            "length": 5, "ref_image_size": "match"}},
+        "7": {"class_type": "KSamplerSelect",
+              "inputs": {"sampler_name": H3_STILL_SAMPLER}},
+        "8": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["1", 0], "scheduler": H3_STILL_SCHEDULER,
+            "steps": H3_STEPS, "denoise": 1.0}},
+        # H3 is CFG-distilled: BasicGuider, never a CFGGuider.
+        "9": {"class_type": "BasicGuider", "inputs": {
+            "model": ["1", 0], "conditioning": ["6", 0]}},
+        "10": {"class_type": "RandomNoise",
+               "inputs": {"noise_seed": int(seed)}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["10", 0], "guider": ["9", 0], "sampler": ["7", 0],
+            "sigmas": ["8", 0], "latent_image": ["6", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {
+            "samples": ["11", 0], "vae": ["3", 0]}},
+        # Only frame 0 is a real image (9.58): the causal VAE gives it its
+        # own standalone latent, while frames 1-4 share ONE compressed chunk
+        # that also carries the planned motion.
+        "13": {"class_type": "ImageFromBatch", "inputs": {
+            "image": ["12", 0], "batch_index": 0, "length": 1}},
+        "14": {"class_type": "SaveImage", "inputs": {
+            "images": ["13", 0],
+            "filename_prefix": f"pixal_dm/{slug(scene)}"}},
+    }
+    for i, staged in enumerate(refs):
+        g[_H3_REF2V_REF_NODES[i]] = {
+            "class_type": "LoadImage", "inputs": {"image": staged}}
+        g["6"]["inputs"][f"ref_images.ref_image_{i}"] = \
+            [_H3_REF2V_REF_NODES[i], 0]
+    entries, dropped = resolve_recipe_lora_stack(
+        "h3_ref_still", loras, lora_plan,
+        family="minimax_h3", variant=entry["variant"])
+    model_tail = apply_lora_nodes(g, "1", entries, "h3:lora")
+    # Both consumers must see the identical literal chain (build_h3_ref2v's
+    # rule): the scheduler's sigmas and the guider both price the styled
+    # model, never the raw loader output.
+    g["8"]["inputs"]["model"] = [model_tail, 0]
+    g["9"]["inputs"]["model"] = [model_tail, 0]
+    for o in overrides:
+        g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+    info = {**model_job_info(entry, "minimax_h3_ref2v_still"),
+            "model": "MiniMax H3 REF2VA still",
+            "text_encoder": base(assets["clip"]),
+            "vae": base(assets["video_vae"]),
+            **lora_job_info(entries, dropped),
+            "references": len(refs),
+            "size": f"{width}x{height}",
+            "canvas_mp": (width * height) / 1e6,
+            "character": ch["name"] if ch else None}
     return g, cap, info
 
 
@@ -5001,17 +6147,15 @@ H3_MODEL_ID = "fl2va"
 # render - same family, different conditioning node and a different trained
 # prompt format (brief 9.12).
 H3_REF2V_MODEL_ID = "ref2va"
-H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 # MiniMax's own caps, Pixal-enforced because the node will not: 9 images is the
 # node schema's Autogrow max; 12 files across ALL types is the model card's
 # Ref2VA row (the node alone would permit 15). v1 wires images only; the 12
 # exists from day one so the deferred video/audio lanes inherit one constant.
 H3_REF2V_MAX_IMAGES = 9
 H3_REF2V_MAX_FILES = 12
-# H3_MODEL/H3_CLIP/H3_VIDEO_VAE moved up beside RECIPE_SPECS - the h3_still
-# spec (9.58) names them. The audio VAE is the video lanes' own.
-H3_AUDIO_VAE = "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
-H3_HMNSFW_LORA = "Minimax H3\\HMNSFW_AIO_V2.safetensors"
+# H3_MODEL/H3_REF2V_MODEL/H3_CLIP and both VAEs live up beside RECIPE_SPECS -
+# the h3_still (9.58) and h3_ref_still (9.67) specs name them.
+# H3_HMNSFW_LORA lives up beside them too - the still specs name it (9.74).
 # Video LoRAs are deliberately not part of the still-image LoRA catalog contract.
 # Each entry names the exact H3 execution variant it was published for; folder
 # placement alone is never treated as architecture compatibility.
@@ -5030,8 +6174,18 @@ H3_VIDEO_LORAS = (
 # The pack author's published numbers: 20 steps 39.9s -> 8 steps 23.4s.
 H3_TURBO_LORA = "Minimax H3\\minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors"
 H3_STEPS = 20
+# The VIDEO default (i2v / multishot / ref2v, via h3_speed_settings'
+# quality path): the still A/B never re-tuned it - the stills moved to
+# their own pair below (9.78).
 H3_SAMPLER = "res_multistep"
 H3_SCHEDULER = "simple"
+# The STILL default (h3_still, h3_still_2x, h3_ref_still), 9.78: Jesse's
+# verdict on the 2026-08-28 locked-seed A/B - 4 arms x 2 scenes on
+# h3_still, seed 424242, 20 steps, 1536x2048, every arm verified from its
+# PNG's embedded graph, renders in Desktop\Pixal AB Renders\h3-sampler-ab\
+# - was "So for realism 100 percent C": dpmpp_sde_gpu x beta.
+H3_STILL_SAMPLER = "dpmpp_sde_gpu"
+H3_STILL_SCHEDULER = "beta"
 H3_TURBO = {"steps": 8, "sampler": "euler", "scheduler": "beta", "strength": 1.0}
 
 H3_LENGTHS = (5, 10, 15)
@@ -7020,8 +8174,24 @@ H3_SELFIE_CAMERA_NOTE = (
 # brief honored the note in its own words and is left alone. Closed list -
 # a looser match would start reading inventions as honor.
 _H3_BRIEF_SELFIE_RE = re.compile(
-    r"front camera|selfie|the camera is the phone|phone(?:'s)? camera|"
-    r"into the phone", re.I)
+    r"front camera|the camera is the phone|phone(?:'s)? camera", re.I)
+
+# ...and honor also requires the phone never written as an object in
+# frame. 9.65's shipping brief said "holds phone steady for a selfie" and
+# "taps the phone screen" while "the camera holds locked and level" - a
+# second, tripod-locked camera watching a prop, the exact 9.41 failure the
+# bare word "selfie" had read as honor. Prop phrasing anywhere revokes
+# honor, even beside a clause from the list above. Closed list too, and
+# the note's own wording stays clean: "the phone in {poss} own
+# outstretched hand" never matches - the possessive is followed by "own",
+# not "hand".
+_H3_BRIEF_PHONE_PROP_RE = re.compile(
+    r"hold(?:s|ing)? (?:the |her |his |their )?phone|"
+    r"phone (?:in|into) (?:her |his |their )?hand|"
+    r"phone screen|phone case|phone rests|"
+    r"taps? (?:the |her )?(?:phone|screen)|"
+    r"phone (?:glows|lights up)|"
+    r"(?:lowers|raises|lifts|tugs) the phone", re.I)
 
 
 def h3_selfie_source(entry):
@@ -7065,13 +8235,16 @@ def repair_selfie_camera(body, selfie):
     restate it - repair_camera_note's sibling, same shape and repair-only
     policy: the sentence lands inside the field the encoder reads (before
     overall_soundscape:, at the end when there is no labeled structure). A
-    brief that says it in its own words is left alone, which also makes the
-    repair idempotent - the sentence itself says front camera. selfie=False
-    is a no-op, and the ref2va lane never reaches here: a reference has no
-    frame-zero premise to describe."""
+    brief that says it in its own words AND never writes the phone as a
+    prop is left alone, which also makes the repair idempotent - the
+    sentence itself says front camera and holds the phone in {poss} own
+    outstretched hand, no prop phrasing. selfie=False is a no-op, and the
+    ref2va lane never reaches here: a reference has no frame-zero premise
+    to describe."""
     if not selfie:
         return body
-    if _H3_BRIEF_SELFIE_RE.search(body):
+    if (_H3_BRIEF_SELFIE_RE.search(body)
+            and not _H3_BRIEF_PHONE_PROP_RE.search(body)):
         return body
     sentence = " " + _h3_selfie_camera_note(body)
     idx = body.find("overall_soundscape:")
@@ -8875,6 +10048,7 @@ BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "fantasy": build_fantasy, "anime": build_anime, "zimage": build_zimage,
             "anima": build_anima, "h3_still": build_h3_still,
             "h3_still_2x": build_h3_still_2x,
+            "h3_ref_still": build_h3_ref_still,
             "identity_edit": build_zara_edit,
             "zara_edit": build_zara_edit,       # alias: pre-rename ledger entries
             "qwen_edit": build_qwen_edit, "qwen_image": build_qwen_image,
@@ -9929,13 +11103,15 @@ class Hub:
               f"({idle_bytes / 2**30:.1f}GB) for {template}", flush=True)
         return True
 
-    async def rest_brain_for_render(self, job):
+    async def rest_brain_for_render(self, job, note=None):
         """Watch step 2: rest the chat brain so the render starts from real
         headroom; it respawns on the next chat message. No growth rule - a
         warmed Qwen3-VL 4B's ~8GB is its normal size, not a leak. Rests only
         when something proves a brain is resident (the GGUF estimate, or the
         table's brain row for an adopted one): a no-brain card never pays
-        the pidfile dance. True when a brain actually died."""
+        the pidfile dance. True when a brain actually died. `note` replaces
+        the lane narration - 9.76's headroom rule names the price that made
+        the call instead of the size that left."""
         est = brain_vram_estimate()
         table = None
         if est <= 0:
@@ -9949,7 +11125,7 @@ class Hub:
         brain_gb = next((r["gb"] for r in table if r["role"] == "brain"), None)
         gb = brain_gb if brain_gb is not None else est / 2**30
         self.broadcast(type="text", cid=job["cid"], text=(
-            f"*brain rested for the render ({gb:.1f} GB)*"))
+            note or f"*brain rested for the render ({gb:.1f} GB)*"))
         print(f"[pixal] butler: rested the brain ({gb:.1f}GB) for the render",
               flush=True)
         return True
@@ -10053,7 +11229,12 @@ class Hub:
             self.job_seq += 1
             job["_seq"] = self.job_seq
             self._mark_used(heavy, template, self.job_seq)
-            act = graph_activation_bytes(template, g, info)
+            # 9.76 - the ledger calibrates the activation price: the median
+            # real delta this recipe staged lately, floored at the profile.
+            entries = self.ledger_read()
+            ledger_est = ledger_activation_estimate(
+                entries, template, (info or {}).get("canvas_mp"))
+            act = graph_activation_bytes(template, g, info, entries=entries)
             # Kept so an OOM retry can solve for a size that actually fits
             # instead of guessing a percentage. The graph is a local in submit
             # and is gone by the time finalize sees the failure.
@@ -10064,6 +11245,25 @@ class Hub:
             video = template in VIDEO_TEMPLATES
             hot = 0 if video else sum(sz for name, sz in heavy.items()
                                       if name in self.resident_heavies)
+            # 9.76 - headroom, BEFORE the fit test: a job that fits can still
+            # run the card to the wall once the resident brain is counted
+            # (the fit test prices only comfy's own stack against comfy's own
+            # free number). Rest the brain up front when the priced stack
+            # leaves under HEADROOM_BYTES; small jobs keep it. The card total
+            # is gpu_watch's driver read - no fresh GPU query on this path.
+            card_total = int(((self.gpu or {}).get("total") or 0) * 2**30)
+            brain_resident = 0
+            if card_total > 0:
+                brain_row = next(
+                    (r for r in await asyncio.to_thread(gpu_process_table)
+                     if r["role"] == "brain"), None)
+                brain_resident = (int(brain_row["gb"] * 2**30) if brain_row
+                                  else brain_vram_estimate())
+            if brain_headroom_rest(weights + act, brain_resident, card_total):
+                await self.rest_brain_for_render(job, note=(
+                    f"*brain rested - this render prices "
+                    f"{(weights + act) / 2**30:.1f} of "
+                    f"{card_total / 2**30:.1f} GB*"))
             need = (weights - hot) + act + VRAM_FLOOR
             free = await comfy_vram_free_bytes()
             if free is None:
@@ -10180,7 +11380,9 @@ class Hub:
                 return
             print(f"[pixal] butler: {template} wants {need / 2**30:.1f}GB "
                   f"({(weights - hot) / 2**30:.1f}GB cold weights + "
-                  f"{act / 2**30:.1f}GB act), free {free / 2**30:.1f}GB, "
+                  f"{act / 2**30:.1f}GB act "
+                  f"({'ledger' if ledger_est is not None and ledger_est >= act else 'profile'})), "
+                  f"free {free / 2**30:.1f}GB, "
                   f"ram_short={ram_short}", flush=True)
             # 9.48 - the standing watch takes its fixed order ahead of the
             # flush: idle lane weights first (the soft unload - the 16:19
@@ -10438,6 +11640,12 @@ class Hub:
                            for stage in spec.get("lora_stages", [])]
             recipes.append({"id": rid, "label": spec["label"], "tag": spec["tag"],
                              "family": spec["family"], "variants": spec.get("variants", []),
+                             # The sampler seat's signature (9.75): two recipes
+                             # whose signatures match share a seat, so the
+                             # composer can carry quick tuning across a switch
+                             # between them. None where the pairing is fixed.
+                             "sampler": seat_signature(
+                                 rid, resolved_recipe_models[rid]),
                              # The composer's MP ladder dims rungs above this
                              # (h3_still's 2K ceiling); absent everywhere else.
                              "mp_cap": spec.get("mp_cap"),
@@ -10703,6 +11911,10 @@ TOOLS = [{
                                              "refine (~3 min; the best-looking still in the "
                                              "app; use when the user asks for maximum detail "
                                              "or a full-body shot). "
+                                             "h3_ref_still = the H3 still from the anchor's "
+                                             "own reference photo (~1 min; REF2VA build - the "
+                                             "photo IS the identity, no identity_edit; "
+                                             "REQUIRES an active character anchor). "
                                              # The enum offers 10 recipes and the SYSTEM prose
                                              # documents 7; the other three were presented as
                                              # peers with no guidance at all (k3's audit, F8).
@@ -12270,17 +13482,29 @@ def _adopted_brain_pid():
     The pidfile proves Pixal spawned a brain only while the sidecar that
     wrote it lives; a restart loses the file but not the child (Jesse,
     2026-08-25 16:45: re-registered pid-less, 8.3 GB nothing would reclaim).
-    The port holder's command line is the same proof in recoverable form:
-    it names pixal_brain_server.py by absolute path, and only a spawn from
-    THIS tree carries THIS tree's path. Anything else on the port -
-    run_llm.bat, a foreign server serving the very same gguf - keeps None,
-    and so does every lookup failure: a guessed pid kills the wrong process.
+    The port holder's command line is the same proof in recoverable form,
+    and the receipt is the SCRIPT, not the tree: a pixal_brain_server.py is
+    Pixal's whichever install spawned it - the tree that did is gone or has
+    lost the port. The absolute-path proof failed exactly there (Jesse,
+    2026-08-27: an installed tree adopted a repo-tree orphan, the proof kept
+    answering None, and 7.18 GB priced as "other" until renders hit 31.1
+    GB), so ownership is any command-line token whose basename is
+    pixal_brain_server.py, from any directory. Anything else on the port -
+    run_llm.bat, a foreign server serving the very same gguf, a script whose
+    name merely contains ours - keeps None, and so does every lookup
+    failure: a guessed pid kills the wrong process.
     """
-    ours = os.path.normcase(str(HERE / "pixal_brain_server.py"))
+    ours = os.path.normcase("pixal_brain_server.py")
     for pid in _local_llm_port_pids():
         cmdline = _process_cmdline(pid)
-        if cmdline and ours in os.path.normcase(cmdline):
-            return pid
+        if not cmdline:
+            continue
+        # Quoted or bare, the receipt is one token's basename; split both
+        # separators so a Windows path answers on a POSIX host too.
+        for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', cmdline):
+            base = token.strip("\"'").replace("\\", "/").rsplit("/", 1)[-1]
+            if os.path.normcase(base) == ours:
+                return pid
     return None
 
 async def ensure_local_llm(cid=None):
@@ -14368,6 +15592,16 @@ def effective_recipe(opts):
     """
     opts = opts or {}
     if opts.get("character"):
+        # An H3 build carries identity through its own reference input
+        # (brief 9.67): the anchor's photo IS the identity mechanism, so a
+        # picked H3 model never routes to the identity_edit chain - the
+        # ref2va build runs h3_ref_still, an fl2va build keeps its still
+        # pair. Any other model (or none) stays the identity edit.
+        entry = resolve_model_entry(opts["model"]) if opts.get("model") else None
+        if entry and entry["family"] == "minimax_h3":
+            if entry.get("variant") == "ref2va":
+                return "h3_ref_still"
+            return "h3_still_2x" if opts.get("quality") == "refined" else "h3_still"
         return "identity_edit"
     if any(r.get("kind") == "identity" for r in (opts.get("refs") or [])):
         return "identity_edit"
@@ -14405,10 +15639,13 @@ def effective_recipe(opts):
         # the first render anyone tries.
         if entry and entry["family"] == "anima":
             return "anima"
-        # An H3 fl2va build picked for a still renders one frame on the
-        # h3_still graph, whatever style the selector last held; the Refined
-        # quality adds the in-family 2x latent refine (brief 9.59).
+        # An H3 build picked for a still renders one frame, whatever style
+        # the selector last held: the ref2va build runs h3_ref_still (9.67),
+        # an fl2va build runs h3_still, and the Refined quality adds the
+        # in-family 2x latent refine (brief 9.59).
         if entry and entry["family"] == "minimax_h3":
+            if entry.get("variant") == "ref2va":
+                return "h3_ref_still"
             return "h3_still_2x" if refined else "h3_still"
         if style in ("anime", "fantasy"):
             return style
@@ -14429,6 +15666,8 @@ def effective_recipe(opts):
         # arrive here when neither key was sent, but the branches mirror each
         # other so they cannot drift.
         if entry and entry["family"] == "minimax_h3":
+            if entry.get("variant") == "ref2va":
+                return "h3_ref_still"
             return "h3_still_2x" if opts.get("quality") == "refined" else "h3_still"
     return None
 
@@ -14478,11 +15717,14 @@ def _apply_opts(args, opts):
     if identity_source:
         # Identity Edit has a proven default. Carry a selected model only when
         # it is genuinely compatible; never splice a stale Z model into Krea.
+        # An H3 build is the second carry case (9.67): the anchor does not
+        # displace it - its own recipe runs her photo as the reference.
         args.pop("model", None)
         args.pop("loras", None)
         if opts.get("model"):
             entry = resolve_model_entry(opts["model"])
-            if entry and "identity_edit" in compatible_recipes(entry):
+            if entry and ("identity_edit" in compatible_recipes(entry) or
+                          entry["family"] == "minimax_h3"):
                 args["model"] = opts["model"]
     elif opts.get("model"):
         args["model"] = opts["model"]
@@ -14530,8 +15772,21 @@ def _apply_opts(args, opts):
             # what runs (any other builder's SIGS filter drops them anyway).
             if style.get("negative"):
                 args["negative"] = style["negative"]
+            # The frame's {slot} tokens fill here, at the one overlay chat and
+            # reroll share: the builders and the receipt only ever see the
+            # rendered text (9.77). A clause whose slot has neither a fill
+            # nor a default collapses, so it can simply vanish.
+            fills = opts.get("style_slots")
+            if style.get("prompt_prefix"):
+                prefix = fill_style_slots(style["prompt_prefix"],
+                                          style.get("slots"), fills)
+                if prefix:
+                    args["prompt_prefix"] = prefix
             if style.get("prompt_tail"):
-                args["prompt_tail"] = style["prompt_tail"]
+                tail = fill_style_slots(style["prompt_tail"],
+                                        style.get("slots"), fills)
+                if tail:
+                    args["prompt_tail"] = tail
 
     if not style:
         # No saved preset - but a style DIRECTION is still something the user
@@ -14574,6 +15829,15 @@ def _apply_opts(args, opts):
                 "entries": [{k: v for k, v in e.items()
                              if k in ("name", "slot", "enabled", "strength")}
                             for e in plan.get("entries") or []]}
+    if plan is not None and recipe and plan.get("recipe") != recipe             and not RECIPE_SPECS.get(recipe, {}).get("lora_stages"):
+        # A recipe with no LoRA lane at all (the H3 stills) cannot take any
+        # plan, so a plan authored for another recipe is not a stale-state
+        # error here, it is simply irrelevant: a character's identity_edit
+        # plan riding along to h3_ref_still (Jesse, 2026-08-27) must render,
+        # not refuse. Recipes WITH a lane keep failing honestly below.
+        plan = None
+        args.pop("lora_plan", None)
+        args.pop("loras", None)
     if plan is not None and recipe:
         # The plan replaces the editable lane; never merge brain/legacy extras
         # into it. A recipe mismatch is a stale UI state and fails honestly.
@@ -16001,7 +17265,12 @@ def build_directive(opts, local=False):
         parts.append(f"template={tpl}")
     if opts.get("model"):
         entry = resolve_model_entry(opts["model"])
-        if not identity_source or (entry and "identity_edit" in compatible_recipes(entry)):
+        # Under an identity source the model used to stay unspoken (identity
+        # forces Krea 2, so a stale pick was noise); an H3 build survives the
+        # anchor (9.67), so it is said - the brain must pass it through.
+        if not identity_source or (entry and (
+                "identity_edit" in compatible_recipes(entry) or
+                entry["family"] == "minimax_h3")):
             parts.append(f"model={opts['model']!r}")
     if opts.get("aspect"):
         parts.append(f"aspect={opts['aspect']!r}")
@@ -16732,6 +18001,73 @@ async def styles_post(req):
             status=500)
     return web.json_response({"ok": True, "id": record["id"], "style": record,
                               "replaced": bool(prior)})
+
+
+async def style_from_image(req):
+    """Draft a saved style from a render's embedded ComfyUI metadata (9.66).
+
+    Intake mirrors /api/upload (a multipart "image" field), or {"filename":
+    ...} for a file already in ComfyUI's output or input - a gallery render.
+    The translator's answer goes back verbatim: this endpoint never saves.
+    Reviewing the draft and pressing save is styles_post's job, unchanged."""
+    data = None
+    filename = "render.png"
+    if str(req.content_type or "").startswith("multipart/"):
+        try:
+            reader = await req.multipart()
+            while field := await reader.next():
+                if field.name == "image" and data is None:
+                    data = await field.read()
+                    filename = str(field.filename or filename) \
+                        .replace("\\", "/").split("/")[-1]
+                else:
+                    await field.release()
+        except web.HTTPRequestEntityTooLarge:
+            return web.json_response(
+                {"ok": False, "error": "image is larger than the 40 MB upload limit"},
+                status=413)
+        if data is None:
+            return web.json_response(
+                {"ok": False, "error": "choose an image to read"}, status=400)
+        if len(data) > MAX_UPLOAD_BYTES:
+            return web.json_response(
+                {"ok": False, "error": "image is larger than the 40 MB upload limit"},
+                status=413)
+    else:
+        try:
+            body = await req.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            return web.json_response({"ok": False, "error": f"not valid JSON: {exc}"},
+                                     status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"ok": False, "error": "expected a JSON object"},
+                                     status=400)
+        name = str(body.get("filename") or "").replace("\\", "/").strip().strip("/")
+        if not name or ".." in name.split("/"):
+            return web.json_response(
+                {"ok": False, "error": "name a file in ComfyUI output or input"},
+                status=400)
+        path = None
+        for typ in ("output", "input"):
+            root = (CDIR / typ).resolve()
+            candidate = (root / name).resolve()
+            if candidate.is_file() and candidate.is_relative_to(root):
+                path = candidate
+                break
+        if path is None:
+            return web.json_response(
+                {"ok": False, "error": f"not found in ComfyUI output or input: {name}"},
+                status=404)
+        filename = path.name
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as exc:
+            return web.json_response(
+                {"ok": False, "error": f"could not read {name}: {exc}"}, status=500)
+    result = style_from_render_metadata(data, filename)
+    # A clean "nothing to read" is a content answer, not a server fault; 422
+    # keeps it out of the 200 lane without pretending the request was broken.
+    return web.json_response(result, status=200 if result.get("ok") else 422)
 
 
 async def styles_delete(req):
@@ -18250,9 +19586,11 @@ async def chats_post(req):
 _REROLL_COMPOSER_OWNED = (
     "model", "loras", "lora_plan", "aspect", "mp", "overrides", "_style",
     "_tuning", "_sampler_swap", "character", "ref", "seed",
-    # negative/prompt_tail are style-file clauses: a reroll after the style
-    # moves on must not keep steering from the old one's words.
-    "negative", "prompt_tail",
+    # negative/prompt_prefix/prompt_tail are style-file clauses: a reroll
+    # after the style moves on must not keep steering from the old one's words.
+    # style_slots is the composer half of those clauses (9.77): the fills the
+    # frame rendered with belong to the live composer, never to the old spec.
+    "negative", "prompt_prefix", "prompt_tail", "style_slots",
 ) + tuple(d["key"] for d in RECIPE_SPECS["identity_edit"].get("dials", ()))
 
 
@@ -18400,6 +19738,10 @@ async def history(_req):
 
 async def options(_req):
     await refresh_lm_cache()
+    # The recipe rows now carry sampler-seat signatures (9.75): probe here,
+    # cached, or a first load before Settings/styles ever asked would ship
+    # empty choice lists and the 9.75 carry could not compare seats.
+    await refresh_comfy_nodes()
     return web.json_response(HUB.options())
 
 async def h3_canvas(req):
@@ -19172,6 +20514,30 @@ CRITIC_VRAM_NEED = int(20.0 * 2**30)  # 8B FP16 weights + vision tower (~17.5GB)
 BRAIN_KV_SLACK = int(1.5 * 2**30)    # KV cache + llama.cpp scratch, sized for the 4B
 PID_STACK_BYTES = int(4.5 * 2**30)    # PiD decoder + PixelDiT TE + autoencoder (measured)
 
+# 9.76 - the butler keeps real headroom instead of running the card to the
+# wall. The fit test rests the brain only when the priced stack does NOT
+# fit, and the ledger says that price is routinely wrong by the brain
+# itself (measured 2026-08-27/28): identity_edit 0488e5b9 priced ~3.5GB of
+# activations and grew the card 16.8 -> 25.4GB used (8.6GB real);
+# h3_ref_still 7ff05e99 priced 29.7GB, peaked 30.1GB and bottomed out at
+# 1.37GB free; 38 of the last 50 ledger jobs ran under 2GB free at their
+# worst sample, 24 under 1GB. Windows never OOMs - at ~99% the card
+# livelocks paging through WDDM (the 110s/step identity edits), which is
+# Jesse's question: "can't the app unload the chat brain if it knows the
+# render is gonna be stressed at 31.1 GB". It can - up front, whenever the
+# priced stack plus the resident brain leaves less than this.
+HEADROOM_BYTES = int(4.0 * 2**30)
+# Jobs priced under half the card keep the brain: they cannot corner the
+# card, and a seconds-long brain reload on the next chat outbids the
+# headroom a rest would buy.
+HEADROOM_MIN_PRICED_FRAC = 0.5
+# Ledger calibration window for the activation price (9.76): the median of
+# (peak - start) over the newest same-template finalized entries, used only
+# when at least this many carry both driver reads - fewer is an anecdote,
+# not a measurement, and the ACT_PROFILES constant prices the job alone.
+LEDGER_ACT_SAMPLES = 8
+LEDGER_ACT_MIN_SAMPLES = 3
+
 # reclaim_vram's poll. /free returns before the pages do (cudaMallocAsync trims
 # its pool asynchronously), so the deadline is what makes waiting safe rather
 # than the sleep being long enough - it is a ceiling, not a duration.
@@ -19668,7 +21034,61 @@ def graph_weight_bill(g):
     return heavy, peak + (PID_STACK_BYTES if pid_stack else 0)
 
 
-def graph_activation_bytes(template, g, info=None):
+def brain_headroom_rest(priced, brain_resident, card_total):
+    """9.76's headroom rule, pure so the test can drive it: should the brain
+    step aside BEFORE the fit test, because the priced stack plus the brain
+    leaves the card under HEADROOM_BYTES? All bytes. An unread card or a
+    card with nothing resting on it is never a reason, and a job priced
+    under half the card keeps the brain outright."""
+    if card_total <= 0 or brain_resident <= 0:
+        return False
+    if priced < card_total * HEADROOM_MIN_PRICED_FRAC:
+        return False
+    return priced + brain_resident > card_total - HEADROOM_BYTES
+
+
+def _mp_bucket(mp):
+    """Whole-megapixel bucket for ledger calibration: 2.04MP and 2.97MP of
+    one recipe are the same job; 1MP and 3MP are not."""
+    return int(round(float(mp)))
+
+
+def ledger_activation_estimate(entries, template, mp):
+    """Median real activation footprint in bytes from the ledger, or None.
+
+    `entries` is Hub.ledger_read()'s list (newest first); a sample is one
+    finalized job of the same template whose vram block carries both driver
+    reads, and (peak - start) is the growth the card actually did for it.
+    When the caller's canvas is known, an entry whose own canvas_mp field
+    exists must share its bucket - a 30MP inpaint and a 1MP edit of one
+    recipe are not the same job; entries that predate the field are
+    template evidence, not bucket evidence, and still count. At most
+    LEDGER_ACT_SAMPLES samples; fewer than LEDGER_ACT_MIN_SAMPLES is an
+    anecdote, not a measurement, and answers None so the ACT_PROFILES
+    constant prices the job alone."""
+    want = _mp_bucket(mp) if isinstance(mp, (int, float)) and mp > 0 else None
+    samples = []
+    for e in entries:
+        if e.get("template") != template:
+            continue
+        v = e.get("vram") or {}
+        peak, start = v.get("peak"), v.get("start")
+        if not isinstance(peak, (int, float)) or not isinstance(start, (int, float)):
+            continue
+        if want is not None:
+            e_mp = (e.get("info") or {}).get("canvas_mp")
+            if isinstance(e_mp, (int, float)) and e_mp > 0 \
+                    and _mp_bucket(e_mp) != want:
+                continue
+        samples.append(peak - start)
+        if len(samples) >= LEDGER_ACT_SAMPLES:
+            break
+    if len(samples) < LEDGER_ACT_MIN_SAMPLES:
+        return None
+    return statistics.median(samples)
+
+
+def graph_activation_bytes(template, g, info=None, entries=None):
     """Sampling working-set estimate: base + per-megapixel + per-megapixel-frame.
 
     The canvas comes from the BUILDER (`info["canvas_mp"]`, `info["frames"]`)
@@ -19682,7 +21102,17 @@ def graph_activation_bytes(template, g, info=None):
 
     The graph scan stays as the fallback for builders that have not been taught
     to report, and it is still the right shape for those - an EmptyLatentImage
-    node's width/height IS the canvas."""
+    node's width/height IS the canvas.
+
+    9.76: when `entries` (the Hub's ledger) carries enough measured finals of
+    this recipe, the constant is calibrated against what the card actually
+    did - the profile was fitted on log archaeology and under-prices by the
+    brain's own size (identity_edit: ~3.5GB priced, 8.6GB real growth on
+    0488e5b9). The constant stays the FLOOR: a warm-heavy history (start
+    sampled after the weights landed, so peak - start reads as activations
+    only) prices low, and low is the direction that pages. The bucket key is
+    the REPORTED canvas_mp only - the scanned fallback is a guess, and
+    bucketing on a guess mismatches silently."""
     # "upscale_video" covers two completely different jobs: an RTX VSR filter
     # with no sampler at all, and a 22B two-pass LTX re-render. They dispatch
     # under one template name, so the graph is the only thing that can tell
@@ -19715,7 +21145,13 @@ def graph_activation_bytes(template, g, info=None):
             if isinstance(length, (int, float)):
                 frames = max(frames, float(length))
         frames = frames or 1.0
-    return int((base_gb + per_mp * mp + per_mp_frame * mp * frames) * 2**30)
+    est = int((base_gb + per_mp * mp + per_mp_frame * mp * frames) * 2**30)
+    if entries:
+        measured = ledger_activation_estimate(
+            entries, template, info.get("canvas_mp"))
+        if measured is not None:
+            est = max(est, int(measured))
+    return est
 
 
 def ram_free_bytes():
@@ -20929,6 +22365,7 @@ def main():
     app.router.add_post("/api/review", review)
     app.router.add_post("/api/trailer", trailer)
     app.router.add_post("/api/styles", styles_post)
+    app.router.add_post("/api/styles/from-image", style_from_image)
     # Before the {style_id} route: "sampler" is a verb, not an id.
     app.router.add_get("/api/styles/sampler", style_sampler)
     app.router.add_delete("/api/styles/{style_id}", styles_delete)

@@ -228,7 +228,33 @@ class MiniMaxH3Tests(unittest.TestCase):
                         and isinstance(value[0], str):
                     self.assertIn(value[0], graph, f"{node_id} has bad link {value}")
 
-    # Frozen from the installed pack's INPUT_TYPES and cross-checked live against
+    
+    def test_the_video_lane_keeps_the_shared_default(self):
+        """The guard 9.78 exists for: the STILL recipes moved to
+        dpmpp_sde_gpu x beta on their own constants after a locked-seed
+        stills A/B - a stills verdict must never re-tune a 5-10 s clip,
+        so every video lane keeps res_multistep x simple."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets):
+                graph, _brief, _info = server.build_h3_i2v(
+                    "She turns toward the window.", 987, "prepared.png",
+                    seconds=10, width=768, height=1344, model="fl2va",
+                    sparse=False)
+        self.assertEqual(graph["7"]["inputs"]["sampler_name"], "res_multistep")
+        self.assertEqual(graph["8"]["inputs"]["scheduler"], "simple")
+        self.assertEqual(graph["8"]["inputs"]["steps"], 20)
+        # The shared constants ARE the video default now; the still pair
+        # lives beside them and must never move them.
+        self.assertEqual((server.H3_SAMPLER, server.H3_SCHEDULER),
+                         ("res_multistep", "simple"))
+        self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER),
+                         ("dpmpp_sde_gpu", "beta"))
+# Frozen from the installed pack's INPUT_TYPES and cross-checked live against
     # GET /object_info/H3MultishotSampler. The graph must supply every required
     # input and nothing else: a stray key is a queue-time rejection that would
     # otherwise only surface once the job reaches the GPU.

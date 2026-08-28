@@ -132,9 +132,12 @@ class RecipeSpecTests(unittest.TestCase):
         self.assertEqual(spec["label"], "MiniMax H3 2x")
         self.assertEqual(spec["tag"], "2K still + 2x latent refine · ~3 min")
         # aspect/mp/mp_cap are the FIRST pass's - the refine doubles on top.
-        for key in ("family", "variants", "default_model", "aspect", "mp",
-                    "mp_cap", "required_text_encoders", "required_vaes",
-                    "lora_stack_revision", "lora_boundary", "lora_stages"):
+        # lora_variants too: the 2x builder re-keys its plan to h3_still
+        # (9.74), which is only sound while the two rows' lanes are identical.
+        for key in ("family", "variants", "lora_variants", "default_model",
+                    "aspect", "mp", "mp_cap", "required_text_encoders",
+                    "required_vaes", "lora_stack_revision", "lora_boundary",
+                    "lora_stages"):
             self.assertEqual(spec[key], base[key], key)
 
     def test_the_recipe_is_an_image_template_everywhere(self):
@@ -199,7 +202,7 @@ class GraphTests(unittest.TestCase):
             "model_name": UPSCALER, "width": 3072, "height": 4096,
             "device": "cuda", "precision": "bf16"})
         self.assertEqual(g["up:sigmas"]["inputs"], {
-            "model": ["1", 0], "scheduler": server.H3_SCHEDULER,
+            "model": ["1", 0], "scheduler": server.H3_STILL_SCHEDULER,
             "steps": server.H3_UPSCALE_STEPS,
             "denoise": server.H3_UPSCALE_DENOISE})
         # the measured recipe, not a new one
@@ -402,8 +405,8 @@ class SeatTests(unittest.TestCase):
 
     def test_defaults_report_the_same_trio(self):
         self.assertEqual(server.sampler_defaults("h3_still_2x"),
-                         {"steps": 20, "sampler_name": "res_multistep",
-                          "scheduler": "simple"})
+                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
+                          "scheduler": "beta"})
 
     def test_tuning_lands_on_the_first_pass_only(self):
         overrides = server.tuning_overrides(
@@ -421,9 +424,17 @@ class SeatTests(unittest.TestCase):
         self.assertEqual(g["up:sigmas"]["inputs"]["steps"],
                          server.H3_UPSCALE_STEPS)
         self.assertEqual(g["up:sigmas"]["inputs"]["scheduler"],
-                         server.H3_SCHEDULER)
+                         server.H3_STILL_SCHEDULER)
         self.assertEqual(g["up:sigmas"]["inputs"]["denoise"],
                          server.H3_UPSCALE_DENOISE)
+    def test_the_refine_also_samples_at_the_ab_winner(self):
+        """9.78: both passes are the same still - the refine's sampler
+        input rides the first pass's KSamplerSelect, and its own sigmas
+        take the still scheduler."""
+        g, _cap, _info = build()
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
+        self.assertEqual(g["up:sample"]["inputs"]["sampler"], ["7", 0])
+        self.assertEqual(g["up:sigmas"]["inputs"]["scheduler"], "beta")
 
 
 class RoutingTests(unittest.TestCase):
@@ -540,10 +551,13 @@ class ClientRoutingTests(unittest.TestCase):
     build."""
 
     def test_store_routes_refined_h3_picks_to_the_2x_recipe(self):
+        # 9.67 put the ref2va branch in front; the fl2va rule it guards is
+        # unchanged (refined -> 2x, standard -> plain still).
         self.assertRegex(
             STORE,
             r'if \(meta\?\.family === "minimax_h3"\)\s*'
-            r'return opts\.quality === "refined" \? "h3_still_2x" : "h3_still";')
+            r'return meta\.variant === "ref2va" \? "h3_ref_still"\s*'
+            r': opts\.quality === "refined" \? "h3_still_2x" : "h3_still";')
 
     def test_store_gates_refined_on_the_2x_recipes_availability(self):
         self.assertRegex(

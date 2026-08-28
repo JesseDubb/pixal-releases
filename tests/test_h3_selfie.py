@@ -19,6 +19,14 @@ provenance already carries the signal, so now:
   and a brief that says it in its own words is left alone;
 - the draft route runs the same repair: what the user reads is what ships.
 
+2026-08-27, brief 9.65: the honored gate conflated "mentions a selfie"
+with "the camera is the phone" - a Zara brief shipped with the phone as a
+prop ("holds phone steady for a selfie", "taps the phone screen") beside
+"the camera holds locked and level", because _H3_BRIEF_SELFIE_RE matched
+the bare word "selfie". Honor is now camera-is-the-phone ONLY, and
+_H3_BRIEF_PHONE_PROP_RE revokes it when the phone is written as an object
+in frame - anywhere, even beside an honored clause.
+
 Same sanctioned simulation as 9.36/9.37/9.38: fixed strings and stubbed
 handlers - no generation, no ComfyUI, no GPU.
 """
@@ -201,17 +209,63 @@ class SelfieCameraRepairTests(unittest.TestCase):
                         out.find("overall_soundscape:"))
 
     def test_a_brief_that_says_it_is_left_byte_identical(self):
+        # 9.65: honor means the camera IS the phone, stated, with no prop
+        # phrasing anywhere - "a classic selfie framing" and "speaks into
+        # the phone" left this list for the repair list below.
         forms = ["shot on the front camera at arm's length",
-                 "a classic selfie framing, eyes on the lens",
-                 "the camera is the phone she holds",
+                 "the camera is the phone",
                  "her phone's camera catches the wink",
-                 "the phone camera sees her grin",
-                 "she speaks into the phone at arm's length"]
+                 "the phone camera sees her grin"]
         for form in forms:
             with self.subTest(form=form):
                 honored = BRIEF.replace("she stands", form + ", she stands")
                 self.assertEqual(server.repair_selfie_camera(honored, True),
                                  honored)
+
+    def test_mentioning_a_selfie_is_not_honor(self):
+        # 9.65: the old gate read each of these as honor; every one is
+        # compatible with a second camera on a tripod, so the sentence
+        # now lands on all of them.
+        forms = ["a classic selfie framing, eyes on the lens",
+                 "she speaks into the phone at arm's length",
+                 "holds phone steady for a selfie"]
+        for form in forms:
+            with self.subTest(form=form):
+                body = BRIEF.replace("she stands", form + ", she stands")
+                out = server.repair_selfie_camera(body, True)
+                self.assertIn("The camera is the front camera of the phone",
+                              out)
+
+    def test_the_prop_brief_that_shipped_gets_the_sentence(self):
+        # 9.65's verbatim excerpt (Zara, grey tee, car hood, desert dusk):
+        # "for a selfie" read as honor while the phone is held, tapped,
+        # glowing, cased - a prop watched by a camera "locked and level".
+        brief = (
+            "integrated_multimodal_description: [Shot 1] Zara, platinum "
+            "blonde hair parted to the side, eyes fixed forward, holds "
+            "phone steady for a selfie as her right hand slips slightly, "
+            "fingers adjusting grip; the camera holds locked and level as "
+            "her left hand rises to tap the phone screen twice, and the "
+            "phone screen glows softly beside her hand as it rests low on "
+            "her thigh. The shot ends with her thumb brushing the edge of "
+            "the phone case for balance.\n\n"
+            "overall_soundscape: Desert wind, a low engine idle, "
+            "synchronized.")
+        out = server.repair_selfie_camera(brief, True)
+        self.assertIn("The camera is the front camera of the phone", out)
+        self.assertLess(out.find("front camera"),
+                        out.find("overall_soundscape:"))
+
+    def test_an_honored_clause_beside_a_prop_still_repairs(self):
+        # 9.65: the contradiction is the case that shipped - the fact
+        # stated, yet the phone tapped like a prop. Prop phrasing anywhere
+        # revokes honor, even beside an honored clause.
+        body = BRIEF.replace(
+            "she stands",
+            "shot on the front camera, taps the phone screen, she stands")
+        out = server.repair_selfie_camera(body, True)
+        self.assertIn("The camera is the front camera of the phone in her "
+                      "own outstretched hand", out)
 
     def test_the_repair_is_idempotent(self):
         once = server.repair_selfie_camera(BRIEF, True)

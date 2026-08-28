@@ -5,7 +5,8 @@ images: a prompt-only MiniMaxH3ImageToVideo at its 5-frame floor decodes to
 one real image (frame 0 gets the causal VAE's standalone latent; frames 1-4
 share one motion-carrying chunk and decode darker and softer - they are
 dropped by ImageFromBatch). The proven graph is Jesse's h3_image.py block,
-ported, not redesigned. 20 steps of res_multistep/simple at up to the Max
+ported, not redesigned. 20 steps of dpmpp_sde_gpu/beta (9.78's locked-seed
+A/B winner) at up to the Max
 tier (1536x2048, both sides on the 32 grid); no turbo anything, no audio
 VAE, no director pass - the prompt wraps the image lane's own caption in two
 deterministic fields.
@@ -14,8 +15,9 @@ What these tests pin:
 
   Classification    - Minimax H3\\ builds file as family minimax_h3, media
                       stays "video", variant ref2va iff the basename carries
-                      the token; fl2va supported, ref2va not (with its
-                      reason); ltx keeps the plain "video" classification.
+                      the token; both variants supported (9.67 gave ref2va
+                      its own still recipe); ltx keeps the plain "video"
+                      classification.
   GraphShape        - the queued graph IS the proven block: class per node
                       id, length 5, batch_index 0, seed on RandomNoise, no
                       audio nodes, BasicGuider (CFG-distilled - never
@@ -32,10 +34,12 @@ What these tests pin:
                       missing label on a stub without the encoder.
   Seat              - the sampler seat writes steps/sampler/scheduler through
                       its map and never offers cfg; defaults report
-                      20/res_multistep/simple; existing seats unchanged.
-  LoraGate          - lora_compatible refuses every LoRA for minimax_h3 and
-                      the popup's key space covers the family, so the picker
-                      can never promise a video LoRA the graph would drop.
+                      20/dpmpp_sde_gpu/beta (9.78); existing seats unchanged.
+  LoraGate          - 9.74: the family's LoRAs classify now, so the gate is
+                      variant-shaped - style LoRAs are compatible on the
+                      still profiles, the speed distills are refused on them
+                      (pinned exhaustively in test_h3_still_loras.py), and
+                      the popup's key space still covers the family.
   AnimateUnchanged  - h3_model_options() is byte-identical on the stub.
   ClientRouting     - static, in the test_lora_card_controls.py style (this
                       repo has no JS runner): store routes the family, the
@@ -72,7 +76,6 @@ STOCK = server.H3_MODEL
 FINETUNE = "Minimax H3\\10eros_max_fl2va_beta2.safetensors"
 REF2VA = server.H3_REF2V_MODEL
 LTX = "LTX2\\ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-REF2VA_REASON = "reference-video build - used by the Animate lanes"
 MAX_PIXELS = 1536 * 2048
 
 
@@ -125,13 +128,13 @@ class ClassificationTests(unittest.TestCase):
                          ("minimax_h3", "fl2va"))
         self.assertTrue(profile["supported"])
 
-    def test_ref2va_stays_out_of_the_still_picker(self):
+    def test_ref2va_is_a_supported_still_since_9_67(self):
         profile = self.profile(REF2VA)
         self.assertEqual((profile["family"], profile["variant"]),
                          ("minimax_h3", "ref2va"))
         self.assertEqual(profile["media"], "video")
-        self.assertFalse(profile["supported"])
-        self.assertEqual(profile["reason"], REF2VA_REASON)
+        self.assertTrue(profile["supported"])
+        self.assertEqual(profile["reason"], "")
 
     def test_ltx_keeps_the_plain_video_classification(self):
         profile = self.profile(LTX)
@@ -141,13 +144,15 @@ class ClassificationTests(unittest.TestCase):
         self.assertFalse(profile["supported"])
         self.assertEqual(profile["reason"], "video model")
 
-    def test_compatible_recipes_names_the_still_pair_for_fl2va_only(self):
+    def test_compatible_recipes_splits_the_stills_by_variant(self):
         # 9.59: fl2va builds serve the still AND its 2x latent refine.
+        # 9.67: ref2va builds serve their own reference still.
         self.assertEqual(server.compatible_recipes(self.profile(STOCK)),
                          ["h3_still", "h3_still_2x"])
         self.assertEqual(server.compatible_recipes(self.profile(FINETUNE)),
                          ["h3_still", "h3_still_2x"])
-        self.assertEqual(server.compatible_recipes(self.profile(REF2VA)), [])
+        self.assertEqual(server.compatible_recipes(self.profile(REF2VA)),
+                         ["h3_ref_still"])
         self.assertEqual(server.compatible_recipes(self.profile(LTX)), [])
 
     def test_the_recipe_spec(self):
@@ -202,9 +207,9 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(g["6"]["inputs"]["clip"], ["2", 0])
         self.assertEqual(g["6"]["inputs"]["vae"], ["3", 0])
         self.assertEqual(g["6"]["inputs"]["length"], 5)
-        self.assertEqual(g["7"]["inputs"], {"sampler_name": "res_multistep"})
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
         self.assertEqual(g["8"]["inputs"], {"model": ["1", 0],
-                                            "scheduler": "simple",
+                                            "scheduler": "beta",
                                             "steps": 20, "denoise": 1.0})
         self.assertEqual(g["9"]["inputs"], {"model": ["1", 0],
                                             "conditioning": ["6", 0]})
@@ -307,6 +312,29 @@ class GraphTests(unittest.TestCase):
             {"node": "10", "input": "noise_seed", "value": 7}])
         self.assertEqual(g["8"]["inputs"]["steps"], 12)
         self.assertEqual(g["10"]["inputs"]["noise_seed"], 7)
+    def test_the_graph_samples_at_the_ab_winner(self):
+        """9.78: Jesse's locked-seed A/B (4 arms x 2 scenes, seed 424242,
+        on h3_still, renders in the h3-sampler-ab folder) picked arm C
+        for realism - "So for realism 100 percent C" - so the still lane
+        samples at dpmpp_sde_gpu x beta on its OWN constants, leaving the
+        video default (H3_SAMPLER/H3_SCHEDULER) untouched."""
+        g, _cap, _info = self.build()
+        self.assertEqual(g["7"]["inputs"],
+                         {"sampler_name": server.H3_STILL_SAMPLER})
+        self.assertEqual(g["8"]["inputs"]["scheduler"],
+                         server.H3_STILL_SCHEDULER)
+        self.assertEqual(g["8"]["inputs"]["steps"], server.H3_STEPS)
+        self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER),
+                         ("dpmpp_sde_gpu", "beta"))
+
+    def test_a_users_tuning_beats_the_ab_default(self):
+        """A saved style's tuning applies after the graph is built, so it
+        wins over the new default exactly as it won over the old one."""
+        g, _cap, _info = self.build(overrides=[
+            {"node": "7", "input": "sampler_name", "value": "euler"},
+            {"node": "8", "input": "scheduler", "value": "ddim_uniform"}])
+        self.assertEqual(g["7"]["inputs"]["sampler_name"], "euler")
+        self.assertEqual(g["8"]["inputs"]["scheduler"], "ddim_uniform")
 
     def test_the_builder_is_registered(self):
         self.assertIs(server.BUILDERS["h3_still"], server.build_h3_still)
@@ -366,7 +394,7 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(options["defaults"]["h3_still"]["aspect"],
                          "3:4 (Portrait Standard)")
 
-    def test_the_shelf_marks_fl2va_supported_and_ref2va_not(self):
+    def test_the_shelf_marks_both_variants_supported(self):
         with TemporaryDirectory() as td:
             options = self.options(h3_entries(Path(td)))
         meta = options["model_meta"]
@@ -374,10 +402,12 @@ class OptionsTests(unittest.TestCase):
             self.assertEqual(meta[rel]["family"], "minimax_h3")
             self.assertTrue(meta[rel]["supported"])
             self.assertIn("h3_still", meta[rel]["compatible_recipes"])
+            self.assertNotIn("h3_ref_still", meta[rel]["compatible_recipes"])
         self.assertEqual(meta[REF2VA]["family"], "minimax_h3")
-        self.assertFalse(meta[REF2VA]["supported"])
-        self.assertEqual(meta[REF2VA]["reason"], REF2VA_REASON)
+        self.assertTrue(meta[REF2VA]["supported"])
+        self.assertEqual(meta[REF2VA]["reason"], "")
         self.assertNotIn("h3_still", meta[REF2VA]["compatible_recipes"])
+        self.assertIn("h3_ref_still", meta[REF2VA]["compatible_recipes"])
 
     def test_a_stub_without_the_encoder_names_the_missing_piece(self):
         with TemporaryDirectory() as td:
@@ -431,8 +461,8 @@ class SeatTests(unittest.TestCase):
 
     def test_defaults_report_the_still_recipe(self):
         self.assertEqual(server.sampler_defaults("h3_still"),
-                         {"steps": 20, "sampler_name": "res_multistep",
-                          "scheduler": "simple"})
+                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
+                          "scheduler": "beta"})
 
     def test_tuning_writes_through_the_map_and_drops_cfg(self):
         overrides = server.tuning_overrides(
@@ -446,22 +476,33 @@ class SeatTests(unittest.TestCase):
 
 
 class LoraGateTests(unittest.TestCase):
-    """The add-LoRA popup can offer nothing for minimax_h3: no LoRA
-    classifies to the family, so every verdict is a refusal - and the
-    popup's key space covers the family, so the client lookup finds that
-    refusal instead of falling through to 'compatible'."""
+    """9.74 gave the family a LoRA classification, so the gate is now
+    variant-shaped: a style LoRA is compatible on the still profiles and a
+    speed distill is refused on them (the per-file matrix lives in
+    test_h3_still_loras.py - this class pins the gate's shape on the recipe
+    that asked for it). The popup's key space still covers the family, so
+    the client lookup finds the verdict instead of falling through."""
 
-    def test_every_lora_is_refused_for_minimax_h3(self):
+    def test_a_style_lora_is_compatible_and_a_distill_refused(self):
+        sidecar, roots = no_disk()
+        with sidecar, roots:
+            self.assertIsNone(
+                server.lora_compatible(server.H3_HMNSFW_LORA,
+                                       "minimax_h3", "fl2va"))
+            self.assertEqual(
+                server.lora_compatible(server.H3_TURBO_LORA,
+                                       "minimax_h3", "fl2va"),
+                "variant")
+
+    def test_other_families_are_still_refused(self):
         sidecar, roots = no_disk()
         with sidecar, roots:
             self.assertEqual(
                 server.lora_compatible("Krea 2\\whatever.safetensors",
                                        "minimax_h3", "fl2va"),
                 "family")
-            # An H3 VIDEO LoRA is no still LoRA: the loras catalog knows no
-            # minimax_h3 row, so it files unknown and refuses as unknown.
             self.assertEqual(
-                server.lora_compatible(server.H3_HMNSFW_LORA,
+                server.lora_compatible("random\\whatever.safetensors",
                                        "minimax_h3", "fl2va"),
                 "unknown")
 
@@ -552,11 +593,13 @@ class ClientRoutingTests(unittest.TestCase):
     """Static, in the test_lora_card_controls.py style: the contracts the
     client source must keep for the family to be pickable and honest."""
 
-    def test_store_routes_minimax_h3_to_the_h3_still_pair(self):
-        # 9.59: refined goes to the 2x refine, standard to the plain still.
+    def test_store_routes_minimax_h3_by_variant(self):
+        # 9.67: the ref2va build routes to the reference still; 9.59's fl2va
+        # rule stands behind it (refined -> 2x, standard -> plain still).
         self.assertRegex(
             STORE, r'meta\?\.family === "minimax_h3"\)\s*'
-                   r'return opts\.quality === "refined" '
+                   r'return meta\.variant === "ref2va" \? "h3_ref_still"\s*'
+                   r': opts\.quality === "refined" '
                    r'\? "h3_still_2x" : "h3_still";')
 
     def test_store_pins_realism_and_gates_refined_for_minimax_h3(self):
@@ -594,8 +637,10 @@ class ClientRoutingTests(unittest.TestCase):
         self.assertIn("minimax_h3", order)
         self.assertLess(order.index("minimax_h3"), order.index("video"))
 
-    def test_the_library_knows_the_ref2va_reason(self):
-        self.assertIn(REF2VA_REASON, SETTINGS)
+    def test_the_library_has_no_dead_ref2va_reason(self):
+        # 9.67 made ref2va builds supported, so the old reason string is
+        # never emitted; the humanised copy for it was removed with it.
+        self.assertNotIn("reference-video build", SETTINGS)
 
     def test_model_labels_read_like_the_animate_picker(self):
         match = re.search(r'family === "minimax_h3"([\s\S]*?)\n  \}', NAMES)

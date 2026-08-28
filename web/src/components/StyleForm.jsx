@@ -104,6 +104,7 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
   const [tuning, setTuning] = useState(seed.tuning || {});
   const [plan, setPlan] = useState(seed.lora_plan || null);
   const [negative, setNegative] = useState(seed.negative || "");
+  const [promptPrefix, setPromptPrefix] = useState(seed.prompt_prefix || "");
   const [promptTail, setPromptTail] = useState(seed.prompt_tail || "");
   const [sampler, setSampler] = useState(null);   // server's answer for base+model
   // The tuning cluster opens only when there is something to see: a style that
@@ -135,10 +136,17 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
 
   // Only models that can actually drive this graph. Offering the rest and
   // failing on save would be a worse version of the same information.
-  const models = useMemo(() => (options?.models || []).filter((n) => {
-    const m = (options.model_meta || {})[n] || {};
-    return m.supported && !m.source_only && (m.compatible_recipes || []).includes(base);
-  }), [options, base]);
+  const models = useMemo(() => {
+    const list = (options?.models || []).filter((n) => {
+      const m = (options.model_meta || {})[n] || {};
+      return m.supported && !m.source_only && (m.compatible_recipes || []).includes(base);
+    });
+    // A from-image draft can name a model this machine does not have: keep it
+    // on the list so the save is REFUSED with its reason, never silently
+    // swapped for the recipe default (9.66).
+    const seeded = !existing && draft?.model;
+    return seeded && !list.includes(seeded) ? [seeded, ...list] : list;
+  }, [options, base, existing, draft]);
 
   // Changing the base can strand a model from another family. Move to that
   // recipe's own default rather than leaving an invalid pairing on screen.
@@ -176,6 +184,13 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
     else next[key] = value;
     return next;
   });
+
+  // A from-image draft pins the canvas the render actually used; "save
+  // current" keeps reading the composer's own canvas (9.66).
+  const canvasAspect = (!existing && draft?.aspect) || opts?.aspect || "";
+  const canvasMp = (!existing && draft?.mp) || opts?.mp || null;
+  // What the translator could not map, named under the draft (9.66).
+  const fromImageUnmapped = (!existing && draft?.fromImage?.unmapped) || [];
 
   const defaults = sampler?.defaults || {};
   const choices = sampler?.options || {};
@@ -237,13 +252,19 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
     const record = {
       schema_version: 1, name: name.trim(), base, model,
       tuning: tunable ? tuning : {},
-      ...(opts?.aspect ? { aspect: opts.aspect } : {}),
-      ...(opts?.mp ? { mp: opts.mp } : {}),
+      ...(canvasAspect ? { aspect: canvasAspect } : {}),
+      ...(canvasMp ? { mp: canvasMp } : {}),
       ...(plan ? { lora_plan: plan } : {}),
       ...(negative.trim() ? { negative: negative.trim() } : {}),
+      ...(promptPrefix.trim() ? { prompt_prefix: promptPrefix.trim() } : {}),
       ...(promptTail.trim() ? { prompt_tail: promptTail.trim() } : {}),
       ...(editId ? { id: editId } : {}),
-      ...(existing?.provenance ? { provenance: existing.provenance } : {}),
+      // Slots ride along like provenance (9.77): the form has no slot editor,
+      // so without this an edit would silently strip the declarations and
+      // their defaults - and the composer's fields with them.
+      ...(existing?.slots ? { slots: existing.slots } : {}),
+      ...(existing?.provenance ? { provenance: existing.provenance }
+          : draft?.provenance ? { provenance: draft.provenance } : {}),
     };
     const r = await onSaved(record);
     setBusy(false);
@@ -295,6 +316,13 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
                style={{ ...controlBase, height: 44, fontSize: TYPE.h3,
                         fontWeight: W.nav, padding: `0 ${SPACE[12]}px`,
                         transition: `border-color ${MOTION.hover}` }} />
+
+        {fromImageUnmapped.length > 0 && (
+          <span style={{ fontSize: TYPE.label, color: "#E3B98C", lineHeight: 1.5 }}>
+            Not mapped: {fromImageUnmapped
+              .map((u) => `${u.what}${u.why ? ` (${u.why})` : ""}`).join(", ")}
+          </span>
+        )}
 
         <GroupLabel>runs on</GroupLabel>
         <Field label="base"
@@ -373,6 +401,12 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
             style={{ ...controlBase, padding: `0 ${SPACE[12]}px`,
                      transition: `border-color ${MOTION.hover}` }} />
         </Field>
+        <Field label="Prompt prefix" hint="Prepended before the caption">
+          <input {...hoverable} value={promptPrefix}
+            onChange={(e) => setPromptPrefix(e.target.value)}
+            style={{ ...controlBase, padding: `0 ${SPACE[12]}px`,
+                     transition: `border-color ${MOTION.hover}` }} />
+        </Field>
         <Field label="Prompt tail" hint="Appended after the caption">
           <input {...hoverable} value={promptTail}
             onChange={(e) => setPromptTail(e.target.value)}
@@ -419,12 +453,12 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
         )}
 
         {/* One-fact line: never wraps, never collides. */}
-        <div title={opts?.aspect ? `canvas ${opts.aspect}${opts.mp ? ` @ ${opts.mp}MP` : ""}` : undefined}
+        <div title={canvasAspect ? `canvas ${canvasAspect}${canvasMp ? ` @ ${canvasMp}MP` : ""}` : undefined}
              style={{ fontSize: TYPE.label, color: "var(--textTer)", whiteSpace: "nowrap",
                       overflow: "hidden", textOverflow: "ellipsis" }}>
-          {opts?.aspect
-            ? <>canvas <span style={{ color: "var(--textSec)" }}>{opts.aspect}
-                {opts.mp ? ` @ ${opts.mp}MP` : ""}</span> — saved with the style</>
+          {canvasAspect
+            ? <>canvas <span style={{ color: "var(--textSec)" }}>{canvasAspect}
+                {canvasMp ? ` @ ${canvasMp}MP` : ""}</span> — saved with the style</>
             : "no canvas pinned — the recipe's default is used"}
         </div>
 

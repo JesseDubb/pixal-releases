@@ -6,7 +6,7 @@ library — browsed, not tuned, after Video), which setting keys each tab's
 block reaches (no control dropped in the move), the unknown-saved-tab
 fallback to "general", the frozen /api/settings write surface (the wire
 must not change in this brief), the navigation-vs-setting control split in
-the brain panel, the whole-row bound on the brain model list, and that
+the brain panel, the shared-Picker chat-brain pick (9.70), and that
 HELP.md section 6 describes the same tabs the UI now ships.
 """
 
@@ -139,12 +139,15 @@ class SettingsTabs(unittest.TestCase):
                     f"{tab} has a section stacking {n} segmented rows"
 
 
-    def test_brain_model_list_clips_on_whole_rows(self):
-        # rows are 36px with 6px gaps; a fractional maxHeight sliced a row
-        # mid-height at the top edge and read as a rendering fault, not a scroll
-        m = re.search(r'maxHeight: (\d+), overflowY: "auto"', BLOCKS["brain"])
-        assert m, "brain model list has no bounded scroll height"
-        assert (int(m.group(1)) + 6) % 42 == 0
+    def test_brain_model_pick_is_the_shared_picker(self):
+        # 9.70: the bespoke 36px-row scroll list is retired - the chat brain's
+        # model pick is the shared lib Picker fed by localList, so there is no
+        # bounded-scroll list left to clip a row (the whole-rows assertion
+        # died with the list). tests/test_brain_picker.py holds the contract.
+        brain = BLOCKS["brain"]
+        assert "<Picker" in brain
+        assert "options={localList.map" in brain
+        assert not re.search(r'maxHeight: \d+, overflowY: "auto"', brain)
 
 
     def test_help_settings_section_matches_the_new_tabs(self):

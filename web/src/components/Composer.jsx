@@ -24,7 +24,7 @@ import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Picker } from "../lib/Picker.jsx";
 import { familyName, tuningLine, variantName } from "../lib/names.js";
-import { inputImages, inputImgUrl, setInputRefType, styleSampler, upload } from "../transport.js";
+import { inputImages, inputImgUrl, setInputRefType, styleFromImage, styleSampler, upload } from "../transport.js";
 
 const REF_KINDS = [
   { key: "identity", label: "identity", Icon: UserFocus },
@@ -2174,7 +2174,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
 export const ComposerBar = ({ opts, setOpts, selectCharacter,
                               selectIdentityReference, addReference, deleteCharacter,
                               options, onNewCharacter, onEditCharacter, refreshOptions,
-                              selectSavedStyle, onNewStyle, onEditStyle,
+                              selectSavedStyle, onNewStyle, onEditStyle, onStyleFromImage,
                               promptEnhance = true }) => {
   const [pop, setPop] = useState(null);        // model|style|char|size|ref
   const [refKind, setRefKind] = useState("style");
@@ -2190,6 +2190,12 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
   const [characterDeleteError, setCharacterDeleteError] = useState(null);
   const fileRef = useRef(null);
   const uploadKindRef = useRef("style");
+  // 9.66: "from image" reads a render's ComfyUI metadata into a style draft.
+  // Its own input beside fileRef - the shared one uploads to ComfyUI/input,
+  // which is reference plumbing, not style intake.
+  const styleImageRef = useRef(null);
+  const [styleImageError, setStyleImageError] = useState(null);
+  const [styleImageBusy, setStyleImageBusy] = useState(false);
 
   const open = (p) => {
     setPop(pop === p ? null : p);
@@ -2212,8 +2218,18 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
   // reads as models having gone missing from disk, not as a mode narrowing what
   // can run. The store already clears an incompatible selection when identity
   // engages (identityCompatibleSelections), so nothing here can be left picked.
-  const identityBlocked = (m) => hasIdentitySource &&
+  // MiniMax H3 is the exemption (9.67): its builds take the anchor's photo as
+  // a native reference - h3_ref_still on a ref2va build, the plain caption on
+  // fl2va - so the character locks nothing in this family.
+  const identityBlocked = (m) => hasIdentitySource && m.family !== "minimax_h3" &&
     !(m.family === "krea2" && (m.compatible_recipes || []).includes("identity_edit"));
+  // The H3 ref2va still is the one model row that NEEDS the anchor: with no
+  // character there is no reference to carry. Read off the recipe rows'
+  // needs_character flag (/api/options), matched by family+variant so
+  // identity_edit - which declares no variants - never greys a Krea 2 row.
+  const needsCharModel = (m) => !opts.character &&
+    recipes.some((r) => r.needs_character && r.family === m.family &&
+                 (r.variants || []).includes(m.variant));
   const styleKey = ["realism", "anime", "fantasy"].includes(opts.style)
     ? opts.style : "realism";
   const quality = opts.quality === "refined" ? "refined" : "standard";
@@ -2330,7 +2346,7 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
   };
 
   const chooseModel = (n, m) => {
-    if (!m.supported || identityBlocked(m)) return;
+    if (!m.supported || identityBlocked(m) || needsCharModel(m)) return;
     setOpts({ model: n }); setPop(null);
   };
 
@@ -2368,7 +2384,7 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       thumb: null, counts: new Map(), pickable: 0 });
       const group = by.get(key);
       group.models.push(n);
-      if (!identityBlocked(m)) group.pickable += 1;
+      if (!identityBlocked(m) && !needsCharModel(m)) group.pickable += 1;
       const variant = variantName(m.variant);
       if (variant) group.counts.set(variant, (group.counts.get(variant) || 0) + 1);
       if (m.is_new) group.isNew = true;
@@ -2477,6 +2493,28 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
     }
   };
 
+  // 9.66: a render file -> a style draft. The server reads the embedded
+  // ComfyUI metadata and answers a draft + what it could not map; the draft
+  // opens in the style editor (Chat owns the form) and saving stays the
+  // editor's own button. No metadata is an answer, not a crash.
+  const doStyleFromImage = async (f) => {
+    if (!f) return;
+    setStyleImageBusy(true); setStyleImageError(null);
+    try {
+      const r = await styleFromImage(f);
+      if (!r?.ok) {
+        setStyleImageError(r?.error || "no render metadata in that image");
+        return;
+      }
+      setPop(null);
+      onStyleFromImage && onStyleFromImage(r);
+    } catch (error) {
+      setStyleImageError("the image could not be read");
+    } finally {
+      setStyleImageBusy(false);
+    }
+  };
+
   const doUpload = async (f, kind) => {
     if (!f) return;
     setUploading(true); setRefError(null);
@@ -2538,8 +2576,9 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
         <div style={{ marginBottom: SPACE[8], padding: `${SPACE[6]}px ${SPACE[8]}px`,
                       border: "1px solid var(--border)", borderRadius: RADIUS.input,
                       color: "var(--textTer)", fontSize: TYPE.label, lineHeight: 1.45 }}>
-          Identity Edit runs on Krea 2. Other families stay listed but are greyed
-          until you clear the character or identity reference.
+          Identity Edit runs on Krea 2. MiniMax H3 stays pickable - the
+          character's photo is its reference. Other families are greyed until
+          you clear the character or identity reference.
         </div>
       )}
 
@@ -2603,10 +2642,13 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
           : group.variant ? (group.mixedFormats ? m.format || "" : "")
           : variant || familyName(m.family);
         const blocked = identityBlocked(m);
+        const needsChar = needsCharModel(m);
         return (
-          <Row key={n} sel={opts.model === n} disabled={blocked}
+          <Row key={n} sel={opts.model === n} disabled={blocked || needsChar}
                title={blocked
                  ? `${n}\n\nIdentity Edit runs on Krea 2. Clear the character or identity reference to pick this model.`
+                 : needsChar
+                 ? `${n}\n\nNeeds an active character - the reference photo is the identity.`
                  : n}
                onClick={() => chooseModel(n, m)}>
             <LoraThumb src={m.thumb} size={36} Glyph={Monitor} />
@@ -2633,6 +2675,7 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
               )}
             </div>
             <Tag>{blocked ? "not for identity"
+              : needsChar ? "needs character"
               : recipeDefault ? "profile default"
               : quality === "refined" ? "refined profile"
               : familyLabel}</Tag>
@@ -2772,9 +2815,22 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                                 letterSpacing: "0.08em", textTransform: "uppercase",
                                 color: "var(--textTer)" }}>
                     <span>saved styles</span>
+                    <button type="button" disabled={styleImageBusy}
+                      onClick={() => { setStyleImageError(null); styleImageRef.current?.click(); }}
+                      title="From image — reads ComfyUI metadata"
+                      style={{ marginLeft: "auto", display: "inline-flex",
+                               alignItems: "center", gap: SPACE[4], height: 20,
+                               padding: `0 ${SPACE[6]}px`, border: "none",
+                               background: "transparent",
+                               color: styleImageBusy ? "var(--textTer)" : "var(--accent)",
+                               fontFamily: FONT, fontSize: TYPE.label,
+                               textTransform: "none", letterSpacing: 0,
+                               cursor: styleImageBusy ? "default" : "pointer" }}>
+                      <ImageSquare size={10} weight="duotone" /> from image
+                    </button>
                     <button type="button" onClick={onNewStyle}
                       title="Save the current model, LoRA stack and sampler as a style"
-                      style={{ marginLeft: "auto", display: "inline-flex",
+                      style={{ marginLeft: SPACE[4], display: "inline-flex",
                                alignItems: "center", gap: SPACE[4], height: 20,
                                padding: `0 ${SPACE[6]}px`, border: "none",
                                background: "transparent", color: "var(--accent)",
@@ -2784,6 +2840,13 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       <Plus size={10} weight="bold" /> save current
                     </button>
                   </div>
+                  {styleImageError && (
+                    <div style={{ padding: `0 ${SPACE[8]}px ${SPACE[8]}px`,
+                                  color: "#E3A7B0", fontSize: TYPE.label,
+                                  lineHeight: 1.4 }}>
+                      {styleImageError}
+                    </div>
+                  )}
                   {savedStyles.map((saved) => {
                     // Under an identity source a style is pickable only when
                     // its model can carry the identity patch (any Krea 2
@@ -2834,6 +2897,31 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       <span>back to built-in styles</span>
                     </Row>
                   )}
+                  {/* The selected style's {slot} tokens as fields (9.77):
+                      the formula is the style's, the fills are the shoot's.
+                      Empty renders as the slot's default, so the placeholder
+                      IS the empty state - no reset button, no hint essay. */}
+                  {activeSavedStyle && Object.entries(activeSavedStyle.slots || {})
+                    .map(([name, slot]) => (
+                    <label key={name} style={{ display: "flex", flexDirection: "column",
+                                               gap: SPACE[4],
+                                               padding: `0 ${SPACE[8]}px ${SPACE[8]}px` }}>
+                      <span style={{ fontSize: 10, color: "var(--textTer)",
+                                     fontFamily: FONT, textTransform: "uppercase",
+                                     letterSpacing: "0.08em" }}>
+                        {(slot && slot.label) || name}
+                      </span>
+                      <input value={((opts.style_slots || {})[name]) || ""}
+                             placeholder={(slot && slot.default) || ""}
+                             onChange={(e) => setOpts({ style_slots:
+                               { ...(opts.style_slots || {}), [name]: e.target.value } })}
+                             style={{ width: "100%", height: 32, background: "var(--bg2)",
+                                      border: "1px solid var(--border)",
+                                      borderRadius: RADIUS.input, padding: `0 ${SPACE[10]}px`,
+                                      fontSize: TYPE.ui, color: "var(--text)",
+                                      fontFamily: FONT, outline: "none" }} />
+                    </label>
+                  ))}
                 </>
               )}
               {!hasIdentitySource && !opts.saved_style && styleKey === "realism" && (
@@ -3062,6 +3150,11 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
              onChange={(e) => {
                doUpload(e.target.files[0], uploadKindRef.current);
+               e.target.value = "";
+             }} />
+      <input ref={styleImageRef} type="file" accept="image/*" style={{ display: "none" }}
+             onChange={(e) => {
+               doStyleFromImage(e.target.files[0]);
                e.target.value = "";
              }} />
     </>

@@ -1572,6 +1572,61 @@ class LocalGpuLayersSpawnTests(unittest.IsolatedAsyncioTestCase):
             kill.assert_not_called()
 
 
+class AdoptedBrainPidTests(unittest.TestCase):
+    """_adopted_brain_pid: the port holder's command line is the spawn
+    receipt, and since 9.68 the receipt is the SCRIPT, not the tree - any
+    pixal_brain_server.py, from any directory, is ours to rest. A stranger
+    (run_llm.bat, a bare llama-server serving the very same gguf, a script
+    whose name merely contains ours) keeps None, and so does every lookup
+    failure: a guessed pid kills the wrong process."""
+
+    def _adopt(self, cmdline, pids=(4242,)):
+        with patch.object(server, "_local_llm_port_pids",
+                          return_value=list(pids)), \
+             patch.object(server, "_process_cmdline",
+                          side_effect=lambda pid: cmdline):
+            return server._adopted_brain_pid()
+
+    def test_a_brain_script_from_this_tree_is_ours(self):
+        # The pre-9.68 case, unchanged: our own tree's absolute path still
+        # ends in the basename the proof reads.
+        script = server.HERE / "pixal_brain_server.py"
+        cmdline = (f'C:\\py\\python.exe "{script}" '
+                   f'--port {server.LOCAL_LLM_PORT}')
+        self.assertEqual(self._adopt(cmdline), 4242)
+
+    def test_a_brain_script_from_another_tree_is_ours(self):
+        # 2026-08-27 21:50, measured live: pid 26144, spawned 20:37 by a
+        # repo-tree Pixal that had exited; the INSTALLED tree adopted it for
+        # every chat turn while the absolute-path proof answered None, and
+        # 7.18 GB priced as "other" until renders hit 31.1 GB. This is that
+        # process's command line, tree names verbatim.
+        cmdline = (r"X:\ComfyUI_Pixal3D\python_embeded\python.exe "
+                   r"C:\Users\Jesse\AppData\Local\Programs\Pixal"
+                   r"\pixal_brain_server.py --model X:\models"
+                   r"\qwen3-vl-4b-heretic-Q8_0.gguf --n_gpu_layers -1")
+        self.assertEqual(self._adopt(cmdline), 4242)
+
+    def test_a_stranger_on_the_port_keeps_none(self):
+        # run_llm.bat territory: a foreign server, even one serving the very
+        # same gguf, and a script whose name merely CONTAINS ours - the
+        # basename must be exact.
+        same = r"X:\models\qwen3-vl-4b-heretic-Q8_0.gguf"
+        for cmdline in (r"C:\llama\run_llm.bat",
+                        rf"C:\llama\llama-server.exe --model {same}",
+                        r"C:\py\python.exe C:\py\my_pixal_brain_server.py"):
+            with self.subTest(cmdline=cmdline):
+                self.assertIsNone(self._adopt(cmdline))
+
+    def test_every_lookup_failure_keeps_none(self):
+        # No pids on the port at all, and a holder whose command line cannot
+        # be read: None is the only safe failure answer. A RAISED lookup is
+        # the caller's try/except - covered through _ensure_local_llm by
+        # test_a_failed_owner_lookup_still_adopts_pid_less.
+        self.assertIsNone(self._adopt(None, pids=()))
+        self.assertIsNone(self._adopt(None))
+
+
 class FreeChatModelTests(unittest.IsolatedAsyncioTestCase):
     """The one flush /api/comfy/free deliberately refuses to do.
 

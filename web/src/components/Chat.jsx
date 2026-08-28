@@ -1424,6 +1424,17 @@ export const Chat = () => {
                                setStyleEditId(id);
                                setStyleFormOpen(true);
                              }}
+                             // 9.66: a render's ComfyUI metadata, translated
+                             // server-side, opens as a draft in the same
+                             // editor "save current" uses. unmapped rides
+                             // along so the form can name what did not map.
+                             onStyleFromImage={(r) => {
+                               setStyleDraft({ ...(r.style || {}),
+                                               fromImage: { unmapped: r.unmapped || [],
+                                                            source: r.source } });
+                               setStyleEditId("");
+                               setStyleFormOpen(true);
+                             }}
                              addReference={(kind, file) => store.addReference(kind, file)}
                              deleteCharacter={(id) => store.deleteCharacter(id)}
                              options={store.options}

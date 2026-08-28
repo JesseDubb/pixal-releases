@@ -169,6 +169,10 @@ class _WatchStubHub:
         self.prev_job_free_min = None
         self.calls = []
         self.texts = []
+    gpu = None        # 9.76: no card read -> the headroom rule stays out
+
+    def ledger_read(self):   # 9.76: no ledger -> the constants price
+        return []
 
     async def flush_comfy_cache(self, why, unload=True, free_memory=True):
         if unload:

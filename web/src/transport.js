@@ -157,6 +157,15 @@ export const review = (id, cid) => post("/api/review", { id, cid });
 
 // Saved styles — user-authored recipes in recipes/*.json.
 export const saveStyle = (style) => post("/api/styles", { style });
+// 9.66: draft a style from an image's embedded ComfyUI metadata. The answer
+// is a draft for review (style + mapped/unmapped + scene), never a save -
+// the user still presses save in the editor, which is saveStyle above.
+export const styleFromImage = async (file) => {
+  const fd = new FormData();
+  fd.append("image", file, file.name || "render.png");
+  const r = await fetch("/api/styles/from-image", { method: "POST", body: fd });
+  return r.json();
+};
 export const deleteStyle = async (id) =>
   (await fetch("/api/styles/" + encodeURIComponent(id), { method: "DELETE" })).json();
 // Whether this base+model pairing has a tunable sampler at all, what values it

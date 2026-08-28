@@ -707,7 +707,7 @@ and the clear-anime profile keeps its own matched VAE either way.
 counts ("3 whole-frame, 2 masked compatible installed."). **whole frame**
 runs when there is no mask; **masked area** runs when a mask is painted.
 Each option names the build and what it weighs on disk ("Qwen Image Edit
-2511 · 10.4 GB"); a build heavier than your card says so in its tooltip —
+2511 · 10.4 GB"); a build heavier than your card says so under its name —
 it will offload and run slowly, nothing is blocked. Both default to the
 recipe's own. The tip: a painted mask routes the edit to the masked lane;
 no mask runs the whole-frame lane. Whole-frame releases differ in encoder
@@ -790,8 +790,8 @@ In short:
   then "API key saved (ends …XXXX) - blank keeps it". The lock note: "Only
   your provider sees the key — never the PNG metadata." **Test connection**
   answers "connected - <model>" or the provider's error.
-- Local: a list of the .gguf chat models found in your model folders, each
-  with its quant, size, and VISION / NSFW chips. The lock note: "Runs
+- Local: a dropdown of the .gguf chat models found in your model folders,
+  each with its quant, size, and VISION / NSFW tags. The lock note: "Runs
   entirely on this PC — nothing leaves the machine." "Keep in memory" vs
   "Unload after reply" — the tip holds the trade-off (loaded: instant
   replies, but a few GB of VRAM held next to your renders; unloaded: the
@@ -1152,7 +1152,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.1b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.2b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

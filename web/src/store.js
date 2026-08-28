@@ -47,7 +47,7 @@ function loadOpts() {
   const defaults = { engine: "auto", style: "realism", quality: "standard",
                      model: "", aspect: "", mp: null, cinematic: false,
                      loras: [], lora_plans: {}, refs: [], character: "",
-                     saved_style: "", dials: {}, tuning: {} };
+                     saved_style: "", dials: {}, tuning: {}, style_slots: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(OPTS_KEY)) || {};
     const o = { ...defaults, ...saved };
@@ -58,6 +58,8 @@ function loadOpts() {
     o.refs = Array.isArray(o.refs) ? o.refs : [];
     o.cinematic = o.cinematic === true;
     o.saved_style = typeof o.saved_style === "string" ? o.saved_style : "";
+    o.style_slots = o.style_slots && typeof o.style_slots === "object"
+      && !Array.isArray(o.style_slots) ? o.style_slots : {};
     if (!["realism", "anime", "fantasy"].includes(saved.style))
       o.style = o.engine === "anime" || o.engine === "fantasy" ? o.engine : "realism";
     if (!["standard", "refined"].includes(saved.quality))
@@ -91,6 +93,10 @@ function reconcileOpts(options) {
     healed.model = "";
     healed = withExecutionRecipe(healed, options);
   }
+  // The same 9.75 carry as setOpts: a heal that re-routes within one family
+  // (h3_still_2x going unavailable drops Refined to h3_still) moves the
+  // tuning with it instead of stranding it on the old recipe id.
+  healed.tuning = carryTuning(state.opts, healed, options);
   if (JSON.stringify(healed) !== JSON.stringify(state.opts)) {
     state.opts = healed;
     try { localStorage.setItem(OPTS_KEY, JSON.stringify(state.opts)); } catch { /* full */ }
@@ -129,7 +135,22 @@ export function savedStyleFor(opts, options) {
 export function activeRecipeId(opts, options) {
   opts = opts || {};
   options = options || {};
-  if (opts.character || (opts.refs || []).some((r) => r.kind === "identity" && r.file))
+  // Mirrors effective_recipe's precedence exactly: a character routes to
+  // identity_edit UNLESS the picked model is MiniMax H3 (9.67) - the anchor's
+  // photo rides H3's own reference input, so the ref2va build runs
+  // h3_ref_still and an fl2va build keeps its still pair. This check has to
+  // sit ABOVE the identity return: the LoRA plan the composer attaches is
+  // keyed by this id, and an identity_edit plan sent to an H3 still was
+  // refused by the server ("lora_plan is for identity_edit, not
+  // h3_ref_still", Jesse 2026-08-27).
+  if (opts.character) {
+    const h3 = ((options.model_meta || {})[opts.model]) || {};
+    if (h3.family === "minimax_h3")
+      return h3.variant === "ref2va" ? "h3_ref_still"
+        : opts.quality === "refined" ? "h3_still_2x" : "h3_still";
+    return "identity_edit";
+  }
+  if ((opts.refs || []).some((r) => r.kind === "identity" && r.file))
     return "identity_edit";
   // Mirrors effective_recipe's precedence exactly - identity first, then a
   // saved style, then style/quality. These two functions duplicate each other's
@@ -149,10 +170,12 @@ export function activeRecipeId(opts, options) {
   if (meta?.family === "qwen_image") return "qwen_image";
   // Anima IS the style - one graph, no style or quality variants.
   if (meta?.family === "anima") return "anima";
-  // An H3 fl2va build picked for a still renders one frame on h3_still; the
-  // Refined quality adds the in-family 2x latent refine (h3_still_2x).
+  // An H3 build picked for a still renders one frame: the ref2va build runs
+  // the reference still (9.67); an fl2va build runs h3_still, with the
+  // Refined quality adding the in-family 2x latent refine (h3_still_2x).
   if (meta?.family === "minimax_h3")
-    return opts.quality === "refined" ? "h3_still_2x" : "h3_still";
+    return meta.variant === "ref2va" ? "h3_ref_still"
+      : opts.quality === "refined" ? "h3_still_2x" : "h3_still";
   if (style === "anime" || style === "fantasy") return style;
   return opts.quality === "refined" ? "realism_ii" : "realism";
 }
@@ -166,8 +189,24 @@ export function withExecutionRecipe(opts, options) {
   // never rewrite the creative style that should return when the anchor/ref is
   // cleared.
   if (opts.character || (opts.refs || []).some((ref) =>
-      ref.kind === "identity" && ref.file))
+      ref.kind === "identity" && ref.file)) {
+    // H3 carries the anchor's photo through its own reference input (9.67):
+    // with one picked the anchor is NOT an identity_edit mode - the ref2va
+    // build runs the reference still, fl2va keeps its still pair, and the
+    // style pin is the non-identity path's (realism, refined gated on
+    // h3_still_2x's availability; ref2va has no 2x variant).
+    const idMeta = ((options || {}).model_meta || {})[opts.model];
+    if (opts.character && idMeta?.family === "minimax_h3") {
+      const h3Quality = idMeta.variant !== "ref2va" &&
+        opts.quality === "refined" && (options?.recipes || [])
+          .some((r) => r.id === "h3_still_2x" && r.available)
+        ? "refined" : "standard";
+      return { ...opts, style: "realism", quality: h3Quality,
+               engine: activeRecipeId(
+                 { ...opts, style: "realism", quality: h3Quality }, options) };
+    }
     return { ...opts, style, quality, engine: "identity_edit" };
+  }
   // A saved style owns the graph. style/quality are still carried, normalized,
   // so clearing the style returns the composer to a sane creative pick rather
   // than to whatever was in localStorage before.
@@ -434,6 +473,49 @@ export function tuningOverrides(opts, options) {
   return ((opts?.tuning || {})[activeRecipeId(opts, options)]) || {};
 }
 
+// 9.75 - custom tuning follows the family. The overrides are keyed per
+// recipe (above), so a model or quality pick that re-routes the execution
+// recipe used to strand them under the old id: the card read the new id's
+// empty map and looked reset (Jesse, 2026-08-27: "it resets my settings
+// when I choose a new minimax h3 version"). When the new recipe's sampler
+// seat is the old one's twin - same recipe family, same node class, same
+// sampler/scheduler lists, per the /api/options signatures - the map MOVES
+// across: one live copy follows the switch, so switching back carries back
+// whatever the card shows then. A value the new seat cannot take (a key it
+// lacks, a choice it does not list) drops alone; anything else leaves the
+// map exactly where it was - cross-family switches still reset, and a saved
+// style's base is never written (the style file owns its schedule).
+export function carryTuning(prev, next, options) {
+  const map = next?.tuning || {};
+  const prevId = activeRecipeId(prev, options);
+  const nextId = activeRecipeId(next, options);
+  if (!prevId || !nextId || prevId === nextId) return map;
+  const overrides = map[prevId];
+  if (!overrides || !Object.keys(overrides).length) return map;
+  if (savedStyleFor(next, options)) return map;
+  const prevRecipe = recipeById(prevId, options);
+  const nextRecipe = recipeById(nextId, options);
+  const from = prevRecipe?.sampler, to = nextRecipe?.sampler;
+  if (!from || !to || !prevRecipe?.family ||
+      prevRecipe.family !== nextRecipe?.family || from.class !== to.class)
+    return map;
+  for (const k of ["sampler_name", "scheduler"])
+    if (JSON.stringify(from.choices?.[k] || []) !==
+        JSON.stringify(to.choices?.[k] || [])) return map;
+  const carried = {};
+  for (const [k, v] of Object.entries(overrides)) {
+    if (!(to.keys || []).includes(k)) continue;
+    const listed = (to.choices || {})[k];
+    if (listed && listed.length && !listed.includes(v)) continue;
+    carried[k] = v;
+  }
+  const out = { ...map };
+  delete out[prevId];
+  if (Object.keys(carried).length) out[nextId] = carried;
+  else delete out[nextId];
+  return out;
+}
+
 // What the composer is LOOKING at: the override where one is set, the recipe's
 // own value where it is not. The re-roll sends these so it lands on the
 // settings on screen rather than the ones the card was born with - the likeness
@@ -537,6 +619,15 @@ export function renderIntent(promptEnhance, o = state.opts) {
   // canvas, LoRA plan and sampler, so a stale mirror in this tab cannot
   // change what renders.
   if (savedStyle) body.saved_style = savedStyle.id;
+  // The style frame's {slot} fills (9.77): sparse like the dials - an
+  // untouched slot sends nothing and renders as its declared default, and a
+  // fill for a slot the style does not declare never leaves this tab.
+  const slotFills = {};
+  for (const name of Object.keys((savedStyle && savedStyle.slots) || {})) {
+    const v = String(((o.style_slots || {})[name]) || "").trim();
+    if (v) slotFills[name] = v;
+  }
+  if (Object.keys(slotFills).length) body.style_slots = slotFills;
   if (o.style && styleLands) body.style = o.style;
   if (o.quality) body.quality = o.quality;
   if (o.cinematic && promptEnhance) body.cinematic = true;
@@ -824,7 +915,7 @@ export const api = {
     // visible pill unchanged.
     if (next.saved_style && !("saved_style" in patch) &&
         ["model", "style", "quality"].some((k) => k in patch))
-      next.saved_style = "";
+      { next.saved_style = ""; next.style_slots = {}; }
     if (state.options) {
       next = withExecutionRecipe(next, state.options);
       const catalog = state.options.model_meta || {};
@@ -832,6 +923,7 @@ export const api = {
       if (next.model && Object.keys(catalog).length && !meta?.supported) {
         next = withExecutionRecipe({ ...next, model: "" }, state.options);
       }
+      next.tuning = carryTuning(state.opts, next, state.options);
       next = syncActiveLoraPlan(next, state.options, legacyExtras);
     }
     state.opts = next;
@@ -962,7 +1054,7 @@ export const api = {
   // without any of them learning about styles. The server still reads the file
   // at render time; this is display, and display is allowed to be a copy.
   selectSavedStyle(id) {
-    if (!id) { this.setOpts({ saved_style: "" }); return true; }
+    if (!id) { this.setOpts({ saved_style: "", style_slots: {} }); return true; }
     const style = ((state.options || {}).saved_styles || []).find((s) => s.id === id);
     if (!style?.available) return false;
     // A style no longer evicts a selected character when its model can carry
@@ -972,7 +1064,10 @@ export const api = {
     const keepCharacter = !!state.opts.character &&
       modelSupportsRecipe(style.model, "identity_edit", state.options);
     const patch = { saved_style: id, model: style.model,
-                    ...(keepCharacter ? {} : { character: "" }) };
+                    ...(keepCharacter ? {} : { character: "" }),
+                    // A new style's slots are new questions: another style's
+                    // fills must not ride into its frame (9.77).
+                    style_slots: {} };
     // The style file owns the schedule: a quick-tuning override left on its
     // base would silently ride over the tuning the user just chose.
     const tuning = { ...(state.opts.tuning || {}) };

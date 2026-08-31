@@ -26,11 +26,21 @@ SRC = (ROOT / "web" / "src" / "components" / "SettingsMenu.jsx") \
     .read_text(encoding="utf-8")
 PICKER = (ROOT / "web" / "src" / "lib" / "Picker.jsx").read_text(encoding="utf-8")
 
-# The Edit model section: from its heading to the "finishing" group label
-# (the Upscaler section). The VAE ScrollPicker sits just ABOVE the heading
-# and the upscale one below the label - neither is this brief's control.
+# The Edit model section: from its heading to the H3 models section (9.91)
+# that follows it - the "finishing" group label used to be the bound. The
+# VAE ScrollPicker sits just ABOVE the heading and the upscale one below
+# the label - neither is this brief's control.
 EDIT = SRC.split("<Section title={<>Edit model", 1)[1] \
-          .split("<GroupLabel>finishing</GroupLabel>", 1)[0]
+          .split("<Section title={<>MiniMax H3", 1)[0]
+
+# The MiniMax H3 section: 9.91's two model pickers plus 9.94's text encoder,
+# all on the same shared-Picker contract this file polices and the same 28px
+# ghost box. The encoder moved here from VRAM profile on 2026-08-31 - Jesse,
+# "I want the option in settings under minimax": the two build rows and the
+# encoder row all answer what an H3 render loads, and a MiniMax setting filed
+# under a global VRAM list is a setting nobody finds.
+H3 = SRC.split("<Section title={<>MiniMax H3", 1)[1] \
+        .split("<GroupLabel>finishing</GroupLabel>", 1)[0]
 
 
 class SharedPickerTests(unittest.TestCase):
@@ -95,12 +105,95 @@ class PickContractTests(unittest.TestCase):
 
 class GhostTests(unittest.TestCase):
 
+
     def test_the_ghost_is_the_triggers_own_box(self):
         # the shared trigger is a fixed 28px; the loading hold finally
         # matches it instead of PickerGhost's 38px ScrollPicker stand-in
         self.assertIn("height: 28", PICKER)
         self.assertEqual(EDIT.count("<Bar h={28} />"), 2)
         self.assertNotIn("<PickerGhost", EDIT)
+
+
+class H3PickerTests(unittest.TestCase):
+    """9.91's two H3 model rows: the same shared Picker, the same ghost
+    box, and an explicit Automatic option that names what it resolves to."""
+
+    def test_both_h3_fields_render_the_shared_picker(self):
+        # three rows since the encoder joined them: two builds, one encoder
+        self.assertEqual(H3.count("<Picker"), 3)
+        self.assertIn('label="Reference model"', H3)
+        self.assertIn('label="First/last-frame model"', H3)
+        self.assertIn('value={h3Cfg.ref_model || ""}', H3)
+        self.assertIn('value={h3Cfg.fl_model || ""}', H3)
+
+    def test_the_h3_section_renders_no_scrollpicker(self):
+        self.assertNotIn("<ScrollPicker", H3)
+        self.assertNotIn("onPick={", H3)
+
+    def test_the_h3_picks_post_the_slot_payloads(self):
+        self.assertIn("setH3Cfg({ ...h3Cfg, ref_model: name })", H3)
+        self.assertIn("apply({ h3: { ref_model: name } },", H3)
+        self.assertIn("setH3Cfg({ ...h3Cfg, fl_model: name })", H3)
+        self.assertIn("apply({ h3: { fl_model: name } },", H3)
+
+    def test_automatic_is_a_real_option_that_names_its_resolution(self):
+        # value "" matches it, so the trigger reads what Automatic resolves
+        # to - the screen never hides the actual answer (9.91's whole point)
+        self.assertIn('id: "",', SRC)
+        self.assertIn('label: resolved ? `Automatic — ${resolved.label}` : "Automatic"',
+                      SRC)
+        self.assertIn('placeholder="Automatic"', H3)
+
+    def test_a_stale_pick_stays_listed_and_says_automatic_is_running(self):
+        self.assertIn("side.stale && stored", SRC)
+        self.assertIn("missing, running Automatic", SRC)
+
+    def test_the_h3_ghost_is_the_triggers_own_box(self):
+        self.assertEqual(H3.count("<Bar h={28} />"), 3)
+        self.assertNotIn("<PickerGhost", H3)
+
+
+# The VRAM profile section: from its heading to Model folders. The encoder
+# row USED to live here and no longer does - the assertion below is what
+# keeps it from drifting back.
+VRAM = SRC.split("<Section title={<>VRAM profile", 1)[1] \
+          .split('<Section title="Model folders"', 1)[0]
+
+
+class H3TextEncoderTests(unittest.TestCase):
+    """9.94's text encoder row: the same shared Picker and 28px ghost box,
+    seated with the H3 build slots, posting the h3.text_encoder payload."""
+
+    def test_the_row_renders_the_shared_picker(self):
+        self.assertIn('label="Text encoder"', H3)
+        self.assertIn('value={h3Cfg.text_encoder || ""}', H3)
+        self.assertIn("options={h3EncoderOptions(h3Cfg)}", H3)
+        self.assertNotIn("<ScrollPicker", H3)
+
+    def test_it_is_seated_under_minimax_not_under_vram(self):
+        # Jesse, 2026-08-31: "I want the option in settings under minimax".
+        # VRAM profile keeps its own controls and gains no model pickers.
+        self.assertEqual(VRAM.count("<Picker"), 0)
+        self.assertNotIn("text_encoder", VRAM)
+
+    def test_the_pick_posts_the_slot_payload(self):
+        self.assertIn("setH3Cfg({ ...h3Cfg, text_encoder: id })", H3)
+        self.assertIn("apply({ h3: { text_encoder: id } },", H3)
+
+    def test_automatic_names_the_32b_and_every_option_says_its_cost(self):
+        # the row is a VRAM control: the size is the point, so Automatic's
+        # label and every pair's label carry the encoder's weight
+        self.assertIn('label: `Automatic — ${auto.label || "Qwen3-VL 32B"}${gb(auto.size)}`',
+                      SRC)
+        self.assertIn("label: `${o.label}${gb(o.size)}`", SRC)
+
+    def test_a_stale_pick_stays_listed_and_says_automatic_is_running(self):
+        self.assertIn("row.stale && stored", SRC)
+        self.assertIn("missing, running Automatic", SRC)
+
+    def test_the_ghost_is_the_triggers_own_box(self):
+        self.assertEqual(VRAM.count("<Bar h={28} />"), 0)
+        self.assertNotIn("<PickerGhost", H3)
 
 
 class RetentionTests(unittest.TestCase):

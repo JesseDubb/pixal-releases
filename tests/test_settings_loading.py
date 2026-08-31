@@ -5,12 +5,12 @@ LTX / Minimax options all of a sudden as the entire page shifts vertical
 spacing and content is pulled in." … "desklight ghost or skeleton loads the
 page."
 
-Twelve slots in SettingsMenu start empty. Eleven land together from
+Thirteen slots in SettingsMenu start empty. Twelve land together from
 /api/settings - cfg, upscale, editCfg, vae, pidCfg, videoCfg, localList,
-criticInstalled, roots, extraRoots. (The brief's eleventh name, `note`, gets
+criticInstalled, roots, extraRoots, h3Cfg. (The eleventh name, `note`, gets
 no ghost: it is action feedback pinned below the scroll region, holds no
 panel space while loading, and says nothing until the user acts - there is
-nothing to ghost.) The twelfth, `upd`, is About's update check (9.24a).
+nothing to ghost.) The thirteenth, `upd`, is About's update check (9.24a).
 Before this brief every control derived from those slots rendered COLLAPSED
 first - one segment until videoCfg landed, then four, and everything below
 it moved - or lied: Explicit content showed "auto" selected while the
@@ -55,9 +55,17 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 # (engine, model, the 9.38 dialogue format, and the 9.31 H3 2× default);
 # upscale owns three (its Image-tab controls, its Video-tab controls, and
 # the Image-tab installed-count gloss); editCfg owns two (the picker and
-# its count gloss).
+# its count gloss). h3Cfg owns ONE: 9.91's two model pickers and 9.94's text
+# encoder are all in the MiniMax H3 section now, so a single gate swaps three
+# 28px Bar ghosts for three Pickers. (The encoder briefly had a second gate of
+# its own under VRAM profile; it moved on 2026-08-31 - Jesse, "I want the
+# option in settings under minimax" - and one gate covering the section is the
+# better shape anyway: the three rows land together or not at all.)
 GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 2,
-         "vae": 1, "pidCfg": 1, "upd": 1}
+         "vae": 1, "pidCfg": 1, "upd": 1,
+         # 1.1.4b: the still finish. Its own slot rather than a videoCfg key -
+         # it is an image setting and it lands on the Image tab.
+         "stillCfg": 1, "h3Cfg": 1}
 
 GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<LineGhost", "<ValueGhost", "<Bar")
 

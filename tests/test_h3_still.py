@@ -152,7 +152,7 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(server.compatible_recipes(self.profile(FINETUNE)),
                          ["h3_still", "h3_still_2x"])
         self.assertEqual(server.compatible_recipes(self.profile(REF2VA)),
-                         ["h3_ref_still"])
+                         ["h3_ref_still", "h3_ref_still_2x"])
         self.assertEqual(server.compatible_recipes(self.profile(LTX)), [])
 
     def test_the_recipe_spec(self):
@@ -244,8 +244,13 @@ class GraphTests(unittest.TestCase):
             "a frozen instant held completely still - "))
         self.assertIn(cap, prompt)
         self.assertIn("A red barn at dusk", prompt)
-        self.assertIn("The subject holds the pose; nothing in the frame "
-                      "moves.", prompt)
+        # 1.1.4b: the freeze instruction LEADS and the caption closes the
+        # shot, so the wardrobe lock is the last thing the model reads. It
+        # used to trail the caption and took that position instead - which
+        # is what undressed the subject.
+        self.assertIn("still - the subject holds the pose and nothing in "
+                      "the frame moves. ", prompt)
+        self.assertTrue(prompt.split("\n\n")[0].rstrip().endswith(cap))
         self.assertTrue(prompt.endswith(
             "\n\noverall_soundscape: Room tone, steady, synchronized."))
         # The still lane never calls the director: no H3 video fields.
@@ -596,9 +601,13 @@ class ClientRoutingTests(unittest.TestCase):
     def test_store_routes_minimax_h3_by_variant(self):
         # 9.67: the ref2va build routes to the reference still; 9.59's fl2va
         # rule stands behind it (refined -> 2x, standard -> plain still).
+        # 9.84: BOTH sides now carry the quality pair - before it the ref2va
+        # branch returned h3_ref_still without consulting opts.quality.
         self.assertRegex(
             STORE, r'meta\?\.family === "minimax_h3"\)\s*'
-                   r'return meta\.variant === "ref2va" \? "h3_ref_still"\s*'
+                   r'return meta\.variant === "ref2va"\s*'
+                   r'\? \(opts\.quality === "refined" '
+                   r'\? "h3_ref_still_2x" : "h3_ref_still"\)\s*'
                    r': opts\.quality === "refined" '
                    r'\? "h3_still_2x" : "h3_still";')
 

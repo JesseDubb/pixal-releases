@@ -270,8 +270,9 @@ class RenderTests(Case):
         up.mark_up()
         up.port_ok = True
         up.gpu = (2048, 32607, 4, 38)
-        up.sampling = (60, 6, 10, "2m 58s", "44.34s/it")
+        up.sampling = (60, 16, 20, "00:06", "1.63s/it")
         up.sampling_at = tui.time.monotonic()
+        up.queue = (1, 2)          # one on the card, two behind it
 
         dead, _ = self.booting(31.4)
         dead.died_at = dead.t0 + 4
@@ -291,6 +292,42 @@ class RenderTests(Case):
                     for line in frame:
                         self.assertLessEqual(tui._plain_len(line), width,
                                              f"{name} {width}x{height}: {line!r}")
+
+    def test_the_step_count_survives_a_full_queue(self):
+        """THE regression. row() clips the left text to `panel - 4 - right`,
+        and the sampler bar used to be sized against a different number with a
+        max(10, ...) floor. Once the queue depth widened the right column the
+        floor won, the text overran the budget, and clip_ansi ate the END of
+        the line - so "16/20" was drawn as "16/". A step counter that silently
+        loses a digit is worse than no counter, because it reads as real.
+
+        The bar is the thing that may shrink here. The number is not.
+        """
+        state = self.states()["up"]
+        for width, height in self.SIZES:
+            with self.subTest(size=(width, height)):
+                frame = tui.compose(state, width, height, self.PATHS, False)
+                line = next((ln for ln in frame if "sampling" in ln), None)
+                if line is None:
+                    continue          # too small for the box at all
+                self.assertIn("16/20", line)
+                self.assertLessEqual(tui._plain_len(line), width)
+
+    def test_the_depth_is_shown_without_costing_the_count(self):
+        state = self.states()["up"]
+        wide = tui.compose(state, 120, 50, self.PATHS, False)
+        line = next(ln for ln in wide if "sampling" in ln)
+        self.assertIn("16/20", line)
+        self.assertIn("+2", line)     # two waiting, in the compact form
+        self.assertIn("1.63s/it", line)
+
+    def test_no_queue_means_no_depth_marker(self):
+        state = self.states()["up"]
+        state.queue = (1, 0)
+        line = next(ln for ln in tui.compose(state, 120, 50, self.PATHS, False)
+                    if "sampling" in ln)
+        self.assertIn("16/20", line)
+        self.assertNotIn("+", line.split("16/20")[1])
 
     def test_the_way_out_is_never_the_thing_that_gets_cut(self):
         """On a console too short for the dashboard, the log path and the keys

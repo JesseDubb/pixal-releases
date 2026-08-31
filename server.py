@@ -89,6 +89,13 @@ def load_characters():
             try:
                 ch = json.loads(p.read_text(encoding="utf-8"))
                 if ch.get("id") and ch.get("name"):
+                    # 9.81: neutral_wardrobe and identity_ref_original are dead
+                    # fields from the deleted neutralisation lane - ignored on
+                    # load, shed on the next write. identity_ref itself is never
+                    # rewritten: a generated neutral frame stays the reference
+                    # every past render of the character used.
+                    ch.pop("neutral_wardrobe", None)
+                    ch.pop("identity_ref_original", None)
                     out[ch["id"]] = ch
             except Exception:
                 pass
@@ -321,6 +328,48 @@ def character_identity_rev(ch):
     except (ValueError, OSError):
         return None
 
+
+# Accessory references (brief 9.83): a character can carry up to eight extra
+# input images (the H3 node has nine slots and identity holds slot 0 -
+# H3_REF_ACCESSORY_MAX), each with a REQUIRED one-line description that
+# becomes its <Subject N> definition, each independently toggleable. The
+# builder half, character_h3_refs, lives beside build_h3_ref_still.
+def validate_character_accessories(raw):
+    """The anchor's accessory list on the way in: a normalized list, or
+    ValueError naming the entry. image is validated by input_ref_name exactly
+    as identity_ref (traversal rejected, the file must sit in ComfyUI/input);
+    description is required because the model addresses wired references by
+    their <Subject N> definition - an undeclared picture is tokens riding
+    every sampling step for nothing."""
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("accessories must be a list")
+    if len(raw) > H3_REF_ACCESSORY_MAX:
+        raise ValueError(
+            f"at most {H3_REF_ACCESSORY_MAX} accessories - the H3 reference "
+            f"node has {H3_REF2V_MAX_IMAGES} slots and the identity photo "
+            "holds one")
+    out = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ValueError(f"accessory {i + 1} is not an object")
+        image = input_ref_name(entry.get("image"))
+        if not image:
+            raise ValueError(f"accessory {i + 1} has a bad image name")
+        if not (CDIR / "input" / image).is_file():
+            raise ValueError(
+                f"accessory {i + 1}'s image is not in ComfyUI/input: {image}")
+        description = " ".join(str(entry.get("description") or "").split())
+        if not description:
+            raise ValueError(
+                f"accessory {i + 1} needs a description - the model names the "
+                "wired picture by it")
+        out.append({"image": image, "description": description,
+                    "enabled": bool(entry.get("enabled", True))})
+    return out
+
+
 def character_subject(ch):
     """The standing 'who is this person' block for txt2img captions."""
     if ch.get("subject_block"):
@@ -407,7 +456,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.2b"
+PIXAL_VERSION = "1.1.4b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -471,6 +520,14 @@ def load_config():
            # Upscaling is a finishing step, not a recipe: the image side runs any
            # installed ESRGAN-style model, the video side runs the RTX VSR filter.
            "upscale": {"image_model": "", "image_mode": UPSCALE_IMAGE_DEFAULT_MODE,
+                       # The still-side VSR tier + scale (9.79) are SEPARATE
+                       # keys from video_mode/video_scale: those are the
+                       # user's clip settings, and a still preference must
+                       # not drag them around - video_scale=1.0 (the fps-only
+                       # finish) would silently turn the still enlarger into
+                       # a no-op.
+                       "image_vsr_mode": UPSCALE_IMAGE_DEFAULT_VSR_MODE,
+                       "image_vsr_scale": 2.0,
                        "video_mode": UPSCALE_VIDEO_DEFAULT_MODE,
                        "video_scale": 2.0,
                        # 0 = the clip's own rate (9.53); 30/48/60 RIFE-
@@ -487,6 +544,27 @@ def load_config():
            # EDIT_ACCELERATORS, never from the user, because a distillation
            # belongs to one transformer.
            "edit": {"model": "", "inpaint_model": "", "speed": "turbo"},
+           # Which H3 builds the lanes reach for when a render names none
+           # (9.91). Two slots because H3 has two lanes and they take
+           # different weights: ref_model serves the reference lanes
+           # (h3_ref_still, h3_ref_still_2x, h3_ref2v), fl_model the
+           # first/last-frame ones (h3_still, h3_still_2x, h3_i2v,
+           # h3_multishot). "" = resolve by scan: one installed candidate
+           # is the default, several keep the standing preference. A
+           # hybrid fl2va/ref2va build is a candidate for BOTH slots. A
+           # pick whose file leaves the catalog degrades to the scan
+           # answer (reported on /api/settings) rather than raising. This
+           # is NOT the Animate popup's opening chip - that stays
+           # video.default_model, a different question.
+           "h3": {"ref_model": "", "fl_model": "",
+                # Which text encoder every H3 lane loads (9.94): "" = the
+                # stock 32B, exactly as before; an id from
+                # H3_TEXT_ENCODER_OPTIONS loads that small encoder through
+                # ClipProjLoader with its projection. One decision, not
+                # five - the node's mode/device stay fixed. A pick whose
+                # files leave the catalog degrades to the 32B (reported on
+                # /api/settings) rather than raising.
+                "text_encoder": ""},
            # Optional decoder swap for the Z-Image/Flux VAE - "" keeps the
            # profile's own matched VAE. See zimage_vae_candidates().
            "vae": {"zimage": ""},
@@ -515,6 +593,11 @@ def load_config():
            "video": {"default_engine": "", "default_model": "",
                      "upscale_2x": False, "h3_resolution": "standard",
                      "h3_dialogue_tags": "quotes"},
+           "still": {"skin_finish": False,
+                     # 9.93: de-shine, numpy on the delivered frame. Needs no
+                     # file, node or VRAM, so the toggle is the whole gate -
+                     # still OFF until judged, like every other finisher.
+                     "de_shine": False},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -565,9 +648,11 @@ def load_config():
             cfg["critic"].update(saved.get("critic") or {})
             cfg["upscale"].update(saved.get("upscale") or {})
             cfg["edit"].update(saved.get("edit") or {})
+            cfg["h3"].update(saved.get("h3") or {})
             cfg["vae"].update(saved.get("vae") or {})
             cfg["pid"].update(saved.get("pid") or {})
             cfg["video"].update(saved.get("video") or {})
+            cfg["still"].update(saved.get("still") or {})
             cfg["extra_model_roots"] = saved.get("extra_model_roots") or []
             cfg["comfy_url"] = (saved.get("comfy_url") or "").strip()
             cfg["comfy_root"] = (saved.get("comfy_root") or "").strip()
@@ -666,7 +751,11 @@ KIND_DIRS = ["checkpoints", "loras", "diffusion_models", "unet", "vae", "clip",
              "text_encoders", "controlnet", "upscale_models",
              # the LTX spatial upscalers live here; without it in the scan the
              # 2.5 engine read as missing its upscaler with the file on disk
-             "latent_upscale_models"]
+             "latent_upscale_models",
+             # the mmh3 ClipProj weights a small Qwen3-VL encoder needs to
+             # stand in for MiniMax H3's 32B one (9.94); unscanned, the
+             # encoder row could never offer a pick
+             "clip_projections"]
 MODEL_EXTS = (".safetensors", ".gguf", ".ckpt", ".pt", ".pth", ".bin")
 _CATALOG = {"at": 0, "data": None}
 
@@ -678,12 +767,20 @@ _CATALOG = {"at": 0, "data": None}
 LTX25_UPSCALE_MODE = "LTX 2.5 2x"
 UPSCALE_VIDEO_MODES = ("VSR Low", "VSR Medium", "VSR High", "VSR Ultra",
                        LTX25_UPSCALE_MODE)
-# Image upscaling has two personalities: "model" runs a deterministic
+# Image upscaling has three personalities: "model" runs a deterministic
 # ESRGAN-style enlarger, "pid" runs NVIDIA PiD - a 4-step tiled pixel-diffusion
-# pass that invents real texture instead of sharpening what is there.
-UPSCALE_IMAGE_MODES = ("model", "pid")
+# pass that invents real texture instead of sharpening what is there - and
+# "vsr" runs the same RTX VFX filter the video lane uses, reconstructing
+# detail in seconds without inventing content (9.79).
+UPSCALE_IMAGE_MODES = ("model", "pid", "vsr")
 UPSCALE_IMAGE_DEFAULT_MODE = "model"
 UPSCALE_VIDEO_DEFAULT_MODE = "VSR High"
+# The still-side VSR quality tiers are the ENLARGING entries of
+# UPSCALE_VIDEO_MODES: LTX 2.5 is a generative video re-render that cannot
+# run on a still, and the Deno node's High Bitrate / Denoise / Deblur modes
+# are same-size restoration passes, not enlargers (9.79).
+UPSCALE_VSR_TIERS = tuple(m for m in UPSCALE_VIDEO_MODES if m.startswith("VSR "))
+UPSCALE_IMAGE_DEFAULT_VSR_MODE = "VSR Ultra"
 UPSCALE_VIDEO_SCALE_RANGE = (1.0, 4.0)
 # 9.53: frame-rate finishing on the clip finisher. 0 = the clip's own rate;
 # anything else is RIFE-interpolated in the same graph as the VSR pass.
@@ -1794,6 +1891,13 @@ EDIT_ACCELERATORS = (
 KLEIN_MODEL = "Flux\\flux-2-klein-9b_int8_convrot.safetensors"
 KLEIN_CLIP = "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors"
 KLEIN_VAE = "Flux\\flux2-vae.safetensors"
+# The measured detail LoRA (brief 9.86): without it sunglasses lenses render
+# flat opaque black with the eyes gone; at 0.8 the eyes read through the
+# glass with a real tint gradient and specular on the frame. The author's
+# own 0.5 is barely better than nothing and 1.0 washes the lenses out
+# (measured 2026-08-28). Apache 2.0, and it loads on DarkBeast too, so it is
+# architecture-compatible across the Klein builds.
+KLEIN_DETAIL_LORA = "Flux\\Flux2-Klein-9B-Enhanced-Details.safetensors"
 # One row per Klein BUILD, most specific first - the same shape and spirit as
 # EDIT_ACCELERATORS above. A sampling schedule is trained against one set of
 # weights, so it is paired to the build by name and is never a bare step
@@ -1865,13 +1969,116 @@ ZIMAGE_EXECUTION_PROFILES = {
 H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+# The small-encoder stand-ins for the 32B (9.94). A projection maps a general
+# Qwen3-VL encoder into the space MiniMax H3's own 32B encoder occupies, so
+# the small one can stand in through the ClipProjLoader node (probed BY NAME -
+# the pack that provides it does `from nodes import *`, which makes
+# /object_info mislabel every node loaded before it, so pack attribution is
+# not a fact worth reading). Each option is an (encoder, projection) PAIR:
+# it is offerable only when BOTH files resolve in the catalog, which is what
+# keeps a deleted projection from queuing a graph ComfyUI cannot run. Which
+# of the three renders best is Jesse's call (a render question, not a code
+# one) - this table only makes them reachable. The id is what config stores.
+H3_CLIP_PROJ_NODE = "ClipProjLoader"
+H3_TEXT_ENCODER_OPTIONS = (
+    {"id": "qwen3vl_4b", "label": "Qwen3-VL 4B + ClipProj",
+     "encoder": "Qwen\\qwen3vl_4b_int8_convrot_learned.safetensors",
+     "projection": "mmh3-4b-ClipProj-v3.1.safetensors"},
+    {"id": "qwen3vl_4b_mlp", "label": "Qwen3-VL 4B + ClipProj MLP",
+     "encoder": "Qwen\\qwen3vl_4b_int8_convrot_learned.safetensors",
+     "projection": "mmh3-4b-ClipProj-v3.1-mlp.safetensors"},
+    {"id": "qwen3vl_8b_mlp", "label": "Qwen3-VL 8B + ClipProj MLP",
+     "encoder": "Qwen\\qwen3vl_8b_nvfp4.safetensors",
+     "projection": "mmh3-8b-ClipProj-v3.1-mlp.safetensors"},
+)
+# The Automatic answer's own label, for the settings payload.
+H3_CLIP_LABEL = "Qwen3-VL 32B"
 H3_VIDEO_VAE = "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
 H3_AUDIO_VAE = "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+# MiniMax's T1 image VAE, and the one-frame conditioning node that needs it
+# (ComfyUI-MM-1Frame). Both optional: absent, the ref still lane builds the
+# 5-frame graph it always did.
+#
+# The image VAE is a DECODE-ONLY retrain, established by per-tensor MD5
+# against the video VAE on 2026-08-30: all 116 encoder tensors are
+# bit-identical, both quant_conv tensors are identical, and the latent
+# mean/std are identical, while 439 of 440 decoder tensors and both
+# post_quant_conv tensors differ. So encoding a reference through it is
+# numerically the same operation as encoding through the video VAE - one
+# VAE can serve both ends of the graph, which drops a whole VAE from the
+# card. What it buys on the way out is a decoder trained on single frames
+# instead of one trained on a temporal chunk.
+#
+# The corollary is a rule: because the decoder was trained AWAY from the
+# encoder, decode->encode is not symmetric on this pair. Single pass only,
+# never chain a refine through it.
+H3_IMAGE_VAE = "MiniMax-H3\\minimax_h3_t1_image_vae_step1597.safetensors"
+H3_ONE_FRAME_NODE = "MM1FrameMiniMaxH3ReferenceToImage"
+# The hybrid the 2026-08-30 A/B chose on the pictures. Only a preference:
+# the reference still lane takes an installed hybrid over stock ref2va when
+# nothing was asked for, and stock stays the recipe default so a machine
+# without one is unaffected.
+H3_HYBRID_PREFERRED = "b30-49"
+# The skin finish (2026-08-30): a 1x detail model run over the decode, which
+# measured +80% to +220% Laplacian fine detail across the session's frames
+# and is the single biggest post-sampler lift found. 1x means the canvas is
+# unchanged - this adds texture, it does not resize.
+#
+# The session's full chain was skin1x -> CAS sharpen -> downscale by half,
+# and the last two are deliberately NOT ported. They are a DISPLAY trick
+# that only pays when the render is far bigger than the delivered frame:
+# those runs sampled 2688x3584 and delivered 1344x1792, so halving buried
+# the sharpen halo and concentrated real detail. Pixal's still lanes cap at
+# ~3.1 MP and deliver what they sample, so the same pair here would sharpen
+# at final size and then throw away half the pixels the user paid for.
+# Sample bigger first, and the pair becomes worth porting.
+#
+# Optional, like everything else in this recipe: absent the file, the graph
+# is built exactly as before.
+H3_SKIN_MODEL = "1x-ITF-SkinDiffDetail-Lite-v1.pth"
 # The H3 creative LoRA the still recipes pin as their editable style stage
 # (9.74): a known-good one-click row, OFF by default so the untouched plan
 # renders exactly the pre-9.74 graph. The Animate lanes offer the same file
 # through H3_VIDEO_LORAS (defined with the video tables below).
 H3_HMNSFW_LORA = "Minimax H3\\HMNSFW_AIO_V2.safetensors"
+# The three style LoRAs the 2026-08-30 session settled on, each measured on
+# the ref still lane and each picked by eye at 0.6 before the stack was
+# built (docs/2026-08-30-h3-ref-realism.md). They ship as editable stages at
+# 0.2, all OFF by default: an untouched plan still renders the pre-1.1.4b
+# graph, and a machine without the files shows the rows greyed rather than
+# failing a render.
+#
+# 0.2 rather than 0.6 is the finding, not a hedge. Each of the three at 0.6
+# renders its own house style; a third of each renders a look that is none
+# of them, which is what the approved set ran.
+H3_DIGICAM_LORA = "Minimax H3\\minimax-h3-digicam.safetensors"
+H3_GALAXYACE_LORA = "Minimax H3\\H3-GalaxyAce.safetensors"
+H3_RELIM_LORA = "Minimax H3\\relim_h3_lora_v1_500.safetensors"
+H3_STYLE_STACK_STRENGTH = 0.2
+# One list object, shared by all four H3 still specs. The spec-equality test
+# pins each 2x row to its first pass, and a shared literal is how that stays
+# true when a row is added: there is nothing to keep in sync.
+H3_STILL_LORA_STAGES = [
+    {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
+     "role": "style", "zone": "editable", "order_locked": False,
+     "strength_editable": True, "removable": True,
+     "active_by_default": False},
+    {"slot": "digicam", "name": H3_DIGICAM_LORA,
+     "strength": H3_STYLE_STACK_STRENGTH,
+     "role": "style", "zone": "editable", "order_locked": False,
+     "strength_editable": True, "removable": True,
+     "active_by_default": False},
+    {"slot": "galaxyace", "name": H3_GALAXYACE_LORA,
+     "strength": H3_STYLE_STACK_STRENGTH,
+     "role": "style", "zone": "editable", "order_locked": False,
+     "strength_editable": True, "removable": True,
+     "active_by_default": False},
+    {"slot": "relim", "name": H3_RELIM_LORA,
+     "strength": H3_STYLE_STACK_STRENGTH,
+     "role": "style", "zone": "editable", "order_locked": False,
+     "strength_editable": True, "removable": True,
+     "active_by_default": False},
+]
 
 # Public creative recipes are deliberately separate from runtime graph families.
 # "anime" is a creative direction; "zimage" is the compatible execution stack.
@@ -1964,7 +2171,7 @@ RECIPE_SPECS = {
         # (gonzalomo, 2026-08-11). Safetensors builds only until proven otherwise.
         "no_gguf": True,
         # 2.0 is the identity ceiling's sweet spot: likeness is locked through
-        # 2 MP, softens past 3, breaks by 5 (res ladder, Zara Promo\24-hires-set,
+        # 2 MP, softens past 3, breaks by 5 (res ladder, Pixal Renders\zara\2026-08-27-hires-set,
         # 2026-08-27) - the 768px-grounded reference gets out-resolved.
         "aspect": "9:16 (Portrait Widescreen)", "mp": 2.0,
         "required_loras": [KREA_BYPASS_LORA, IDENTITY_LORA],
@@ -2001,7 +2208,11 @@ RECIPE_SPECS = {
         "required_vaes": [KREA_VAE_WAN],
         "needs_character": True,
     },
+    # prefer: Qwen 2511 over FireRed on any box that has both - Jesse's
+    # 2026-08-20 A/B, recorded rather than re-run.
     "qwen_edit": {
+        "prefer": ("qwen_image_edit_2511", "qwen-image-edit-2511",
+                   "qwen_image_edit", "qwen-image-edit"),
         "label": "Qwen Image Edit", "tag": "instruction edit · from a finished frame",
         "family": "qwen_edit",
         "default_model": QWEN_EDIT_MODEL,
@@ -2049,7 +2260,18 @@ RECIPE_SPECS = {
         "family": "klein",
         "default_model": KLEIN_MODEL,
         "aspect": "", "mp": 0,
-        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+        # revision 2 (9.86): the editable detail lane joined, so plans saved
+        # against revision 1 are discarded rather than replayed - the 9.74
+        # contract. The one stage pins the measured Enhanced-Details LoRA,
+        # OFF by default so an untouched plan renders exactly the pre-9.86
+        # graph.
+        "lora_stack_revision": 2, "lora_boundary": "sampler",
+        "lora_stages": [
+            {"slot": "detail", "name": KLEIN_DETAIL_LORA, "strength": 0.8,
+             "role": "detail", "zone": "editable", "order_locked": False,
+             "strength_editable": True, "removable": True,
+             "active_by_default": False},
+        ],
         "required_text_encoders": [KLEIN_CLIP],
         "required_vaes": [KLEIN_VAE],
         "needs_source_image": True,
@@ -2083,13 +2305,8 @@ RECIPE_SPECS = {
         "required_vaes": [H3_VIDEO_VAE],
         # revision 2 (9.74): the editable style lane joined, so plans saved
         # against revision 1 are discarded rather than replayed.
-        "lora_stack_revision": 2, "lora_boundary": "sampler",
-        "lora_stages": [
-            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
-             "role": "style", "zone": "editable", "order_locked": False,
-             "strength_editable": True, "removable": True,
-             "active_by_default": False},
-        ],
+        "lora_stack_revision": 3, "lora_boundary": "sampler",
+        "lora_stages": H3_STILL_LORA_STAGES,
     },
     # What "Refined" means on an H3 build (brief 9.59): the same still, then
     # its own latent re-sampled at 2x through the MMH3 pack's 3D upscaler -
@@ -2107,13 +2324,8 @@ RECIPE_SPECS = {
         "required_vaes": [H3_VIDEO_VAE],
         # h3_still's 9.74 lane, same revision and stage: the style rides the
         # first pass and the 2x refine follows the same tail.
-        "lora_stack_revision": 2, "lora_boundary": "sampler",
-        "lora_stages": [
-            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
-             "role": "style", "zone": "editable", "order_locked": False,
-             "strength_editable": True, "removable": True,
-             "active_by_default": False},
-        ],
+        "lora_stack_revision": 3, "lora_boundary": "sampler",
+        "lora_stages": H3_STILL_LORA_STAGES,
     },
     # The ref2va build as a still camera (brief 9.67): the active character's
     # identity photo is the ONE wired reference, so the reference IS the
@@ -2133,13 +2345,33 @@ RECIPE_SPECS = {
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE, H3_AUDIO_VAE],
         "needs_character": True,
-        "lora_stack_revision": 2, "lora_boundary": "sampler",
-        "lora_stages": [
-            {"slot": "style", "name": H3_HMNSFW_LORA, "strength": 1.0,
-             "role": "style", "zone": "editable", "order_locked": False,
-             "strength_editable": True, "removable": True,
-             "active_by_default": False},
-        ],
+        "lora_stack_revision": 3, "lora_boundary": "sampler",
+        "lora_stages": H3_STILL_LORA_STAGES,
+    },
+    # h3_ref_still + the in-family 2x latent refine (brief 9.84). The pair
+    # h3_still/h3_still_2x are to each other exactly what these two are, and
+    # the spec-equality test pins both pairs: everything except label, tag
+    # and the refine itself must match the first-pass recipe, because the
+    # refine re-samples the SAME graph and a divergent asset list would mean
+    # the second pass loaded something the first did not.
+    "h3_ref_still_2x": {
+        "label": "MiniMax H3 Ref 2x",
+        # ~6 min MEASURED end to end on the 5090 (349 s, 2026-08-30), not
+        # extrapolated from h3_still_2x's ~3 min. The reference lane is
+        # dearer than the prompt-only one for a structural reason: the
+        # wired photo is ~10k latent tokens that every tile re-attends, and
+        # the tile grid at 3072x4096 is 24 tiles x 6 steps = 144 passes.
+        # Fewer, larger tiles is the lever if this ever needs to be cheaper.
+        "tag": "2K still from a reference + 2x latent refine · ~6 min",
+        "family": "minimax_h3", "variants": ["ref2va"],
+        "lora_variants": ["any"],
+        "default_model": H3_REF2V_MODEL,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "required_text_encoders": [H3_CLIP],
+        "required_vaes": [H3_VIDEO_VAE, H3_AUDIO_VAE],
+        "needs_character": True,
+        "lora_stack_revision": 3, "lora_boundary": "sampler",
+        "lora_stages": H3_STILL_LORA_STAGES,
     },
 }
 PUBLIC_RECIPE_IDS = tuple(RECIPE_SPECS)
@@ -2340,6 +2572,12 @@ def model_profile(rel, kind="diffusion_models"):
             "zimage_turbo_v4" if variant == "turbo" else "zimage_base"
     if family == "anima":
         profile["execution_profile"] = f"anima_{variant}"
+    if family == "minimax_h3":
+        # The lanes this build can serve (9.91): fl2va builds the
+        # first/last-frame lanes, ref2va the reference ones, and a hybrid
+        # carries both tokens so it serves both - the fact compatible_recipes
+        # and pick_recipe_model read instead of the one variant token.
+        profile["lanes"] = sorted(h3_build_lanes(rel))
     # This Base/Turbo merge ships its own measured schedule and VAE. Filename-
     # specific profiles win over broad family defaults.
     if low.endswith("zib\\z-image_clear_anime_bf16.safetensors"):
@@ -2607,9 +2845,37 @@ def compatible_recipes(profile):
         if is_lora:
             variants = spec.get("lora_variants", variants)
         if variants and profile.get("variant") not in variants:
-            continue
+            # 9.91: a hybrid fl2va/ref2va build serves BOTH H3 lanes, so the
+            # single variant token must not file it out of the fl2va stills.
+            if not (profile.get("family") == "minimax_h3"
+                    and set(variants) & set(profile.get("lanes") or ())):
+                continue
         out.append(rid)
     return out
+
+
+def prefer_key(recipe_id, rel):
+    """Sort key for "which installed build should this recipe reach for".
+
+    ONE definition on purpose. There are two fallbacks in this file and they
+    disagreed: recipe_model_candidates decides what RENDERS, HUB.options
+    decides what the UI SAYS will render, and on 2026-08-31 the render lane
+    took qwen_image_edit_2511 while Settings named FireRed. That is the worst
+    shape a default can have - the composer sends the name the UI showed, so
+    the picture came from the build the A/B rejected while the app claimed
+    otherwise. Adding the preference to one side only is how it happened;
+    a third ordering rule is how it would happen again.
+
+    `prefer` is a tuple of substrings, most-wanted first, so a recipe states
+    the BUILD it wants without naming a quantisation. Alphabetical is the
+    tie-break, never the preference.
+    """
+    prefer = tuple(RECIPE_SPECS[recipe_id].get("prefer") or ())
+    low = rel.lower()
+    for i, hint in enumerate(prefer):
+        if hint.lower() in low:
+            return (i, low)
+    return (len(prefer), low)
 
 
 def recipe_model_candidates(recipe_id):
@@ -2639,7 +2905,19 @@ def recipe_model_candidates(recipe_id):
                     entry["rel"].lower().endswith(".gguf"):
                 continue
             out.append(entry)
-    return sorted(out, key=lambda entry: entry["rel"].lower())
+    # Alphabetical is a fine tie-break and a terrible preference. qwen_edit's
+    # authored default is a GGUF that is not on every box, so the fallback
+    # decides the lane - and it was picking "FireRed-Image-Edit-1.1..." over
+    # "qwen_image_edit_2511_nvfp4..." purely because F sorts before q. FireRed
+    # lost the 2026-08-20 A/B to Qwen 2511 and is installed-but-not-endorsed,
+    # so the wrong editor was the default on any box that has both (found
+    # 2026-08-31, smoke-testing the edit lane).
+    #
+    # `prefer` is a tuple of substrings, most-wanted first: a recipe states
+    # which BUILD it wants without naming a quantisation, so any 2511 wins
+    # over any FireRed and everything else stays alphabetical behind them.
+    # This also orders the list Settings shows.
+    return sorted(out, key=lambda e: prefer_key(recipe_id, e["rel"]))
 
 CANVAS_MULTIPLE = 16          # latent 8x with a 2x patch: 16 is the real grid
 # Shape is a choice off a list; megapixels is a budget. Weighting the ratio
@@ -2744,6 +3022,11 @@ def pick_recipe_model(requested, recipe_id):
                          "safetensors build of this model instead")
     variants = spec.get("variants")
     if variants and entry["variant"] not in variants:
+        # 9.91: a hybrid fl2va/ref2va build serves BOTH H3 lanes - the same
+        # exception compatible_recipes applies, from the one membership rule.
+        if entry["family"] == "minimax_h3" and \
+                set(variants) & h3_build_lanes(entry["rel"]):
+            return entry
         # The architecture word rides only where the label doesn't already
         # name it ("Fantasy uses Z-Image base models", but "MiniMax H3 uses
         # fl2va models" - not "...uses MiniMax H3 fl2va models").
@@ -3023,6 +3306,12 @@ SAMPLER_SEATS = {
                      "map": {"sampler_name": [("7", "sampler_name")],
                              "steps": [("8", "steps")],
                              "scheduler": [("8", "scheduler")]}},
+    # ...and its 2x twin (9.84) seats the FIRST pass only, exactly as
+    # h3_still_2x does: the refine's own steps/scheduler stay authored.
+    "h3_ref_still_2x": {"node": "7", "class": "KSamplerSelect",
+                        "map": {"sampler_name": [("7", "sampler_name")],
+                                "steps": [("8", "steps")],
+                                "scheduler": [("8", "scheduler")]}},
 }
 TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta")
 # Which of those a seat can actually take, by the node class sitting in it. eta
@@ -3124,7 +3413,8 @@ def sampler_defaults(base_id, model=None):
         return {"steps": s["steps"], "cfg": s["cfg"],
                 "sampler_name": node.get("sampler_name", "er_sde"),
                 "scheduler": node.get("scheduler", "simple")}
-    if base_id in ("h3_still", "h3_still_2x", "h3_ref_still"):
+    if base_id in ("h3_still", "h3_still_2x", "h3_ref_still",
+                   "h3_ref_still_2x"):
         # No TEMPLATES entry to read (the graph is built in code); the
         # numbers are the still recipe's own constants - since 9.78 the STILL
         # pair, not the video default the shared constants now name. No H3
@@ -3308,6 +3598,111 @@ def model_recommended_tuning(base_id, model):
     if not out:
         return None
     out["_text"] = tail[:140].strip()
+    return out
+
+
+# ── sampler presets ──────────────────────────────────────────────────────────
+# The measured answers, living in the product instead of in a session.
+#
+# model_recommended_tuning above reads a "Recommended settings:" line off the
+# model's own Civitai description. Three of the fifty-one models on this
+# machine carry one, and all three are Z-Image - so on Krea 2 and MiniMax H3,
+# the two families actually used here, the sampler card's "model" segment has
+# never once been clickable (Jesse, 2026-08-31: "Model has never been
+# selectable" / "for Krea 2 I want to easily select the best known sampler /
+# scheduler combo with a couple clicks").
+#
+# It is also where a hundred and eighty-two sampler names meet someone who
+# wants three. So: a short curated list per family, each one saying where it
+# came from. Provenance is not decoration - H3's numbers were measured on this
+# box and Krea 2's are RES4LYF's own published figures for the Qwen-Image
+# family Krea 2 belongs to, and a note that pretends those are the same kind of
+# claim is the note that gets believed too hard.
+#
+# Every preset is filtered against the seat's REAL option list before it is
+# offered, so a node that lacks a name simply never sees that preset, and a key
+# the seat does not carry (eta on a stock KSamplerSelect) is dropped rather
+# than written into a node that has no such input.
+H3_STILL_LANES = ("h3_still", "h3_still_2x", "h3_ref_still", "h3_ref_still_2x")
+
+SAMPLER_PRESETS = {
+    "minimax_h3": (
+        {"id": "detail", "label": "Detail", "lanes": H3_STILL_LANES,
+         "note": "Measured here: +74% mean fine detail over the community pick "
+                 "across six frames. ~104 s. The shipped default.",
+         "tuning": {"sampler_name": "dpmpp_sde_gpu", "scheduler": "beta",
+                    "steps": 20}},
+        {"id": "speed", "label": "Speed", "lanes": H3_STILL_LANES,
+         "note": "Measured here: ~35% faster at 68 s, less fine detail. This is "
+                 "the pair that produced the sets Jesse called amazing.",
+         "tuning": {"sampler_name": "res_multistep", "scheduler": "simple",
+                    "steps": 20}},
+        {"id": "community", "label": "Community #1", "lanes": H3_STILL_LANES,
+         "note": "Tops a 3,504-vote community table. Measured lowest of the "
+                 "three here, and in two runs it pushed the subject off a "
+                 "position the caption pinned her to.",
+         "tuning": {"sampler_name": "seeds_2", "scheduler": "ddim_uniform",
+                    "steps": 20}},
+        # Video was A/B'd separately (2026-08-28) and the answer differs from
+        # stills, which is exactly why the constants are already split.
+        {"id": "video_detail", "label": "Detail",
+         "lanes": ("h3_i2v", "h3_ref2v", "h3_multishot"),
+         "note": "Jesse's pick on detail and speed across two rounds - 4.3 min "
+                 "against 8.1 for the still default, on the same clip.",
+         "tuning": {"sampler_name": "er_sde", "scheduler": "sgm_uniform"}},
+    ),
+    "krea2": (
+        {"id": "recommended", "label": "Recommended",
+         "note": "RES4LYF's published setting for the Qwen-Image family Krea 2 "
+                 "belongs to: res_2m with beta57. Not measured here.",
+         "tuning": {"sampler_name": "multistep/res_2m", "scheduler": "beta57",
+                    "steps": 12, "eta": 0.3}},
+        {"id": "fast", "label": "Fast",
+         "note": "The turbo build's own schedule, and what every Krea 2 recipe "
+                 "runs at untouched.",
+         "tuning": {"sampler_name": "linear/euler", "scheduler": "simple",
+                    "steps": 8, "eta": 0.0}},
+        {"id": "quality", "label": "Max detail",
+         "note": "RES4LYF's author's own starting point - res_2s at eta 0.5 - "
+                 "held to the 4-15 steps that family is documented for. More "
+                 "model calls per step, so slower. Not measured here.",
+         "tuning": {"sampler_name": "exponential/res_2s", "scheduler": "beta57",
+                    "steps": 15, "eta": 0.5}},
+    ),
+}
+
+
+def sampler_presets(base_id, model=None):
+    """Curated sampler pairs for this seat, filtered to what it can run.
+
+    A preset survives only if the seat carries every key it sets AND offers
+    every enum value it names. cfg is never in a preset: the families that have
+    presets are all distilled, and cfg_locked already pins it at 1.
+    """
+    seat = sampler_seat(base_id, model)
+    spec = RECIPE_SPECS.get(base_id)
+    if not seat or not spec:
+        return []
+    keys = set(seat_tuning_keys(seat))
+    choices = seat_choices(seat) or {}
+    out = []
+    for p in SAMPLER_PRESETS.get(spec["family"], ()):
+        lanes = p.get("lanes")
+        if lanes and base_id not in lanes:
+            continue
+        tuning = {}
+        for k, v in p["tuning"].items():
+            if k not in keys:
+                continue
+            allowed = choices.get(k)
+            if allowed and v not in allowed:
+                tuning = None
+                break
+            tuning[k] = v
+        if not tuning:
+            continue
+        out.append({"id": p["id"], "label": p["label"], "note": p["note"],
+                    "tuning": tuning})
     return out
 
 
@@ -3724,9 +4119,20 @@ _KNOWN_CLASSES = frozenset(
 # identity graphs, realism_ii's finish only on two-pass builds, the MMH3
 # upscaler only on an H3 2x refine. These are Pixal's own node signatures,
 # not a new family table.
+# An entry is (signature, rid) or (signature, rid, requires): the signature
+# matches on ANY overlap, while every class in `requires` must be present.
+# `requires` exists because the MMH3 upscaler pair stopped naming a single
+# recipe in 9.84 - both H3 2x lanes emit it, and only the conditioning node
+# separates them.
 _GRAPH_BASE_HINTS = (
     (frozenset(("Krea2EditModelPatch", "Krea2EditGroundedEncode")), "identity_edit"),
     (frozenset(("UltimateSDUpscale", "ClownOptions_DetailBoost_Beta")), "realism_ii"),
+    # The reference lane is the more specific match, so it is tested first:
+    # it additionally requires the ref2va conditioning node, which the fl2va
+    # still lane never emits. A ref graph WITHOUT the refine matches neither
+    # (the signature intersection is empty) and falls through, as before.
+    (frozenset(("MMH3UltimateUpscale", "MMH3LatentUpscaleWithModelParams")),
+     "h3_ref_still_2x", frozenset(("MiniMaxH3ReferenceToVideo",))),
     (frozenset(("MMH3UltimateUpscale", "MMH3LatentUpscaleWithModelParams")),
      "h3_still_2x"),
 )
@@ -4211,8 +4617,10 @@ def _style_base_for(entry, signals=()):
     if not candidates:
         return None
     present = set(signals or ())
-    for signature, rid in _GRAPH_BASE_HINTS:
-        if present & signature and rid in candidates:
+    for hint in _GRAPH_BASE_HINTS:
+        signature, rid = hint[0], hint[1]
+        requires = hint[2] if len(hint) > 2 else frozenset()
+        if present & signature and requires <= present and rid in candidates:
             return rid
     low = rel.replace("/", "\\").lower()
     for rid in candidates:
@@ -4438,13 +4846,58 @@ def seed_starter_styles():
         print(f"[pixal] starter styles not seeded: {exc}", flush=True)
 
 
+def _recipes_dir_signature():
+    """The cheap "did recipes/ change?" check: one directory listing plus one
+    stat per *.json - no file opens, no JSON. Per-file (name, mtime_ns, size),
+    not the directory's own mtime: editing a file in place never moves that,
+    and an edited preset must re-read just like a dropped one."""
+    sig = []
+    for path in RECIPE_DIR.glob("*.json"):
+        try:
+            st = path.stat()
+        except OSError:
+            continue        # vanished mid-scan; the load below tolerates it too
+        sig.append((path.name, st.st_mtime_ns, st.st_size))
+    return tuple(sorted(sig))
+
+
+# The live styles table. These two objects are NEVER rebound after import -
+# readers (and the test suite's patch.dict) hold the objects, not the name, so
+# refresh_saved_styles mutates them in place. A rebind would be the stale
+# snapshot bug this fixes, one level up.
+SAVED_STYLES, STYLE_PROBLEMS = {}, []
+_STYLES_DIR_SIG = None
+
+
+def refresh_saved_styles(force=False):
+    """Re-read recipes/ when its signature moved; otherwise return the cache.
+
+    Recipes are files - a preset dropped in, edited or deleted between reads
+    shows up on the NEXT read, with no restart and no rescan button. An
+    unchanged directory costs the signature check only: a glob plus one stat
+    per file, zero parses. One bad file still cannot take the others down;
+    load_saved_styles names it in STYLE_PROBLEMS, which is what makes
+    "not loaded yet" and "broken" distinguishable from the UI."""
+    global _STYLES_DIR_SIG
+    sig = _recipes_dir_signature()
+    if not force and sig == _STYLES_DIR_SIG:
+        return SAVED_STYLES, STYLE_PROBLEMS
+    styles, problems = load_saved_styles()
+    SAVED_STYLES.clear()
+    SAVED_STYLES.update(styles)
+    STYLE_PROBLEMS[:] = problems
+    _STYLES_DIR_SIG = sig
+    return SAVED_STYLES, STYLE_PROBLEMS
+
+
 seed_starter_styles()
-SAVED_STYLES, STYLE_PROBLEMS = load_saved_styles()
+refresh_saved_styles()          # _STYLES_DIR_SIG is None: the boot read always loads
 
 
 def saved_style(ref):
     """A style record by id, or None. Never raises: a style deleted in another
     tab must not take a render down with it."""
+    refresh_saved_styles()
     return SAVED_STYLES.get(str(ref or "")) or None
 
 
@@ -5275,7 +5728,7 @@ def _klein_bypass_scaling(g):
     g["ki:composite"]["inputs"]["generated_image"] = ["ki:decode", 0]
 
 def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
-                     model=None):
+                     model=None, loras=(), lora_plan=None):
     """Whole-frame instruction edit of an existing frame (FLUX.2 Klein 9B).
 
     Ported node-for-node from Comfy-Org's shipped
@@ -5303,7 +5756,13 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
     Same canvas policy as the other edit lanes: sample at the source's own
     size under KLEIN_EDIT_MP_CAP, never upscale a small source to reach it.
     The template's own scale node samples at 1 MP nearest-exact; the cap and
-    the scale-back are the two deliberate deviations (ke:back is ours)."""
+    the scale-back are the two deliberate deviations (ke:back is ours).
+
+    The LoRA lane is the qwen lane's, verbatim (9.86): loras/lora_plan
+    resolve through resolve_recipe_lora_stack against the recipe's stages
+    (one editable, off-by-default detail stage pinning the measured
+    Enhanced-Details LoRA at 0.8) and chain LoraLoaderModelOnly between
+    ke:unet and ke:guider."""
     src = input_ref_name(image)
     if not src:
         raise ValueError("Klein Edit needs a source image in ComfyUI/input")
@@ -5332,6 +5791,17 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
     g["ke:img"]["inputs"]["image"] = src
     g["ke:pos"]["inputs"]["text"] = instruction
     g["ke:noise"]["inputs"]["noise_seed"] = int(seed)
+    # The qwen lane's plumbing, unchanged: recipe stages plus legacy extras
+    # or a replacement editable plan, chained as LoraLoaderModelOnly between
+    # ke:unet and ke:guider - the ONLY model consumer in this graph. ke:sched
+    # (Flux2Scheduler) takes steps/width/height and NO model; handing it the
+    # tail is a TypeError at execution, not a bad render. An empty stack
+    # adds no nodes and reassigns the guider's existing wire, so an
+    # untouched plan renders the byte-identical pre-9.86 graph.
+    entries, dropped = resolve_recipe_lora_stack(
+        "klein_edit", loras, lora_plan, family="klein")
+    tail = apply_lora_nodes(g, "ke:unet", entries, "ke:lora")
+    g["ke:guider"]["inputs"]["model"] = [tail, 0]
     g["ke:save"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(instruction)}"
     # Canvas: the source's own size under the cap, on the flux2 VAE's /16 grid
     # (KLEIN_INPAINT_STEPS is that grid, not an inpaint property). ke:back then
@@ -5356,7 +5826,8 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
         _klein_edit_bypass_scaling(g, capped=working_mp is not None)
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
-    info = {**model_job_info(model_entry), "source_image": src}
+    info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
+            "source_image": src}
     if native:
         canvas = qwen_edit_canvas(CDIR / "input" / src, working_mp,
                                   KLEIN_INPAINT_STEPS) or native
@@ -5448,6 +5919,13 @@ def _character_caption(scene, character=None, standing=True, nsfw=False,
         if ch:
             cap = " ".join(character_subject(ch).split()) + " " + cap
         if not nsfw and (ch or lock_generic):
+            # Its own sentence, always. A lock glued onto an unpunctuated
+            # scene ("A red barn at dusk She is fully dressed...") reads as
+            # one long clause, and a clause that must land gets a stop of
+            # its own - the same rule the H3 contract's appends follow.
+            cap = cap.rstrip()
+            if cap and not cap.endswith((".", "!", "?")):
+                cap += "."
             cap += " " + wardrobe_lock_for(ch)
     return cap.strip(), ch
 
@@ -5745,7 +6223,7 @@ def _h3_still_clamp(width, height):
 
 def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                   character=None, lora_plan=None):
+                   character=None, lora_plan=None, finish=None):
     """MiniMax H3 as a still camera (brief 9.58), ported from the proven
     h3_image.py block - not redesigned.
 
@@ -5761,7 +6239,10 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
     variant, the same verdict the add-LoRA popup shows.
     """
     spec = RECIPE_SPECS["h3_still"]
-    entry = pick_recipe_model(model, "h3_still")
+    # An explicit pick always wins; with nothing asked for, the Settings
+    # first/last-frame slot answers (9.91).
+    entry = pick_recipe_model(model or recipe_render_default("h3_still"),
+                              "h3_still")
     assets, missing = _h3_asset_paths(entry["rel"], audio=False)
     if missing:
         raise ValueError("MiniMax H3 still needs: " + ", ".join(missing))
@@ -5778,16 +6259,18 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
     # The video prompt format's two fields, wrapped deterministically around
     # the image lane's own caption - no brain call, no director pass.
     sentence = cap if cap.endswith((".", "!", "?")) else cap + "."
+    # Freeze first, caption last - the h3_ref_still rule, applied here for
+    # the same reason: _character_caption's wardrobe lock closes the caption,
+    # and a sentence after it takes the position that keeps her dressed.
     prompt = ("integrated_multimodal_description: [Shot 1] Live-action, "
-              "a frozen instant held completely still - " + sentence +
-              " The subject holds the pose; nothing in the frame moves.\n\n"
+              "a frozen instant held completely still - the subject holds "
+              "the pose and nothing in the frame moves. " + sentence + "\n\n"
               "overall_soundscape: Room tone, steady, synchronized.")
 
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {
             "unet_name": assets["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {
-            "clip_name": assets["clip"], "type": "minimax", "device": "default"}},
+        "2": _h3_clip_node(assets),
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": assets["video_vae"]}},
         "6": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
@@ -5825,16 +6308,82 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
     # model, never the raw loader output.
     g["8"]["inputs"]["model"] = [model_tail, 0]
     g["9"]["inputs"]["model"] = [model_tail, 0]
+    # The skin finish is lane-independent: it runs on the decode, so the
+    # prompt-only still gets it on the same terms as the reference one.
+    skin = h3_skin_finish_active(finish)
+    if skin:
+        _h3_append_skin_finish(g, "13")
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(entry, "h3_still"),
             "text_encoder": base(assets["clip"]),
             "vae": base(assets["video_vae"]),
             **lora_job_info(entries, dropped),
+            "skin_finish": skin,
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
     return g, cap, info
+
+
+def _h3_append_2x_refine(g, seed):
+    """Append the in-family 2x latent refine to a built H3 still graph.
+
+    Shared by both 2x builders (9.84). Nodes 1-14 are the first pass's, byte
+    for byte; this only appends, then repoints the frame-0 grab at the 2x
+    decode. Returns the 2x canvas.
+
+    The conditioning is REBUILT at the doubled canvas, and its class is read
+    off node 6 rather than named: h3_still conditions with
+    MiniMaxH3ImageToVideo, h3_ref_still with MiniMaxH3ReferenceToVideo, and
+    the `**inputs` spread carries whichever one's payload - the ref lane's
+    `ref_images.ref_image_N` keys included. A reference is semantic, not
+    registered to the canvas the way a first_frame is, so it rebuilds at 2x
+    exactly as a prompt does; that is why neither still lane needs the video
+    lane's ImageScale/ESRGAN pre-upscale.
+    """
+    # The refine pass re-samples with the SAME model the first pass ran:
+    # the builder may have chained style LoRAs off "1" (9.74), so both
+    # refine consumers follow that tail exactly like nodes 8/9 do - a styled
+    # first pass refined by the raw model would repaint the style away. The
+    # tail id is read back from the graph itself, the ground truth of what
+    # the first pass emitted ("h3:lora" + index, apply_lora_nodes' shape).
+    lora_nodes = [nid for nid in g if nid.startswith("h3:lora")]
+    model_tail = (max(lora_nodes, key=lambda nid: int(nid[len("h3:lora"):]))
+                  if lora_nodes else "1")
+    width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
+    w2, h2 = width * 2, height * 2
+    tile_w, ol_w = h3_tile_axis(w2)
+    tile_h, ol_h = h3_tile_axis(h2)
+    # The same conditioning at the 2x canvas, length still 5, no first_frame.
+    g["up:cond"] = {"class_type": g["6"]["class_type"], "inputs": {
+        **g["6"]["inputs"], "width": w2, "height": h2}}
+    g["up:param"] = {"class_type": "MMH3LatentUpscaleWithModelParams",
+                     "inputs": {
+        "model_name": H3_LATENT_UPSCALER, "width": w2, "height": h2,
+        "device": "cuda", "precision": "bf16"}}
+    g["up:tiles"] = {"class_type": "MMH3SpatialSplitParams", "inputs": {
+        "tile_width": tile_w, "tile_height": tile_h,
+        "spatial_w_overlap": ol_w, "spatial_h_overlap": ol_h,
+        "fade_width": max(32, ol_w - 32), "fade_height": max(32, ol_h - 32),
+        "min_tile_size": 256,
+        "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
+    g["up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": [model_tail, 0], "scheduler": H3_STILL_SCHEDULER,
+        "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
+    g["up:noise"] = {"class_type": "RandomNoise",
+                     "inputs": {"noise_seed": int(seed) + 1}}
+    g["up:sample"] = {"class_type": H3_UPSCALE_NODE, "inputs": {
+        "model": [model_tail, 0], "conditioning": ["up:cond", 0],
+        "latent": ["11", 0], "noise": ["up:noise", 0],
+        "sampler": ["7", 0], "sigmas": ["up:sigmas", 0], "cfg": 1.0,
+        "latent_upscale_param": ["up:param", 0],
+        "spatial_split_param": ["up:tiles", 0]}}
+    g["up:decode"] = {"class_type": "VAEDecode", "inputs": {
+        "samples": ["up:sample", 0], "vae": ["3", 0]}}
+    # Still frame 0 only - now read off the 2x decode.
+    g["13"]["inputs"]["image"] = ["up:decode", 0]
+    return w2, h2
 
 
 def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=(),
@@ -5868,47 +6417,7 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
     g, cap, info = build_h3_still(scene, seed, width, height, loras, overrides,
                                   standing, nsfw, model, aspect, mp, character,
                                   lora_plan)
-    # The refine pass re-samples with the SAME model the first pass ran:
-    # build_h3_still may have chained style LoRAs off "1" (9.74), so both
-    # refine consumers follow that tail exactly like nodes 8/9 do - a styled
-    # first pass refined by the raw model would repaint the style away. The
-    # tail id is read back from the graph itself, the ground truth of what
-    # the first pass emitted ("h3:lora" + index, apply_lora_nodes' shape).
-    lora_nodes = [nid for nid in g if nid.startswith("h3:lora")]
-    model_tail = (max(lora_nodes, key=lambda nid: int(nid[len("h3:lora"):]))
-                  if lora_nodes else "1")
-    width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
-    w2, h2 = width * 2, height * 2
-    tile_w, ol_w = h3_tile_axis(w2)
-    tile_h, ol_h = h3_tile_axis(h2)
-    # The same prompt at the 2x canvas, length still 5, no first_frame.
-    g["up:cond"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
-        **g["6"]["inputs"], "width": w2, "height": h2}}
-    g["up:param"] = {"class_type": "MMH3LatentUpscaleWithModelParams",
-                     "inputs": {
-        "model_name": H3_LATENT_UPSCALER, "width": w2, "height": h2,
-        "device": "cuda", "precision": "bf16"}}
-    g["up:tiles"] = {"class_type": "MMH3SpatialSplitParams", "inputs": {
-        "tile_width": tile_w, "tile_height": tile_h,
-        "spatial_w_overlap": ol_w, "spatial_h_overlap": ol_h,
-        "fade_width": max(32, ol_w - 32), "fade_height": max(32, ol_h - 32),
-        "min_tile_size": 256,
-        "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
-    g["up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
-        "model": [model_tail, 0], "scheduler": H3_STILL_SCHEDULER,
-        "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
-    g["up:noise"] = {"class_type": "RandomNoise",
-                     "inputs": {"noise_seed": int(seed) + 1}}
-    g["up:sample"] = {"class_type": H3_UPSCALE_NODE, "inputs": {
-        "model": [model_tail, 0], "conditioning": ["up:cond", 0],
-        "latent": ["11", 0], "noise": ["up:noise", 0],
-        "sampler": ["7", 0], "sigmas": ["up:sigmas", 0], "cfg": 1.0,
-        "latent_upscale_param": ["up:param", 0],
-        "spatial_split_param": ["up:tiles", 0]}}
-    g["up:decode"] = {"class_type": "VAEDecode", "inputs": {
-        "samples": ["up:sample", 0], "vae": ["3", 0]}}
-    # Still frame 0 only - now read off the 2x decode.
-    g["13"]["inputs"]["image"] = ["up:decode", 0]
+    w2, h2 = _h3_append_2x_refine(g, seed)
     info = {**info,
             "execution_profile": "h3_still_2x",
             "size": f"{w2}x{h2}",
@@ -5923,9 +6432,491 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
     return g, cap, info
 
 
+# --- the H3 still prompt contract (9.80) ------------------------------------
+# Measured 2026-08-30 against Jesse's verdicts over ~60 hand-written H3
+# stills (briefs/9.80): every approved frame put the subject INSIDE a space
+# of hard materials, waist-up or closer; every rejected one put her on a
+# stage (seamless charcoal, seamless scarlet, a club doorway) or went full
+# length and came out a different woman.
+#
+# 9.80 also concluded "lit by lamps in the frame", and that half was
+# RETRACTED the same day. Jesse rejected an entire ten-shot set built on
+# it - including three frames he had picked as favourites an hour earlier -
+# with "I hate seeing the light in the shot - the bulbs and what not / I
+# want realistic candid". Every shot in it named a fixture in frame and let
+# the rest of the room go black, which is a lit set, not a photograph. The
+# replacement set used ordinary light from out of frame and left rooms lit.
+# The director prompt was corrected in 1.1.4b; nothing here ever enforced
+# the lighting half, which is the only reason this was a wrong instruction
+# rather than a wrong repair. Brief
+# 9.65's harness finding stands - small models ignore mid-prompt rules - so
+# the lane does not ask for these, it enforces them on the composed caption.
+# No camera clause here, deliberately (1.1.3b). The lane used to append
+#
+#     "Shot in available light, HDR holding the highlights and the shadows,
+#      sharp front to back, clean and low noise, natural colour with a
+#      slight punch, on a mildly wide lens, casual handheld framing."
+#
+# to every still. That is a description of computational phone processing -
+# HDR flattens contrast, "clean and low noise" strips grain, "slight punch"
+# saturates - and it measured inert three separate ways on 2026-08-30:
+# with-vs-without on two scenes at the same seed came out near-identical;
+# a 144-word caption and the same caption plus these 39 words differed only
+# in composition; and it was constant across every frame of the session
+# Jesse spent rejecting the results as "plastic and wax".
+#
+# What DID move the grade in the same test was physical description -
+# "Shot on 35mm film, grain visible, the highlights allowed to blow out and
+# the shadows left dark, no retouching" gave real falloff and a warmer
+# grade. So the lever exists; these words were not it. State physical
+# facts or say nothing.
+#
+# Dropping it also puts the wardrobe lock last, which is where it belongs:
+# this model family undresses a subject when the final thing it reads is
+# her body, confirmed on H3 the same day.
+# No skin clause here, deliberately (9.85). Stating skin as a PROPERTY
+# ("extremely realistic matte skin, visible pores and fine vellus hair, dry
+# unglossed complexion") measured +73% fine detail on ONE frame, then went
+# to a full eight-shot set: median 1.00x, better on 2 of 8, and the single
+# big win was the softest frame in the set. It does not replicate, so it is
+# not appended. What DID hold from that test is worth keeping: the negation
+# form ("no specular and tiny microdetails") measured exactly zero (0.485
+# against an unchanged 0.486). This model has no representation of absence,
+# so a "no X" clause never lands - state what IS there or say nothing.
+
+# The backdrop killer: named beside a camera clause, "seamless studio
+# backdrop" wins every time and the frame reads as a lit campaign shot, so
+# the clause is repaired, not obeyed. "seamless" takes up to two trailing
+# colour/material words ("seamless charcoal", "seamless white paper"); a
+# "recording studio" is a real place and only the backdrop compounds die.
+_H3_STILL_BACKDROP_RE = re.compile(
+    r"\b(?:(?:against|before|in\s+front\s+of|on|onto|with)\s+)?"
+    r"(?:a\s+|an\s+|the\s+)?"
+    r"(?:seamless(?:\s+(?:white|black|gr[ae]y|charcoal|scarlet|red|blue|"
+    r"green|beige|cream|ivory|pink|purple|orange|yellow|brown|colou?red|"
+    r"paper|muslin|vinyl|sweep|wall|backdrop|background|studio)){0,2}"
+    r"|(?:photo\s+)?studio\s+(?:backdrop|background|sweep)"
+    r"|plain(?:\s+(?:white|black|gr[ae]y|colou?red))?\s+"
+    r"(?:backdrop|background))", re.I)
+# 9.85, rule A: a locomotion verb breaks the still. Measured 2026-08-30
+# (briefs/9.85): in a ten-shot set the one "completely broken" frame was
+# the only one containing "walking" (the carpet smeared to motion streaks,
+# the hair flew apart into strings, the gesturing hand came out
+# malformed), and the only other movement word ("reaching") predicted the
+# only other stringy-hair frame. The body travels, and a motion verb in
+# the scene beats the anti-motion clause in the tail - so the verb is
+# enforced here. Verbs with a held equivalent are rewritten in place;
+# "walks" is guarded against the noun reading ("takes walks", "her walks").
+_H3_STILL_MOTION_VERBS = {
+    "walking": "standing", "walks": "stands", "running": "standing",
+    "jogging": "standing", "striding": "standing", "stepping": "standing",
+}
+# A motion preposition is re-seated with the verb ("walking along a
+# corridor" -> "standing in a corridor"); "around" already reads held for
+# both a space and an object and is left alone.
+_H3_STILL_MOTION_PREPS = {
+    "along": "in", "down": "in", "up": "in", "through": "in",
+    "across": "in", "past": "near", "into": "in", "onto": "on",
+    "toward": "facing", "towards": "facing", "from": "near", "off": "on",
+    "out of": "in",
+}
+# "walking up/down the stairs" -> "standing ON the stairs", never "in".
+_H3_STILL_STAIRS_RE = re.compile(r"\s+(?:the\s+)?(?:stairs|steps|staircase)\b",
+                                 re.I)
+_H3_STILL_MOTION_VERB_RE = re.compile(
+    r"\b(?P<verb>walking|running|jogging|striding|stepping|"
+    r"(?<!\btakes )(?<!\btook )(?<!\btake )(?<!\bfor )(?<!\bher )"
+    r"(?<!\bhis )(?<!\btheir )(?<!\bour )(?<!\bmy )(?<!\byour )walks)\b"
+    r"(?P<prep>\s+(?:out\s+of|along|down|up|through|across|around|past|"
+    r"into|onto|towards?|from|off))?",
+    re.I)
+
+# The motion clauses with no held equivalent are scrubbed instead. The
+# body-travel test applies to the WORD, so "mid-sentence" - a held FACIAL
+# state (mouth open, speaking), and the construction on the lane's
+# best-rated frame - is exempt: a blanket mid-\w+ would destroy it.
+# "caught" rides along when present ("caught mid-laugh at something off
+# to the side" dies as one clause).
+_H3_STILL_MOTION_SCRUB_RE = re.compile(
+    r"((?:\bcaught\s+)?\bmid-(?!sentence\b)[\w-]+"
+    r"|\b(?:swinging|spinning|twirling|reaching|brushing)\b)"
+    r"(\s+[^.,;:!?()—–\n]*)?",
+    re.I)
+
+# 9.85, rule B: an expression that closes the eyes costs the face - every
+# failed version of the measured shot carried "caught mid-laugh at
+# something off to the side" (a motion phrase, an eyes-shut expression and
+# an off-lens gaze in one clause), and four attempts that changed
+# everything BUT the clause all failed. smiling/grinning/smirking do not
+# close the eyes and are not implicated. The body-part phrases take an
+# optional article/possessive lead-in so "her eyes crinkled" dies whole
+# rather than leaving "her ..." dangling.
+_H3_STILL_EXPRESSION_RE = re.compile(
+    r"((?:\bwith\s+)?(?:\b(?:her|his|its|their|the)\s+)?"
+    r"\beyes\s+(?:crinkled|closed)\b"
+    r"|(?:\b(?:her|his|its|their|the)\s+)?\bhead\s+tipped\s+back\b"
+    r"|\b(?:laughing|squinting)\b)"
+    r"(\s+[^.,;:!?()—–\n]*)?",
+    re.I)
+
+# Directly after one of these the fatal word is an adjective, not a clause
+# head: "the swinging doors" -> "the doors", never "the".
+_H3_STILL_DETERMINERS = frozenset(
+    "a an the her his its their our my your some".split())
+
+# The framing floor. Face pixels decide identity: the full-length frames
+# came out as a different woman, waist-up and closer held her. A named
+# framing is respected, a full-length-class one is rewritten, an unnamed
+# one is defaulted. A full length MIRROR is furniture, not a framing.
+_H3_STILL_FULL_FRAME_RE = re.compile(
+    r"\bfull[- ]length(?!\s+mirror)"
+    r"|\bfull[- ]body\b"
+    r"|\b(?:full|wide|long|establishing)(?=\s+(?:shot|view|frame|framing))",
+    re.I)
+_H3_STILL_FRAMED_RE = re.compile(
+    r"\b(?:close[- ]up|medium\s+close[- ]up|medium\s+shot|waist[- ]up|"
+    r"chest[- ]up|from\s+the\s+waist\s+up|portrait|headshot|half[- ]body|"
+    r"three[- ]quarter\s+shot|cowboy\s+shot|knee[- ]up)\b", re.I)
+
+
+def _h3_still_clause_spans(cap, pattern, cls, reach_back=False):
+    """One repair_scene-style span per match of pattern, labeled
+    "<cls>: <fatal phrase>". A sentence-initial match takes its separator
+    and capitalizes the follower ("Against a seamless backdrop, she poses"
+    -> "She poses"); a follower that is only the sentence stop dies with
+    the clause. A mid-clause match takes the preceding separator with it.
+
+    reach_back is for the 9.85 fatal-WORD rules (a fatal word is not a
+    self-contained clause the way "against a seamless backdrop" is): the
+    span reaches up to three words back from the match to its clause edge,
+    so "her hand reaching for the rail" dies whole from its comma - but no
+    further, so "she waits by the doors swinging" keeps "the doors". And
+    directly after a determiner the word is an adjective: only it dies.
+    """
+    spans = []
+    for m in pattern.finditer(cap):
+        s, e = m.span()
+        cs, ce = m.span(1) if m.re.groups else m.span(0)
+        while e > s and cap[e - 1] in " \t":
+            e -= 1                              # the run's own trailing space
+        label = cls + ": " + " ".join(cap[cs:ce].split())
+        head = s
+        if reach_back:
+            i = cs
+            for _ in range(3):
+                j = i
+                while j > 0 and cap[j - 1] in " \t":
+                    j -= 1
+                if j == 0 or cap[j - 1] in ",;:—–" or \
+                        not cap[_sentence_start(cap, j):j].strip():
+                    head = i                    # the fragment's own opening
+                    break
+                while j > 0 and cap[j - 1] not in " \t,;:—–":
+                    j -= 1
+                i = j
+            if head == cs:
+                # No clause edge within three words: inline use. After a
+                # determiner the fatal word is an adjective - cut the word,
+                # keep the noun phrase ("the swinging doors" -> "the
+                # doors").
+                j = cs
+                while j > 0 and cap[j - 1] in " \t":
+                    j -= 1
+                k = j
+                while k > 0 and cap[k - 1] not in " \t,;:—–":
+                    k -= 1
+                if cap[k:j].lower() in _H3_STILL_DETERMINERS:
+                    spans.append((cs, ce, "", label))
+                    continue
+        if not cap[_sentence_start(cap, head):head].strip():
+            # Sentence-initial: the clause and its separator die and the
+            # rest of the sentence stays, capitalized.
+            more = re.match(r"\s*[,;:—–-]?\s*(\w)", cap[e:])
+            if more:
+                spans.append((head, e + more.end(), more.group(1).upper(),
+                              label))
+                continue
+            stop = re.match(r"\s*[.!?]+(?:\s+|$)", cap[e:])
+            if stop:                # the whole sentence was the clause
+                spans.append((head, e + stop.end(), "", label))
+                continue
+            spans.append((head, e, "", label))
+            continue
+        bs = head
+        while bs > 0 and cap[bs - 1] in " \t":
+            bs -= 1
+        if bs > 0 and cap[bs - 1] in ",;:—–":
+            # mid-clause: the preceding separator dies with the run
+            bs -= 1
+            while bs > 0 and cap[bs - 1] in " \t":
+                bs -= 1
+        spans.append((bs, e, "", label))
+    return spans
+
+
+# 1.1.4b, the sign rule. Naming a sign without its words is the fastest
+# way to give a frame away: "a chalkboard price sign" rendered as
+# "DCAEENT / Forward 00% / 1'473 9°" - confident, well-lettered nonsense,
+# and the clearest AI tell in a photograph. The model always letters what
+# it is told is lettering; it can only spell what it was given.
+#
+# So this is the backdrop killer's rule applied to text: a sign whose words
+# are NOT in the caption is scrubbed rather than obeyed. A sign WITH its
+# words is left completely alone - `JOE'S PIZZA`, `UNION SQ`, `W 45 ST` and
+# `NO LIFEGUARD ON DUTY` all rendered perfectly. (Length is the other half
+# of the rule and it belongs to the writer, not here: `WASH AND FOLD`
+# collapsed into `WASH AND FEOL / FO L D`, so the director prompt asks for
+# two short words. A caption that spells a long one is honouring the rule
+# that matters and is not second-guessed.)
+#
+# Deliberately narrow: only nouns that ARE lettering. A poster, a label, a
+# screen or a newspaper can carry no legible text and still be a real thing
+# in a frame, so they are not in this list.
+#
+# The span is the whole noun PHRASE, not the noun. Signs got this wrong until
+# 2026-08-31: they borrowed reach_back, which is a fatal-WORD rule built for
+# locomotion ("the swinging doors" -> "the doors" - after a determiner the
+# fatal word is an adjective, so only it dies). Applied to lettering that is
+# exactly backwards, and it shipped three ways broken:
+#
+#   "past a chalkboard price sign"  ->  "past a price sign"   sign survives
+#   "past a price sign"             ->  "past a price,"       dangling
+#   "a big illuminated billboard advertising something" -> "a big illuminated."
+#
+# The first is the one that matters: the killer removed the ADJECTIVE and left
+# a sign standing, which is the whole thing it exists to prevent.
+#
+# So the phrase is matched whole - a preposition that introduced it, its
+# determiner, up to three modifiers, the lettering noun, and the trailing run -
+# and no reach_back is used. Two rules keep it honest:
+#
+#   * a participle lead-in owns the noun and nothing before it does, so
+#     "a wall covered in graffiti" cuts from "covered" and keeps its wall;
+#   * the modifier run may not cross a participle, a preposition or a
+#     conjunction, which is what stops the general branch from eating that
+#     same wall.
+#
+# Deliberately narrow, still: only nouns that ARE lettering. A poster, a label,
+# a screen or a newspaper can carry no legible text and still be a real thing
+# in a frame, so they are not in this list.
+_H3_STILL_SIGN_NOUN = (
+    r"sign|signs|signage|signboard|signboards|billboard|billboards|"
+    r"marquee|marquees|chalkboard|chalkboards|blackboard|blackboards|"
+    r"whiteboard|whiteboards|banner|banners|placard|placards|"
+    r"nameplate|nameplates|scoreboard|scoreboards|lettering|graffiti")
+# Words a modifier run must not swallow: past one of these the phrase belongs
+# to something else, which is how "a wall covered in graffiti" keeps its wall.
+_H3_STILL_SIGN_STOP = (
+    r"covered|plastered|painted|scrawled|daubed|reading|reads|saying|says|"
+    r"and|or|but|that|which|who|whose|with|in|on|at|of|from|by|to|for|"
+    r"above|below|behind|beside|under|over|near|against|past|outside|inside")
+_H3_STILL_SIGN_RE = re.compile(
+    r"(?:"
+    # (a) the participle lead-in owns the noun; nothing to its left does.
+    r"\b(?:covered|plastered|painted|scrawled|daubed)\s+(?:in|with)\s+"
+    r"|"
+    # (b) otherwise the phrase dies whole, with whatever introduced it -
+    #     cutting the noun alone leaves "She stands past, waiting.", and
+    #     leaving a coordinator behind leaves "on a bumper sticker or, with
+    #     no depth" (seen running this over the ledger's real captions).
+    r"(?:\b(?:and|or)\s+)?"
+    r"(?:\b(?:past|beside|behind|under|underneath|above|below|near|by|"
+    r"against|outside|inside|beneath|between|toward|towards|over|across|"
+    r"in\s+front\s+of|next\s+to|on|in|at|with|of|from)\s+)?"
+    r"(?:\b(?:a|an|the|one|two|three|some|several|its|her|his|their|our|my)"
+    r"\s+)?"
+    r"(?:\b(?!(?:" + _H3_STILL_SIGN_STOP + r")\b)[a-z][\w-]*\s+){0,3}?"
+    r")?"
+    r"\b(" + _H3_STILL_SIGN_NOUN + r")\b"
+    r"(?:\s+[^.,;:!?()—–\n]*)?",
+    re.I)
+# Words the caption actually spells: anything quoted, or a run of capitals
+# long enough to be lettering rather than a proper noun. "New York" is not
+# a match (the second letter is lowercase); "W 42 ST" and "JOE'S PIZZA"
+# are.
+_H3_STILL_SPELLED_RE = re.compile(
+    r"[\"“”][^\"“”]{1,60}[\"“”]"
+    r"|\b[A-Z0-9][A-Z0-9'&.-]{2,}\b"
+    r"|\b[A-Z0-9]+(?:\s+[A-Z0-9]+)+\b")
+
+
+def _h3_still_sign_spans(cap):
+    """Sign phrases with no spelled words in them. A phrase that carries its
+    own lettering is kept whole - the span the killer would remove IS the
+    phrase, so testing the span is testing the words around the sign."""
+    return [span for span in _h3_still_clause_spans(
+                cap, _H3_STILL_SIGN_RE, "sign")
+            if not _H3_STILL_SPELLED_RE.search(cap[span[0]:span[1]])]
+
+
+def _h3_still_apply_spans(cap, spans, cls):
+    """Splice the clause spans and run the shared post-cleanup; a repair
+    that would gut the caption is refused (repair_scene's rule - a wrong
+    repair is worse than a weak caption) and the refusal is what is
+    logged.
+
+    "Gut" is measured per class, because the spans differ in size. A 9.80
+    backdrop clause is short and sits beside a whole scene, so
+    repair_scene's "removed more than half" holds there (and its label is
+    pinned by a 9.80 test). A 9.85 motion or expression clause is often the
+    LONGER half of a short caption: "Waist-up at the kitchen island, caught
+    mid-laugh at something off to the side" loses 8 of 14 words, and what
+    survives - "Waist-up at the kitchen island" - is a perfectly good
+    scene. Measuring the loss refuses exactly the captions this contract
+    exists to repair, so the new classes measure the SURVIVOR instead: a
+    scene with four words left still stages a shot, and one without has
+    nothing to render."""
+    scrubbed, labels = _apply_spans(cap, spans)
+    scrubbed = re.sub(r"[ \t]{2,}", " ", scrubbed)
+    scrubbed = re.sub(r" ([.,;:!?])", r"\1", scrubbed)
+    scrubbed = re.sub(r",(\s*,)+", ",", scrubbed).strip()
+    if cls == "backdrop":
+        gutted = ((len(cap.split()) - len(scrubbed.split())) * 2
+                  > len(cap.split()))
+    else:
+        gutted = len(re.sub(r"[^\w\s-]", " ", scrubbed).split()) < 4
+    if labels and gutted:
+        return cap, ["kept: " + cls + " repair would gut the caption"]
+    return scrubbed, labels
+
+
+def _h3_still_motion_verbs(cap):
+    """The 9.85 locomotion verbs that HAVE a held equivalent, rewritten in
+    place so the setting survives: "walking along a carpeted hotel
+    corridor" -> "standing in a carpeted hotel corridor". The motion
+    preposition is re-seated with the verb and the sentence's
+    capitalization is kept. One "motion: <verb> -> <held>" label per
+    rewrite."""
+    labels = []
+
+    def repl(m):
+        verb = m.group("verb")
+        held = _H3_STILL_MOTION_VERBS[verb.lower()]
+        labels.append("motion: " + verb.lower() + " -> " + held)
+        if verb[0].isupper():
+            held = held.capitalize()
+        prep = m.group("prep")
+        if prep:
+            word = " ".join(prep.split()).lower()
+            to = _H3_STILL_MOTION_PREPS.get(word, word)
+            if word in ("up", "down") and \
+                    _H3_STILL_STAIRS_RE.match(m.string, m.end()):
+                to = "on"
+            if prep.lstrip()[0].isupper():
+                to = to.capitalize()
+            held += " " + to
+        return held
+
+    return _H3_STILL_MOTION_VERB_RE.sub(repl, cap), labels
+
+
+def _h3_still_caption_contract(cap, tail=""):
+    """Enforce the 9.80/9.85 contract on the composed h3_ref_still caption;
+    returns (caption, repairs). repair_scene's style: clause-level spans,
+    one short label per change, the same post-cleanup, and a repair that
+    would gut the caption is refused."""
+    repairs = []
+    # 9.80: the backdrop killer.
+    cap, labels = _h3_still_apply_spans(
+        cap, _h3_still_clause_spans(cap, _H3_STILL_BACKDROP_RE, "backdrop"),
+        "backdrop")
+    repairs += labels
+    # 9.85: locomotion. The verbs with a held equivalent are rewritten in
+    # place first, so the setting survives; the motion clauses with no
+    # held equivalent are scrubbed. "mid-sentence" is exempt - a held
+    # facial state, not a body in motion.
+    cap, labels = _h3_still_motion_verbs(cap)
+    repairs += labels
+    cap, labels = _h3_still_apply_spans(
+        cap, _h3_still_clause_spans(cap, _H3_STILL_MOTION_SCRUB_RE,
+                                    "motion", reach_back=True),
+        "motion")
+    repairs += labels
+    # 9.85: expressions that close the eyes cost the face and are
+    # scrubbed, never obeyed. smiling/grinning/smirking are not implicated.
+    cap, labels = _h3_still_apply_spans(
+        cap, _h3_still_clause_spans(cap, _H3_STILL_EXPRESSION_RE,
+                                    "expression", reach_back=True),
+        "expression")
+    repairs += labels
+    # 1.1.4b: a sign with no words is word slop and is scrubbed; a sign
+    # that spells itself is untouched.
+    cap, labels = _h3_still_apply_spans(cap, _h3_still_sign_spans(cap), "sign")
+    repairs += labels
+    # The rewrite keeps the sentence's capitalization ("Full-length
+    # portrait." -> "Waist-up portrait.").
+    cap, n = _H3_STILL_FULL_FRAME_RE.subn(
+        lambda m: "Waist-up" if m.group(0)[0].isupper() else "waist-up", cap)
+    if n:
+        repairs.append("framing: full-length -> waist-up")
+    # The appended clauses are sentences: an unpunctuated caption gets its
+    # stop first or the framing default jams onto the scene's last line.
+    if not cap.endswith((".", "!", "?")):
+        cap += "."
+    if not _H3_STILL_FRAMED_RE.search(cap):
+        cap += " Framed waist-up."
+        repairs.append("framing: defaulted waist-up")
+    # The wardrobe lock is DEAD LAST, after every repair and after the
+    # framing default. Nothing may be appended below this line: on this
+    # model family the final clause is the one that decides whether she
+    # stays dressed.
+    if tail:
+        cap = cap.rstrip()
+        if not cap.endswith((".", "!", "?")):
+            cap += "."
+        cap += " " + tail
+    return cap, repairs
+
+
+def character_h3_refs(ch, accessories=True):
+    """The ordered H3 wired-reference list for a character anchor, AS DATA
+    (brief 9.83): identity at slot 0, always, then the anchor's ENABLED
+    accessories in order, each a dict the assembler reads
+    ({name, kind, description?}). Lane-agnostic on purpose - build_h3_ref2v
+    and any future one-frame reference node consume the same dicts through
+    the same assemble_h3_ref2v_prompt and the same H3_REF2V_MAX_IMAGES cap.
+
+    A disabled accessory is skipped UNVALIDATED: it never reaches the graph,
+    so its state cannot break a render. An enabled one is validated the
+    identity_ref way - traversal rejected by input_ref_name, the file must
+    sit in ComfyUI/input, and the description (its <Subject N> definition)
+    must exist. Past H3_REF_ACCESSORY_MAX enabled is a refusal, not a silent
+    drop: every wired reference costs sampling time on every step, so a cap
+    that hid an overage would bill the user for a picture they think is off.
+    `accessories=False` is the per-render suppression the composer sends -
+    the anchor is untouched, this job wires slot 0 alone.
+    """
+    _ch, identity = character_identity(ch)
+    refs = [{"name": identity, "kind": "identity"}]
+    if accessories:
+        enabled = [a for a in (ch.get("accessories") or [])
+                   if isinstance(a, dict) and a.get("enabled", True)]
+        if len(enabled) > H3_REF_ACCESSORY_MAX:
+            raise ValueError(
+                f"{ch['name']} has {len(enabled)} enabled accessories - the "
+                f"H3 reference node has {H3_REF2V_MAX_IMAGES} slots and the "
+                f"identity photo holds one, so at most "
+                f"{H3_REF_ACCESSORY_MAX} can be wired; disable or remove one")
+        for a in enabled:
+            image = input_ref_name(a.get("image"))
+            description = " ".join(str(a.get("description") or "").split())
+            if not image or not description:
+                raise ValueError(
+                    f"{ch['name']} has an enabled accessory with a bad image "
+                    "or no description - fix it on the character page")
+            if not (CDIR / "input" / image).is_file():
+                raise ValueError(
+                    f"{ch['name']}'s accessory image is missing from "
+                    f"ComfyUI/input: {image}")
+            refs.append({"name": image, "kind": "object",
+                         "description": description})
+    return refs
+
+
 def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
                        overrides=(), standing=True, nsfw=False, model=None,
-                       aspect=None, mp=None, character=None, lora_plan=None):
+                       aspect=None, mp=None, character=None, lora_plan=None,
+                       accessories=True, one_frame=None, finish=None):
     """MiniMax H3 REF2VA as a still camera with the anchor's own photo as the
     identity mechanism (brief 9.67): the ReferenceToVideo node takes
     reference images natively, so the character's identity_ref IS the
@@ -5940,8 +6931,19 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
     assemble_h3_ref2v_prompt: <Subject 1> is defined from <Picture 1> with
     the fully_preserved retention line, the caption drops the face/age the
     photo already carries (identity_edit's own rule), and the frame sentence
-    is h3_still's. No brain call, no director pass, no turbo - the quality
-    path is the still recipe. Style LoRAs (9.74) chain off the loader and
+    is h3_still's. The anchor's ENABLED accessories wire after the identity
+    photo (brief 9.83), each with its own <Subject N> definition from its
+    description; `accessories=False` suppresses them for the one render
+    without editing the anchor. The caption passes the 9.80/9.85 contract
+    first: the seamless/studio backdrop killer is scrubbed, locomotion is
+    rewritten to a held pose or scrubbed ("mid-sentence" exempt - a held
+    facial state, not a body in motion), eyes-closing expressions are
+    scrubbed and framing is floored at waist-up - enforced, not requested,
+    with every change reported in info. The WARDROBE LOCK takes the tail:
+    nothing is appended after it, because this model family undresses a
+    subject when the last thing it reads is her body. No brain call, no
+    director pass, no turbo - the quality path is the still recipe. Style
+    LoRAs (9.74) chain off the loader and
     feed BOTH consumers; the speed distills never reach the graph -
     resolve_recipe_lora_stack refuses them by variant, the same verdict the
     add-LoRA popup shows.
@@ -5951,8 +6953,32 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
         raise ValueError("MiniMax H3 Ref needs an active character with a "
                          "reference photo")
     spec = RECIPE_SPECS["h3_ref_still"]
-    entry = pick_recipe_model(model, "h3_ref_still")
-    assets, missing = _h3_asset_paths(entry["rel"])
+    # An explicit chip always wins; with nothing asked for, the Settings
+    # reference slot answers (9.91) - a set pick outright, an unset or stale
+    # one by scan. The scan keeps what this builder used to ask
+    # h3_ref_preferred_build for directly: an installed fl2va/ref2va hybrid
+    # beats the stock ref2va build this recipe defaults to.
+    entry = pick_recipe_model(model or recipe_render_default("h3_ref_still"),
+                              "h3_ref_still")
+    # One frame, or five and keep the first. The one-frame spine is the
+    # measured recipe (docs/2026-08-30-h3-ref-realism.md): the pack's
+    # MM1FrameMiniMaxH3ReferenceToImage builds a true T=1 audiovisual latent,
+    # so the sampler stops paying for four frames of planned motion that get
+    # thrown away, and the T1 image VAE decodes it with a decoder retrained
+    # on single frames. It takes no audio VAE at all.
+    #
+    # It is a capability, never a requirement: absent the node or the VAE
+    # this builds the byte-identical pre-1.1.4b graph. `one_frame=False` is
+    # the explicit opt-out the 2x builder sends - the MMH3 latent upscaler
+    # is a 3D upscaler that expects the temporal chunk, so the refine lane
+    # keeps the spine it was proven on.
+    single = h3_one_frame_available() if one_frame is None else bool(one_frame)
+    assets, missing = _h3_asset_paths(entry["rel"], audio=not single)
+    if single:
+        assets["image_vae"] = _video_asset("vae", H3_IMAGE_VAE)
+        if not assets["image_vae"]:
+            single = False
+            assets, missing = _h3_asset_paths(entry["rel"])
     if missing:
         raise ValueError("MiniMax H3 Ref still needs: " + ", ".join(missing))
 
@@ -5964,46 +6990,62 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
                                  multiple=H3_CANVAS_MULTIPLE)
         width, height = _h3_still_clamp(width, height)
 
-    # The one wired reference is the anchor's identity photo, staged the
-    # Animate lane's way: the RAW input file, never prepare_h3_frame - a
-    # reference carries identity and the node scales it aspect-preserved
+    # The wired references, identity at slot 0: the anchor's identity photo
+    # plus its ENABLED accessories (brief 9.83), each staged the Animate
+    # lane's way - the RAW input file, never prepare_h3_frame. A reference
+    # carries identity and the node scales it aspect-preserved
     # (ref_image_size "match"), so cropping to canvas would throw away
-    # exactly what the ref exists to carry. A list from day one, though only
-    # the character is wired in this brief.
-    refs = [input_ref_name(ch["identity_ref"])]
+    # exactly what the ref exists to carry. `accessories=False` is the
+    # per-render suppression: the anchor keeps its list, this job wires
+    # slot 0 alone.
+    refs = character_h3_refs(ch, accessories=accessories)
     # _character_caption's flow (subject clause + scene + wardrobe lock)
     # with the NON-FACIAL subject: the photo carries the face and age, so
     # the caption never restates them.
     cap = " ".join(scene.split())
+    lock = ""
     if standing:
         cap = " ".join(character_subject_nonfacial(ch).split()) + " " + cap
         if not nsfw:
-            cap += " " + wardrobe_lock_for(ch)
+            lock = wardrobe_lock_for(ch)
     cap = cap.strip()
+    # 9.80: the prompt contract is enforced, not requested - the backdrop
+    # killer is scrubbed and framing is floored at waist-up. 1.1.3b: the
+    # wardrobe lock is handed to the contract rather than appended before
+    # it, so it lands DEAD LAST. It used to be appended here and then the
+    # contract's own framing default landed after it - a bug the camera
+    # clause was hiding, because the camera clause was last of all.
+    cap, prompt_repairs = _h3_still_caption_contract(cap, tail=lock)
     sentence = cap if cap.endswith((".", "!", "?")) else cap + "."
+    # The freeze instruction LEADS; the caption is last, and therefore so is
+    # the wardrobe lock. It used to trail the caption, which handed "nothing
+    # in the frame moves" the position that decides whether she stays
+    # dressed - and she did not. Reproduced 2026-08-30 at one seed on both
+    # spines: a caption naming only a hoody rendered her in underwear from
+    # the waist down, twice.
+    #
+    # This is the same bug 1.1.3b fixed one level down. Moving the lock to
+    # the end of the CAPTION was necessary and not sufficient, because the
+    # builder then wrapped the caption in a sentence of its own. The test
+    # that goes with this asserts on the assembled PROMPT, not the caption:
+    # last-in-the-caption is not a property anything renders.
     brief = ("detailed_description:\n"
              "[Shot 1] Live-action, a frozen instant held completely still - "
-             + sentence +
-             " The subject holds the pose; nothing in the frame moves.\n\n"
+             "the subject holds the pose and nothing in the frame moves. "
+             + sentence + "\n\n"
              "overall_soundscape:\nRoom tone, steady, synchronized.")
-    prompt, _tag_warnings = assemble_h3_ref2v_prompt(
-        brief, [{"kind": "identity"} for _ in refs])
+    prompt, _tag_warnings = assemble_h3_ref2v_prompt(brief, refs)
 
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {
             "unet_name": assets["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {
-            "clip_name": assets["clip"], "type": "minimax", "device": "default"}},
+        "2": _h3_clip_node(assets),
+        # One VAE on the one-frame spine, both ends. The image VAE's encoder
+        # is bit-identical to the video VAE's (per-tensor MD5, 2026-08-30),
+        # so encoding the wired references through it is the same arithmetic
+        # and the second VAE is pure VRAM.
         "3": {"class_type": "VAELoader", "inputs": {
-            "vae_name": assets["video_vae"]}},
-        # The node takes audio_vae even though nothing decodes audio - the
-        # loader stays wired; the decode branch is what goes.
-        "4": {"class_type": "VAELoader", "inputs": {
-            "vae_name": assets["audio_vae"]}},
-        "6": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
-            "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
-            "prompt": prompt, "width": width, "height": height,
-            "length": 5, "ref_image_size": "match"}},
+            "vae_name": assets["image_vae"] if single else assets["video_vae"]}},
         "7": {"class_type": "KSamplerSelect",
               "inputs": {"sampler_name": H3_STILL_SAMPLER}},
         "8": {"class_type": "BasicScheduler", "inputs": {
@@ -6019,18 +7061,34 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
             "sigmas": ["8", 0], "latent_image": ["6", 1]}},
         "12": {"class_type": "VAEDecode", "inputs": {
             "samples": ["11", 0], "vae": ["3", 0]}},
+        "14": {"class_type": "SaveImage", "inputs": {
+            "images": ["12", 0],
+            "filename_prefix": f"pixal_dm/{slug(scene)}"}},
+    }
+    if single:
+        # No audio VAE, no length, no frame grab: the latent is one frame.
+        g["6"] = {"class_type": H3_ONE_FRAME_NODE, "inputs": {
+            "clip": ["2", 0], "vae": ["3", 0],
+            "prompt": prompt, "width": width, "height": height,
+            "ref_image_size": "match"}}
+    else:
+        # The node takes audio_vae even though nothing decodes audio - the
+        # loader stays wired; the decode branch is what goes.
+        g["4"] = {"class_type": "VAELoader", "inputs": {
+            "vae_name": assets["audio_vae"]}}
+        g["6"] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+            "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
+            "prompt": prompt, "width": width, "height": height,
+            "length": 5, "ref_image_size": "match"}}
         # Only frame 0 is a real image (9.58): the causal VAE gives it its
         # own standalone latent, while frames 1-4 share ONE compressed chunk
         # that also carries the planned motion.
-        "13": {"class_type": "ImageFromBatch", "inputs": {
-            "image": ["12", 0], "batch_index": 0, "length": 1}},
-        "14": {"class_type": "SaveImage", "inputs": {
-            "images": ["13", 0],
-            "filename_prefix": f"pixal_dm/{slug(scene)}"}},
-    }
-    for i, staged in enumerate(refs):
+        g["13"] = {"class_type": "ImageFromBatch", "inputs": {
+            "image": ["12", 0], "batch_index": 0, "length": 1}}
+        g["14"]["inputs"]["images"] = ["13", 0]
+    for i, ref in enumerate(refs):
         g[_H3_REF2V_REF_NODES[i]] = {
-            "class_type": "LoadImage", "inputs": {"image": staged}}
+            "class_type": "LoadImage", "inputs": {"image": ref["name"]}}
         g["6"]["inputs"][f"ref_images.ref_image_{i}"] = \
             [_H3_REF2V_REF_NODES[i], 0]
     entries, dropped = resolve_recipe_lora_stack(
@@ -6042,17 +7100,74 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
     # model, never the raw loader output.
     g["8"]["inputs"]["model"] = [model_tail, 0]
     g["9"]["inputs"]["model"] = [model_tail, 0]
+    # The skin finish is the LAST thing before the save, and it is appended
+    # after the overrides so that an override targeting node 14 still names
+    # the save it always named.
+    skin = h3_skin_finish_active(finish)
+    if skin:
+        _h3_append_skin_finish(g, "12" if single else "13")
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(entry, "minimax_h3_ref2v_still"),
             "model": "MiniMax H3 REF2VA still",
             "text_encoder": base(assets["clip"]),
-            "vae": base(assets["video_vae"]),
+            "vae": base(assets["image_vae"] if single else assets["video_vae"]),
             **lora_job_info(entries, dropped),
             "references": len(refs),
+            "accessories": len(refs) - 1,
+            "prompt_repairs": prompt_repairs,
+            "one_frame": single,
+            "skin_finish": skin,
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
+    return g, cap, info
+
+
+def build_h3_ref_still_2x(scene, seed, width=None, height=None, loras=(),
+                          overrides=(), standing=True, nsfw=False, model=None,
+                          aspect=None, mp=None, character=None, lora_plan=None,
+                          accessories=True):
+    """"Refined" on the anchored-character lane (brief 9.84): h3_ref_still's
+    graph plus the same in-family 2x latent refine h3_still_2x has run since
+    9.59.
+
+    Every H3 still lane had the refine except this one, and the composer
+    offered the control anyway: Refined was selectable, tagged "two-pass
+    finish", printed " - refined" in the summary, and produced a single pass
+    on any ref2va build. The softness reported across the 2026-08-29/30
+    character set was rendered through that gap.
+
+    The refine block is shared with h3_still_2x and reads its conditioning
+    class off node 6, so the wired references ride the 2x pass unchanged.
+    """
+    if not h3_upscale_available():
+        raise ValueError("MiniMax H3 2x upscale needs the MMH3 pack and "
+                         "latent_upscale_models\\" + H3_LATENT_UPSCALER)
+    # Same re-keying as h3_still_2x: a composer plan arrives named for the
+    # ACTIVE recipe ("h3_ref_still_2x" once Refined is on), and
+    # validate_lora_plan would refuse it as foreign to the builder that
+    # actually executes the first pass.
+    if lora_plan is not None:
+        lora_plan = {**lora_plan, "recipe": "h3_ref_still"}
+    # one_frame=False, deliberately: MMH3LatentUpscaleWithModelParams is a 3D
+    # latent upscaler and the refine was proven against the 5-frame temporal
+    # chunk, so the refine lane keeps the spine it was measured on. The skin
+    # finish rides along unchanged - _h3_append_2x_refine repoints node 13 at
+    # the 2x decode, and the finish hangs off node 13.
+    g, cap, info = build_h3_ref_still(scene, seed, width, height, loras,
+                                      overrides, standing, nsfw, model,
+                                      aspect, mp, character, lora_plan,
+                                      accessories, one_frame=False)
+    w2, h2 = _h3_append_2x_refine(g, seed)
+    info = {**info,
+            "execution_profile": "h3_ref_still_2x",
+            "size": f"{w2}x{h2}",
+            # canvas_mp stays the FIRST pass's canvas, exactly as in
+            # h3_still_2x: the butler prices the job on what it samples, and
+            # 4x there would evict the chat brain on every cold render.
+            "refine": {"scale": 2, "steps": H3_UPSCALE_STEPS,
+                       "denoise": H3_UPSCALE_DENOISE}}
     return g, cap, info
 
 
@@ -6153,6 +7268,11 @@ H3_REF2V_MODEL_ID = "ref2va"
 # exists from day one so the deferred video/audio lanes inherit one constant.
 H3_REF2V_MAX_IMAGES = 9
 H3_REF2V_MAX_FILES = 12
+# Character accessory references (brief 9.83): identity holds slot 0, so the
+# accessories a character may carry cap one lower. Enforced at save (a ninth
+# ENTRY is a 400) and again at build (a ninth ENABLED one is a ValueError) -
+# refused, never silently dropped.
+H3_REF_ACCESSORY_MAX = H3_REF2V_MAX_IMAGES - 1
 # H3_MODEL/H3_REF2V_MODEL/H3_CLIP and both VAEs live up beside RECIPE_SPECS -
 # the h3_still (9.58) and h3_ref_still (9.67) specs name them.
 # H3_HMNSFW_LORA lives up beside them too - the still specs name it (9.74).
@@ -6182,7 +7302,7 @@ H3_SCHEDULER = "simple"
 # The STILL default (h3_still, h3_still_2x, h3_ref_still), 9.78: Jesse's
 # verdict on the 2026-08-28 locked-seed A/B - 4 arms x 2 scenes on
 # h3_still, seed 424242, 20 steps, 1536x2048, every arm verified from its
-# PNG's embedded graph, renders in Desktop\Pixal AB Renders\h3-sampler-ab\
+# PNG's embedded graph, renders in Desktop\Pixal Renders\images\2026-08-28-h3-sampler-ab\
 # - was "So for realism 100 percent C": dpmpp_sde_gpu x beta.
 H3_STILL_SAMPLER = "dpmpp_sde_gpu"
 H3_STILL_SCHEDULER = "beta"
@@ -6297,7 +7417,7 @@ _H3_SHOT_LABEL = re.compile(
 
 
 # Measured here on 2026-08-13, one still and one seed, only these fields
-# moving (sheets in Desktop\Pixal AB Renders). The headline was NEGATIVE: at a
+# moving (sheets in Desktop\Pixal Renders). The headline was NEGATIVE: at a
 # portrait close-up every one of these produces clean, individuated teeth, and
 # the differences are close to noise. Framing dominates sampler. So these are
 # offered as a SPEED ladder, not a quality ladder - pick by how long you are
@@ -6418,6 +7538,172 @@ def apply_h3_sparse(graph, model_tail, sparse=True):
         "sparsity_ratio": H3_SLA_SPARSITY,
         "block_size": "64"}}
     return "h3:sla"
+
+
+def h3_skin_finish_available():
+    """The 1x skin detail model on disk. Node-free: UpscaleModelLoader and
+    ImageUpscaleWithModel are core ComfyUI, so the weights are the whole
+    question."""
+    return _video_asset("upscale_models", H3_SKIN_MODEL) is not None
+
+
+def h3_skin_finish_active(finish=None):
+    """Resolve the skin finish for one render: the explicit per-render answer
+    wins, then the Settings toggle, and either way the file has to be there.
+
+    Default OFF, and the reason is a gap in the evidence rather than a doubt
+    about the model. The +80% to +220% was measured on frames that were also
+    DOWNSCALED BY HALF at the end of the chain, and halving is what buries
+    what skin1x adds in flat areas - a faint regular crosshatch that reads as
+    skin at normal size and does not survive magnification. Pixal's still
+    lanes deliver what they sample, so nothing here hides it, and no one has
+    judged one of these at 1:1 yet.
+
+    A capability nobody has looked at is not a default. One click in Settings
+    turns it on; when a set has been judged at full size, this line is the
+    only thing that has to change."""
+    if not h3_skin_finish_available():
+        return False
+    if finish is not None:
+        return bool(finish)
+    try:
+        return bool(load_config()["still"]["skin_finish"])
+    except (KeyError, TypeError):
+        return False
+
+
+def _h3_append_skin_finish(g, source, save="14"):
+    """Run the decode through the 1x skin detail model on its way to the save.
+
+    Appends only - `source` keeps every wire it had, so a graph with the
+    finish off is the byte-identical graph without it."""
+    g["fin:model"] = {"class_type": "UpscaleModelLoader",
+                      "inputs": {"model_name": H3_SKIN_MODEL}}
+    g["fin:skin"] = {"class_type": "ImageUpscaleWithModel", "inputs": {
+        "upscale_model": ["fin:model", 0], "image": [source, 0]}}
+    g[save]["inputs"]["images"] = ["fin:skin", 0]
+    return "fin:skin"
+
+
+
+# 9.93: de-shine, shipped as "AI Skin Shine Removal". The zGenMedia method
+# from docs/2026-08-30-h3-ref-realism.md, ported from the scratchpad build
+# Jesse judged at 1:1 on 2026-08-31. The doc's numbers (0.85 at the 88th
+# percentile) read too aggressive next to the raw frame; both softening axes
+# moved and both stay reachable as arguments - they are a stronger setting,
+# not a wrong one.
+DE_SHINE_STRENGTH = 0.55
+DE_SHINE_PERCENTILE = 93.0
+DE_SHINE_DOC_STRENGTH = 0.85
+DE_SHINE_DOC_PERCENTILE = 88.0
+
+
+def still_de_shine_active():
+    """The Settings toggle is the whole gate: no model file, no node, no
+    VRAM - numpy on the delivered frame, so unlike skin1x there is nothing
+    to probe. Default OFF like every other finisher; a config written
+    before the key existed reads as off."""
+    try:
+        return bool(load_config()["still"]["de_shine"])
+    except (KeyError, TypeError):
+        return False
+
+
+def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
+             mask_blur=9, tone_blur=41):
+    """Pull specular highlights on skin down toward the local tone.
+
+    Five steps, and the tests pin each one's reason:
+
+    1. Skin in YCbCr - 77<=Cb<=127, 133<=Cr<=173. Chrominance only,
+       luminance discarded, which is exactly why it is tone-agnostic.
+    2. Highlights INSIDE the skin only - luma above a percentile measured
+       within the skin mask, so a white shirt or a bright sky never counts.
+    3. Intersect, then blur the mask - a hard mask patches, a soft one
+       blends.
+    4. Target the LOCAL tone - a heavily blurred copy, not one flat
+       average, because a face has real shading worth keeping.
+    5. Darken only - min(original, target) inside the mask, blended by
+       strength. It can never brighten anything.
+
+    Eyes and teeth are untouched: they fall outside the skin chrominance
+    range. Returns (image, covered fraction of the frame)."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    rgb = np.asarray(im.convert("RGB")).astype(np.float32)
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b
+    cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b
+    skin = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173)
+    if not skin.any():
+        return im.copy(), 0.0
+
+    thresh = np.percentile(y[skin], percentile)
+    hot = skin & (y >= thresh)
+
+    mask = Image.fromarray((hot * 255).astype(np.uint8)).filter(
+        ImageFilter.GaussianBlur(mask_blur))
+    m = (np.asarray(mask).astype(np.float32) / 255.0)[..., None] * strength
+
+    target = np.asarray(im.convert("RGB").filter(
+        ImageFilter.GaussianBlur(tone_blur))).astype(np.float32)
+
+    darker = np.minimum(rgb, target)
+    out = rgb * (1.0 - m) + darker * m
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)), \
+        float(m.mean())
+
+
+def _de_shine_delivered(path):
+    """De-shine one delivered still in place, keeping the PNG's embedded
+    graph. A naive PIL re-save drops the tEXt chunks (prompt, workflow)
+    that style-from-render and the realism doc's verdicts read - that is
+    the doc's whole objection to a server-side rewrite, and carrying every
+    text chunk across is the answer to it. A frame with no skin in it is
+    left byte-identical.
+
+    Never raises: this runs inside the ComfyUI bridge's message loop, where
+    a thrown exception costs the websocket."""
+    try:
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        with Image.open(path) as opened:
+            fmt = opened.format
+            meta = dict(opened.info)
+            im = opened.convert("RGB")
+        out, covered = de_shine(im)
+        if covered <= 0.0:
+            return
+        if fmt == "PNG":
+            info = PngInfo()
+            for key, value in meta.items():
+                if isinstance(value, str):
+                    info.add_text(key, value)
+            out.save(path, pnginfo=info)
+        else:
+            keep = {k: meta[k] for k in ("exif",) if k in meta}
+            out.save(path, **keep)
+        print(f"[pixal] de-shine {path.name} "
+              f"(mask {covered * 100:.2f}% of frame)", flush=True)
+    except Exception as exc:
+        print(f"[pixal] de-shine skipped {path.name}: {exc}", flush=True)
+
+
+def h3_one_frame_available():
+    """The ComfyUI-MM-1Frame node AND MiniMax's T1 image VAE.
+
+    Both are optional downloads, so this is a capability probe, not a
+    requirement: without either, the reference still lane builds exactly the
+    5-frame graph it shipped with. The node list may be unprobed (names is
+    None) on a cold sidecar, in which case the VAE on disk is the whole
+    verdict - the same shape as h3_upscale_available."""
+    names = _COMFY_NODES["names"]
+    if names is not None and H3_ONE_FRAME_NODE not in names:
+        return False
+    return _video_asset("vae", H3_IMAGE_VAE) is not None
 
 
 def h3_upscale_available():
@@ -6633,9 +7919,13 @@ def _video_asset(kind, rel):
 def _h3_asset_paths(model_rel=None, audio=True):
     """Resolve every fixed H3 dependency to the spelling emitted by the catalog,
     for THE PICKED BUILD's transformer file (the stock fl2va constant when
-    unspecified). Encoder and both VAEs are shared across variants and stay
-    fixed; the transformer is the lane, so a ref2va-only machine must not fail
-    this check on the fl2va file it never needed.
+    unspecified). Both VAEs are shared across variants and stay fixed; the
+    transformer is the lane, so a ref2va-only machine must not fail this
+    check on the fl2va file it never needed. The encoder is the ONE
+    resolver's answer (9.94): the stock 32B on Automatic, or the picked
+    small encoder with its projection riding as clip_projection - every H3
+    lane consults h3_text_encoder_choice HERE, so no lane grows a second
+    answer.
 
     audio=False drops the audio VAE for the still lane (9.58): five frames of
     room tone is nothing, and h3_still must not gate on a file its graph
@@ -6646,7 +7936,6 @@ def _h3_asset_paths(model_rel=None, audio=True):
              f"MiniMax H3 model ({base(build)})")
     required = [
         ("model", "diffusion_models", build, label),
-        ("clip", "text_encoders", H3_CLIP, "Qwen3-VL 32B MiniMax encoder"),
         ("video_vae", "vae", H3_VIDEO_VAE, "MiniMax H3 video VAE"),
     ]
     if audio:
@@ -6658,6 +7947,17 @@ def _h3_asset_paths(model_rel=None, audio=True):
             missing.append(label)
         else:
             paths[key] = canonical
+    # The resolver already answered in the catalog's spelling and only ever
+    # returns a pick whose BOTH files resolve; a None clip is therefore the
+    # Automatic path with the 32B itself absent - today's missing-report,
+    # unchanged.
+    encoder = h3_text_encoder_choice()
+    if encoder["clip"] is None:
+        missing.append("Qwen3-VL 32B MiniMax encoder")
+    else:
+        paths["clip"] = encoder["clip"]
+        if encoder["projection"]:
+            paths["clip_projection"] = encoder["projection"]
     return paths, missing
 
 
@@ -6710,11 +8010,22 @@ def h3_model_options():
             continue
         stem = rel.replace("/", "\\").rsplit("\\", 1)[-1][:-len(".safetensors")]
         variant = "ref2va" if "ref2va" in name else "fl2va"
+        # A hybrid is not a finetune of either build - it is a merge that
+        # takes ref2va's adaln_proj across a block range and fl2va's weights
+        # everywhere else - and it is the better one, so it says so rather
+        # than sitting in the list as one more anonymous community file.
+        if "hybrid" in name and "fl2va" in name and "ref2va" in name:
+            description = ("FL2VA/REF2VA hybrid - REF2VA's reference "
+                           "conditioning on FL2VA's weights. Sharper skin, "
+                           "hair and fabric than stock REF2VA; renders a "
+                           "little brighter.")
+        else:
+            description = (f"Community {variant.upper()} finetune - same "
+                           "encoder, VAEs and LoRA catalog as stock.")
         finetunes.append({
             "id": name[:-len(".safetensors")], "rel": rel,
             "label": _h3_finetune_label(stem),
-            "description": f"Community {variant.upper()} finetune - same encoder, "
-                           "VAEs and LoRA catalog as stock."})
+            "description": description})
     options = []
     for low, (chip_id, label, description) in stock.items():
         options.append({"id": chip_id, "rel": found.get(low) or
@@ -6727,6 +8038,268 @@ def h3_model_rel(model_id):
     """Chip id -> catalog rel of that build, or None for an unknown id."""
     mid = str(model_id or H3_MODEL_ID).strip().lower()
     return next((o["rel"] for o in h3_model_options() if o["id"] == mid), None)
+
+
+def h3_ref_preferred_build():
+    """The rel of the best installed build for the reference still lane, or
+    None to leave the recipe's stock default alone.
+
+    Stock `ref2va` is the degraded one - its own author documents "training
+    issues affecting output quality even in non-reference tasks", and the
+    2026-08-30 A/B saw it plainly: skin micro-texture, individual hair
+    strands and visible knit all arrived with the hybrid, and identity held
+    on every pick. So an installed hybrid is preferred, never required.
+
+    The hybrids take adaln_proj from ref2va across a block range and fl2va
+    for everything else. Between them the difference measured near noise on
+    stills (detail did not even rank consistently across three frames), and
+    b30-49 is the one Jesse chose on the pictures - so this prefers it by
+    name and otherwise takes the highest block start, rather than pretending
+    to a ranking the measurements do not support. An explicit chip always
+    wins; this only answers "nothing was asked for"."""
+    hybrids = [o for o in h3_model_options()
+               if "hybrid" in o["id"] and "ref2va" in o["id"]]
+    if not hybrids:
+        return None
+    exact = next((o for o in hybrids if H3_HYBRID_PREFERRED in o["id"]), None)
+    if exact:
+        return exact["rel"]
+
+    def block_start(option):
+        m = re.search(r"[_-]b(\d+)-", option["id"])
+        return int(m.group(1)) if m else -1
+    return max(hybrids, key=block_start)["rel"]
+
+
+def h3_build_lanes(rel):
+    """The H3 lanes one build serves, from the filename tokens: {"fl2va"},
+    {"ref2va"}, or both for a hybrid fl2va/ref2va build (9.91).
+
+    ONE membership rule on purpose: slot candidacy, the model_profile lanes
+    fact, and the pick_recipe_model/compatible_recipes hybrid exceptions all
+    read this, so "which lane can use this file" cannot drift into two
+    answers. Note it is NOT the Animate lane switch - a hybrid chip still
+    routes to the reference graph there (h3_model_variant's ref2va-first
+    precedence, 9.0 trap #6); this answers "what CAN the build serve", for
+    the Settings slots, not "where does a picked chip go".
+    """
+
+    name = str(rel or "").replace("/", "\\").lower().rsplit("\\", 1)[-1]
+    lanes = set()
+    if "fl2va" in name:
+        lanes.add(H3_MODEL_ID)
+    if "ref2va" in name:
+        lanes.add(H3_REF2V_MODEL_ID)
+    return lanes
+
+
+def h3_lane_options(lane):
+    """Every INSTALLED build that can serve one H3 lane ("fl" or "ref"),
+    stock first then finetunes - a Settings dropdown's list (9.91).
+
+    h3_model_options lists the stock chips even when their files are absent
+    (selection must be able to NAME them on a bare machine), so membership
+    alone is not enough: a candidate is one the catalog actually resolves.
+    A hybrid carries both tokens, so it appears in both lanes' lists.
+    """
+    want = H3_REF2V_MODEL_ID if lane == "ref" else H3_MODEL_ID
+    return [option for option in h3_model_options()
+            if want in h3_build_lanes(option["rel"])
+            and resolve_model_entry(option["rel"]) is not None]
+
+
+def h3_slot_choice(lane):
+    """The h3_model_options entry one H3 lane ("fl" or "ref") renders with
+    when nothing was asked for, or None when no candidate is installed.
+
+    Settings owns this answer (9.91): a set slot wins outright - over scan,
+    over preference - until the user changes it again. An unset slot
+    resolves by scan: exactly one installed candidate is the default;
+    several keep the standing per-lane preference (the reference lane takes
+    h3_ref_preferred_build's answer, then stock ref2va; the first/last-frame
+    lane keeps stock fl2va; alphabetical behind those, pick_recipe_model's
+    tie-break) so no machine's behaviour changes silently on upgrade. A
+    slot naming a file that is no longer installed DEGRADES to the scan
+    answer - h3_settings_payload reports the condition; this never raises
+    for it, and the stored pick survives to revive if the file lands again.
+    """
+    options = h3_lane_options(lane)
+    if not options:
+        return None
+    key = "ref_model" if lane == "ref" else "fl_model"
+    stored = str((load_config().get("h3") or {}).get(key) or "").strip()
+    if stored:
+        low = stored.replace("/", "\\").lower()
+        hit = next((o for o in options
+                    if o["rel"].replace("/", "\\").lower() == low), None)
+        if hit:
+            return hit
+    if len(options) == 1:
+        return options[0]
+    if lane == "ref":
+        preferred = h3_ref_preferred_build()
+        if preferred:
+            low = preferred.replace("/", "\\").lower()
+            hit = next((o for o in options
+                        if o["rel"].replace("/", "\\").lower() == low), None)
+            if hit:
+                return hit
+        stock = next((o for o in options if o["id"] == H3_REF2V_MODEL_ID),
+                     None)
+        if stock:
+            return stock
+    else:
+        stock = next((o for o in options if o["id"] == H3_MODEL_ID), None)
+        if stock:
+            return stock
+    return sorted(options, key=lambda o: o["rel"].lower())[0]
+
+
+# Which slot answers "nothing was asked for" for each H3 still recipe
+# (9.91). The video templates consult h3_slot_choice directly - they take
+# chip ids, not catalog rels.
+H3_RECIPE_LANES = {"h3_still": "fl", "h3_still_2x": "fl",
+                   "h3_ref_still": "ref", "h3_ref_still_2x": "ref"}
+
+
+def recipe_render_default(recipe_id):
+    """The model rel this recipe renders with when the ask names none (9.91).
+
+    ONE answer, read by everyone: the H3 builders consult it on model=None
+    and HUB.options reports it as the recipe's default_model, so the payload
+    cannot name one build while the sampler loads another - the divergence
+    that bit three times on 2026-08-31. Settings owns the value; an unset or
+    stale slot resolves by scan (h3_slot_choice). None for every non-H3
+    recipe: their standing resolution (the authored default when installed,
+    then prefer_key order) is already the one both sides share.
+    """
+    lane = H3_RECIPE_LANES.get(recipe_id)
+    if not lane:
+        return None
+    choice = h3_slot_choice(lane)
+    return choice["rel"] if choice else None
+
+
+def h3_text_encoder_choice():
+    """Which text encoder (and projection) an H3 graph loads (9.94).
+
+    ONE answer, consulted by every H3 lane through _h3_asset_paths - the
+    sibling of h3_slot_choice's "which build", for "how much encoder". The
+    Settings pick wins when it still resolves: a set id whose encoder AND
+    projection are both in the catalog, on a ComfyUI whose probe carries
+    the ClipProjLoader node NAME. Anything else is Automatic - the stock
+    32B through a plain CLIPLoader, exactly the graph built before this
+    setting existed:
+
+    - "" (unset) is Automatic outright.
+    - A pick whose files left the catalog is STALE: degrade, never raise;
+      h3_settings_payload reports the condition and the stored pick
+      survives to revive when the files return.
+    - A probed ComfyUI without the node degrades too - queueing a graph
+      it cannot resolve would be the worse answer. Unprobed is "not asked
+      yet", _node_available's standing contract.
+
+    Returns {"id", "label", "clip", "projection"}: clip the catalog's own
+    spelling (None when the 32B itself is absent), projection None on the
+    Automatic path.
+    """
+    stored = str((load_config().get("h3") or {})
+                 .get("text_encoder") or "").strip()
+    if stored and _node_available(H3_CLIP_PROJ_NODE):
+        opt = next((o for o in H3_TEXT_ENCODER_OPTIONS
+                    if o["id"] == stored), None)
+        if opt is not None:
+            clip = _video_asset("text_encoders", opt["encoder"])
+            projection = _video_asset("clip_projections", opt["projection"])
+            if clip and projection:
+                return {"id": opt["id"], "label": opt["label"],
+                        "clip": clip, "projection": projection}
+    return {"id": "", "label": H3_CLIP_LABEL,
+            "clip": _video_asset("text_encoders", H3_CLIP),
+            "projection": None}
+
+
+def _h3_clip_node(assets):
+    """Node 2 of every H3 graph (9.94): the stock CLIPLoader on the resolved
+    encoder, or ClipProjLoader when the resolved choice carries a projection.
+    ClipProjLoader takes what CLIPLoader takes plus the projection and
+    returns CLIP, so nothing downstream changes; device and mode are the
+    node's own inputs, fixed to cuda:0/resident and never surfaced - one
+    decision, not five. The Automatic path emits exactly the dict every H3
+    lane has always built."""
+    projection = assets.get("clip_projection")
+    if projection:
+        return {"class_type": H3_CLIP_PROJ_NODE,
+                "inputs": {"clip_name": assets["clip"], "type": "minimax",
+                           "projection": projection,
+                           "device": "cuda:0", "mode": "resident"}}
+    return {"class_type": "CLIPLoader",
+            "inputs": {"clip_name": assets["clip"], "type": "minimax",
+                       "device": "default"}}
+
+
+def _catalog_size(kind, rel):
+    """The scanned byte size of one catalog entry, or None where the entry
+    is unknown - a settings row's "what it weighs" fact (9.94), from the
+    same scan the library tab already reads."""
+    want = str(rel or "").replace("/", "\\").lower()
+    entry = next((e for e in model_catalog(kind)
+                  if e["rel"].replace("/", "\\").lower() == want), None)
+    return entry.get("size") if entry else None
+
+
+def h3_settings_payload(cfg):
+    """The two H3 model slots (9.91) plus the text-encoder row (9.94), for
+    /api/settings: the stored picks, the installed candidates, what
+    Automatic currently resolves to, and whether a stored pick's files left
+    the catalog. Stale is reported, never raised on - the render lanes
+    degrade to the scan answer, and the stored pick survives to revive if
+    the file lands again.
+    """
+    stored = (cfg or {}).get("h3") or {}
+    out = {"ref_model": str(stored.get("ref_model") or ""),
+           "fl_model": str(stored.get("fl_model") or ""),
+           "text_encoder": str(stored.get("text_encoder") or "").strip()}
+    for lane in ("ref", "fl"):
+        options = h3_lane_options(lane)
+        choice = h3_slot_choice(lane)
+        want = out["ref_model" if lane == "ref" else "fl_model"]
+        low = want.replace("/", "\\").lower()
+        out[lane] = {
+            "options": [{"id": o["id"], "rel": o["rel"], "label": o["label"]}
+                        for o in options],
+            "resolved": ({"id": choice["id"], "rel": choice["rel"],
+                          "label": choice["label"]} if choice else None),
+            "stale": bool(want) and not any(
+                o["rel"].replace("/", "\\").lower() == low for o in options)}
+    # The encoder row (9.94). An option is listed only when BOTH its files
+    # resolve - encoder present but projection missing, and the reverse,
+    # both leave it unofferable, so the row can never offer a pick the
+    # graph could not load. The row is a VRAM control, so every option
+    # carries what its encoder weighs. resolved is the render answer right
+    # now (a valid pick, else the 32B); stale says the stored pick's files
+    # left and Automatic is running over it until they return.
+    enc_options = []
+    for opt in H3_TEXT_ENCODER_OPTIONS:
+        clip = _video_asset("text_encoders", opt["encoder"])
+        projection = _video_asset("clip_projections", opt["projection"])
+        if not (clip and projection):
+            continue
+        enc_options.append({"id": opt["id"], "label": opt["label"],
+                            "clip": clip, "projection": projection,
+                            "size": _catalog_size("text_encoders", clip)})
+    choice = h3_text_encoder_choice()
+    out["encoder"] = {
+        "options": enc_options,
+        "automatic": {"id": "", "label": H3_CLIP_LABEL,
+                      "size": _catalog_size("text_encoders", H3_CLIP)},
+        "resolved": {"id": choice["id"], "label": choice["label"],
+                     "size": (_catalog_size("text_encoders", choice["clip"])
+                              if choice["clip"] else None)},
+        "stale": bool(out["text_encoder"]) and not any(
+            o["id"] == out["text_encoder"] for o in enc_options)}
+    return out
+
 
 
 def h3_model_variant(model_id):
@@ -8433,7 +10006,15 @@ _H3_REF2V_KIND_LINES = {
 }
 
 
-def _h3_ref2v_subject_line(n, kind=None):
+def _h3_ref2v_subject_line(n, kind=None, description=None):
+    # A carried description (9.83's character accessories) IS the subject
+    # sentence, in the kind lines' own format: the model addresses wired
+    # references by tag, so the line must say WHICH object the picture holds -
+    # "the object shown in" binds nothing the prompt can name.
+    description = " ".join(str(description or "").split())
+    if description:
+        return (f"<Subject {n}> is the {description} "
+                f"shown in <Picture {n}>.")
     template = _H3_REF2V_KIND_LINES.get(str(kind or ""),
                                         "<Subject {n}> is the subject of <Picture {n}>.")
     return template.format(n=n)
@@ -8463,7 +10044,9 @@ def assemble_h3_ref2v_prompt(brief, refs, user_script=False, style=None):
     a SIBLING of assemble_h3_prompt, not a parameter on it.
 
     refs is the ordered wired reference list (dicts; a stored `kind` becomes
-    the subject sentence). Returns (prompt, warnings). Guarantees, each
+    the subject sentence, and a stored `description` wins over it - 9.83's
+    character accessories name WHICH object the picture holds). Returns
+    (prompt, warnings). Guarantees, each
     checkable against the model card's canonical case-Ref2VA prompt: all six
     sections in the guide's order; block shape (header at column 0, value on
     the next line, one blank line between); no alignment header; no
@@ -8515,8 +10098,9 @@ def assemble_h3_ref2v_prompt(brief, refs, user_script=False, style=None):
     for n in range(1, count + 1):
         if f"<Picture {n}>" in subj or f"<Subject {n}>" in subj:
             continue
-        lines.append(_h3_ref2v_subject_line(n, refs[n - 1].get("kind")
-                                            if isinstance(refs[n - 1], dict) else None))
+        ref = refs[n - 1] if isinstance(refs[n - 1], dict) else {}
+        lines.append(_h3_ref2v_subject_line(n, ref.get("kind"),
+                                            ref.get("description")))
     sections["subject_definitions"] = "\n".join(lines)
 
     ret = sections.get("retention_analysis", "")
@@ -8955,6 +10539,10 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     the builder only validates the id and records it: size/canvas_mp keep
     reading the real width*height, which is what the butler prices on.
     """
+    if model is None:
+        # Nothing asked: the Settings first/last-frame slot answers (9.91).
+        choice = h3_slot_choice("fl")
+        model = choice["id"] if choice else None
     model_id = str(model or H3_MODEL_ID).strip().lower()
     model_rel = h3_model_rel(model_id)
     if model_rel is None:
@@ -8994,8 +10582,7 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
     graph = {
         "1": {"class_type": "UNETLoader", "inputs": {
             "unet_name": h3_assets["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {
-            "clip_name": h3_assets["clip"], "type": "minimax", "device": "default"}},
+        "2": _h3_clip_node(h3_assets),
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": h3_assets["video_vae"]}},
         "4": {"class_type": "VAELoader", "inputs": {
@@ -9202,6 +10789,10 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
     shot, which is the pack's own fix for that drift; ``memory`` widens how many
     recent shot-end frames the encoder sees. Both 0 = the plain sampler.
     """
+    if model is None:
+        # Nothing asked: the Settings first/last-frame slot answers (9.91).
+        choice = h3_slot_choice("fl")
+        model = choice["id"] if choice else None
     model_id = str(model or H3_MODEL_ID).strip().lower()
     model_rel = h3_model_rel(model_id)
     if model_rel is None:
@@ -9252,8 +10843,7 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
     graph = {
         "1": {"class_type": "UNETLoader", "inputs": {
             "unet_name": h3_assets["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {
-            "clip_name": h3_assets["clip"], "type": "minimax", "device": "default"}},
+        "2": _h3_clip_node(h3_assets),
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": h3_assets["video_vae"]}},
         "4": {"class_type": "VAELoader", "inputs": {
@@ -9364,6 +10954,10 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     refs itself, aspect-preserved (ref_image_size "match"), and cropping to
     canvas would throw away exactly what the ref exists to carry.
     """
+    if model is None:
+        # Nothing asked: the Settings reference slot answers (9.91).
+        choice = h3_slot_choice("ref")
+        model = choice["id"] if choice else None
     model_id = str(model or H3_REF2V_MODEL_ID).strip().lower()
     model_rel = h3_model_rel(model_id)
     if model_rel is None:
@@ -9435,8 +11029,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     graph = {
         "1": {"class_type": "UNETLoader", "inputs": {
             "unet_name": h3_assets["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader", "inputs": {
-            "clip_name": h3_assets["clip"], "type": "minimax", "device": "default"}},
+        "2": _h3_clip_node(h3_assets),
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": h3_assets["video_vae"]}},
         "4": {"class_type": "VAELoader", "inputs": {
@@ -9708,7 +11301,9 @@ def build_upscale_image(scene, seed, image=None, model=None, mode=None, override
     "model" mode is deterministic and diffusion-free: the frame is not
     re-sampled, so the content cannot drift, and the model's own factor decides
     the output size. "pid" mode trades that guarantee for generative detail -
-    NVIDIA PiD repaints each tile in a 4-step diffusion pass at 4x."""
+    NVIDIA PiD repaints each tile in a 4-step diffusion pass at 4x. "vsr"
+    mode runs the video lane's RTX VFX filter on the frame: real
+    reconstruction in seconds, at the configured tier and scale (9.79)."""
     src = input_ref_name(image)
     if not src:
         raise ValueError("upscale needs a source image in ComfyUI/input")
@@ -9775,6 +11370,43 @@ def build_upscale_image(scene, seed, image=None, model=None, mode=None, override
             info["tiling"] = (f"padded {real[0]}x{real[1]} -> "
                               f"{pid_clean_extent(real[0])}x{pid_clean_extent(real[1])} "
                               f"for clean {PID_TILE_OVERLAP}px tile overlaps")
+        return g, scene, info
+    if chosen_mode == "vsr":
+        # 9.79: a still through the RTX VFX filter the video lane already
+        # uses. Three nodes, no VHS anywhere: LoadImage -> VSR -> SaveImage.
+        node = _video_upscale_node()
+        if not node:
+            raise ValueError("VSR upscaling needs the Deno RTX VFX node pack")
+        vsr_mode = cfg.get("image_vsr_mode", UPSCALE_IMAGE_DEFAULT_VSR_MODE)
+        if vsr_mode not in UPSCALE_VSR_TIERS:
+            # A hand-edited config.json degrades to the default instead of
+            # queueing a mode the node would reject with a bare 400.
+            vsr_mode = UPSCALE_IMAGE_DEFAULT_VSR_MODE
+        low, high = UPSCALE_VIDEO_SCALE_RANGE
+        try:
+            vsr_scale = float(cfg.get("image_vsr_scale", 2.0))
+        except (TypeError, ValueError):
+            vsr_scale = 2.0
+        vsr_scale = min(max(vsr_scale, low), high)
+        g = json.loads(json.dumps(TEMPLATES["vsr_upscale"]))
+        g["up:img"]["inputs"]["image"] = src
+        g["up:vsr"]["class_type"] = node
+        if node == "DenoRTXVFXEasyUpscale":
+            # The node requires ALL ELEVEN inputs - the template carries them,
+            # verbatim from the hand-verified scratchpad graph; with
+            # resize_type "Scale" only mode+scale are actually read.
+            g["up:vsr"]["inputs"]["mode"] = vsr_mode
+            g["up:vsr"]["inputs"]["scale"] = vsr_scale
+        else:
+            # The NVIDIA pack's node takes only a quality tier, not a mode
+            # string - the same branch build_upscale_video already runs.
+            g["up:vsr"]["inputs"] = {"images": ["up:img", 0],
+                                     "resize_type": "Scale",
+                                     "quality": vsr_mode.rsplit(" ", 1)[-1].upper()}
+        g["up:save"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene) or 'upscaled'}"
+        for o in overrides:
+            g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+        info = {"upscaler": f"RTX {vsr_mode} {vsr_scale:g}x", "source_image": src}
         return g, scene, info
     chosen = resolve_upscale_model(model or cfg.get("image_model"))
     g = json.loads(json.dumps(TEMPLATES["upscale_image"]))
@@ -9865,7 +11497,15 @@ def build_upscale_video(scene, seed, video=None, mode=None, scale=None,
                 g["uv:decimate"] = {
                     "class_type": "VHS_SelectEveryNthImage",
                     "inputs": {"images": ["uv:rife", 0],
-                               "select_every_nth": nth},
+                               "select_every_nth": nth,
+                               # REQUIRED by the installed VHS build, not
+                               # optional - omitting it fails validation at
+                               # queue time ("Required input is missing:
+                               # skip_first_images"), which broke every
+                               # non-whole-multiple target: 30 and 60 fps both
+                               # wire this node, 48 skips it by being 2x of 24,
+                               # so the bug hid behind the one rate that works.
+                               "skip_first_images": 0},
                     "_meta": {"title": "Select Every Nth"}}
                 tail = "uv:decimate"
             g["uv:vsr"]["inputs"]["images"] = [tail, 0]
@@ -10049,6 +11689,7 @@ BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "anima": build_anima, "h3_still": build_h3_still,
             "h3_still_2x": build_h3_still_2x,
             "h3_ref_still": build_h3_ref_still,
+            "h3_ref_still_2x": build_h3_ref_still_2x,
             "identity_edit": build_zara_edit,
             "zara_edit": build_zara_edit,       # alias: pre-rename ledger entries
             "qwen_edit": build_qwen_edit, "qwen_image": build_qwen_image,
@@ -10555,6 +12196,15 @@ class Hub:
         name = str(img.get("filename", "")).lower()
         img["media"] = "video" if fmt.startswith("video") or \
             name.endswith((".mp4", ".webm", ".mov", ".gif")) else "image"
+        if img["media"] == "image" and job.get("template") != "upscale_image" \
+                and still_de_shine_active():
+            # 9.93: de-shine runs on the delivered frame, which is what makes
+            # it lane-independent - and what orders it BEFORE any upscale
+            # model: the upscale action reads this file afterwards, and its
+            # own output is exempt above, so the percentile is never measured
+            # on already-textured skin.
+            _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
+                                / img["filename"])
         job["images"].append(img)
         self.broadcast(type="image", job_id=job["id"],  # img carries its own "type" - rename
                        filename=img.get("filename"), subfolder=img.get("subfolder", ""),
@@ -10646,8 +12296,6 @@ class Hub:
             if cache is not None:
                 entry["cache"] = cache
             self.ledger_append(entry)
-        if job.get("_neutralize_for"):
-            finish_reference_neutralise(job)      # 9.51: the neutral frame lands
         if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
             # text later, because the very next line replaces that text with
@@ -11579,17 +13227,38 @@ class Hub:
         models.sort(key=lambda rel: (not model_meta[rel]["supported"],
                                      model_meta[rel]["family"], rel.lower()))
 
+        # ONE resolver decides what can run a recipe. This used to walk
+        # `models` itself and keep only compatible_recipes, which is a SUBSET
+        # of the render lane's rules - it missed the nvidia_pid exclusion and
+        # the no_gguf one. The result on this box: /api/options advertised
+        # qwen_image as ready with `missing: []` and named a PiD tiled
+        # UPSCALER as its model, while pick_recipe_model raised "needs an
+        # installed compatible qwen_image diffusion model" for the same
+        # recipe. A lane you can pick and cannot render (found 2026-08-31,
+        # right after the same divergence was fixed for qwen_edit - twice in
+        # one afternoon is the argument for not having a second copy).
+        runnable = {rid: [e["rel"] for e in recipe_model_candidates(rid)]
+                    for rid in RECIPE_SPECS}
         resolved_recipe_models = {}
         for rid, spec in RECIPE_SPECS.items():
-            authored = next((name for name in models
+            # The authored build still wins when it is installed AND runnable;
+            # naming one the sampler would refuse is the bug, not the fix.
+            authored = next((name for name in runnable[rid]
                              if name.lower() == spec["default_model"].lower()), None)
-            fallback = next((name for name in models
-                             if rid in model_meta[name]["compatible_recipes"]), None)
-            resolved_recipe_models[rid] = authored or fallback or spec["default_model"]
+            # 9.91: the H3 lanes ask the Settings-owned resolver - the SAME
+            # answer the render lane gets - instead of deriving their own.
+            # Instance 3 of "named one, rendered another" (2026-08-31) was
+            # this loop not knowing h3_ref_preferred_build existed.
+            resolved_recipe_models[rid] = (
+                recipe_render_default(rid) or authored or
+                (runnable[rid][0] if runnable[rid] else
+                 spec["default_model"]))
 
         def missing_for(rid, spec):
             missing = []
-            if not any(rid in meta["compatible_recipes"] for meta in model_meta.values()):
+            # "is anything installed that can RUN this" - the same question
+            # the sampler asks, not the looser compatible_recipes test.
+            if not runnable[rid]:
                 missing.append(f"compatible {spec['family']} diffusion model")
             for nm in spec.get("required_loras", []):
                 # The identity stage runs ANY installed v1.2 build (brief
@@ -11606,6 +13275,14 @@ class Hub:
                 if not _catalog_has("vae", nm):
                     missing.append("VAE: " + nm)
             for nm in spec.get("required_text_encoders", []):
+                # 9.94: an H3 lane loads the encoder the Settings-owned
+                # resolver answers, not necessarily the 32B the spec names -
+                # with a small-encoder pick set the 32B is not required (it
+                # may be deleted; freeing it is the point of the setting).
+                # Automatic resolves to the 32B, so an untouched install
+                # checks exactly what it checked before.
+                if nm == H3_CLIP and spec["family"] == "minimax_h3":
+                    nm = h3_text_encoder_choice()["clip"] or H3_CLIP
                 if not _catalog_has("text_encoders", nm):
                     missing.append("text encoder: " + nm)
             for nm in spec.get("required_upscalers", []):
@@ -11615,7 +13292,8 @@ class Hub:
             # 659 MB latent upscaler on disk; h3_upscale_available() checks
             # both (a cold probe alone is not enough - the weights may simply
             # be absent while the node list is unprobed).
-            if rid == "h3_still_2x" and not h3_upscale_available():
+            if rid in ("h3_still_2x", "h3_ref_still_2x") \
+                    and not h3_upscale_available():
                 missing.append("MiniMax H3 2x upscale: the MMH3 pack and "
                                "minimax_h3_latent_upscaler_3d_bf16.safetensors")
             if spec["family"] == "zimage":
@@ -11656,9 +13334,8 @@ class Hub:
                              "dials": _recipe_dials_payload(spec),
                              "needs_character": bool(spec.get("needs_character")),
                              "available": not missing, "missing": missing})
-        # Saved styles carry their own model, so missing_for's generic "you own
-        # no compatible model" line is noise here - style_missing names the
-        # exact file. Everything else the base recipe needs still applies.
+        refresh_saved_styles()   # a preset dropped into recipes/ lists now (9.92)
+        saved_styles = []
         saved_styles = []
         for record in SAVED_STYLES.values():
             spec = RECIPE_SPECS[record["base"]]
@@ -11689,6 +13366,14 @@ class Hub:
                 "characters": [{"id": c["id"], "name": c["name"], "age": c.get("age"),
                                 "race": c.get("race"), "sex": c.get("sex"),
                                 "has_ref": character_identity_ready(c),
+                                # 9.83: the ENABLED accessory count - the number
+                                # that would wire - so the composer can offer the
+                                # per-render suppression only when it means
+                                # something. A bare count, never the filenames.
+                                "accessories": sum(
+                                    1 for a in (c.get("accessories") or [])
+                                    if isinstance(a, dict)
+                                    and a.get("enabled", True)),
                                 "ref_rev": character_identity_rev(c)}
                                for c in CHARACTERS.values()],
                 "model_roots": [str(r) for r in model_roots()], "defaults": defaults}
@@ -11915,6 +13600,10 @@ TOOLS = [{
                                              "own reference photo (~1 min; REF2VA build - the "
                                              "photo IS the identity, no identity_edit; "
                                              "REQUIRES an active character anchor). "
+                                             "h3_ref_still_2x = that same anchored still plus "
+                                             "the 2x latent refine (~4 min; use when the user "
+                                             "wants maximum detail on the anchored character, "
+                                             "or calls a render of them soft or blurry). "
                                              # The enum offers 10 recipes and the SYSTEM prose
                                              # documents 7; the other three were presented as
                                              # peers with no guidance at all (k3's audit, F8).
@@ -12160,6 +13849,7 @@ Write the scene the way the render models were measured to like:
 
 Templates:
 - identity_edit: the anchored character. Write EDIT instructions - doing, wearing or not wearing, where, ~100 words. NEVER describe the face or age (the reference photo carries them); you may state eye colour.
+- h3_ref_still: the anchored character, photographed. About 45 words: one ordinary place she has a reason to be in, ONE thing she is in the middle of, then the clothes. Light arrives from out of frame and the room stays lit - never name a lamp, bulb or neon in the shot. Waist-up or closer, never full length. Write the moment, not the expression: give her hands something to hold or rest flat on, clear of her face, and the face follows. Name only what the shot needs. If a sign is in it, spell its words in capitals and keep them to two short words, or leave the sign out. If she is holding a drink, name the drink and then say, in its own short sentence, that the label is turned away.
 - realism / realism_ii: photographic scenes.
 - fantasy: painterly fantasy art; readable silhouette, materials, scale, magic and light.
 - anima: the default for anime/manga. Anime key-frame language; shot, pose, expression, line/value design and palette. Quality tags are added server-side, so never write "masterpiece" or a score_ tag.
@@ -12324,11 +14014,89 @@ def official_writer_base(local_brain, recipe_id):
     return base[:i] + text + "\n\n" + _OFFICIAL_CONTRACT + "\n\n" + base[j:]
 
 
+# ---- per-recipe end contracts (1.1.4b) --------------------------------------
+# Brief 9.65's harness finding: a small model ignores a rule buried among
+# others and obeys the last one it read on that subject, which is why a
+# contract of at most three points is the shape that holds. The h3_ref_still
+# template line is
+# in the middle, and on three points it says the OPPOSITE of the craft block
+# above it - about 45 words against 60-130, no fixture in the shot against ONE
+# NAMED light source with a direction, and a waist-up frame against "name the
+# actual garments - top, bottom, shoes". Whatever the brain did with that, it
+# was not reading a prompt that agreed with itself. So the three disagreements
+# are restated here, after the craft block and before the turn policy, which
+# is where they measured best - see writer_system_prompt for the numbers.
+#
+# This also holds when official prompting swaps the craft block out for a model
+# maker's own text: MiniMax's own guide asks for 350-500 words and explicit
+# lighting, which is written for video and would take the still lane apart. The
+# contract sits after that splice and so outranks it by position.
+#
+# Only the H3 still lane has one, deliberately. A contract that restates rules
+# already agreed above teaches the brain that this section can be skimmed.
+#
+# Every point is phrased POSITIVELY, and that is not style. The first draft
+# said "About 45 words, not 60-130" and "Name no lamp, bulb, sconce or neon",
+# and measured against the same six asks at temperature 0 (2026-08-31) it
+# taught the writer to do both wrong things: the word count barely moved,
+# because naming the range you do not want anchors it, and one caption came
+# back carrying "the taxi interior glows with warm ambient light from above,
+# but no lamp or bulb is visible" - the prohibition parroted into the caption
+# as a negation, which is the one form this model family has no
+# representation of. A rule the writer can copy verbatim will be copied
+# verbatim, so no rule here is written as a thing not to do.
+_H3_STILL_END_CONTRACT = """
+H3 STILL CONTRACT - this recipe only. Where it differs from the craft rules above, this wins:
+- Four short sentences, about forty-five words: where she is, what she is doing, where the light comes from, what she is wearing. The clothes are the last thing you write.
+- The light comes from outside the frame and the whole room is lit by it. Every object you name is one she could reach out and touch.
+- Waist-up or closer. Name her top, and a jacket or bottoms only if they show at that height.
+"""
+
+RECIPE_END_CONTRACTS = {
+    "h3_still": _H3_STILL_END_CONTRACT,
+    "h3_still_2x": _H3_STILL_END_CONTRACT,
+    "h3_ref_still": _H3_STILL_END_CONTRACT,
+    "h3_ref_still_2x": _H3_STILL_END_CONTRACT,
+}
+
+
+def recipe_end_contract(recipe_id, prompt_enhance):
+    """The recipe's craft contract, or "" when this turn has none. Carries its
+    own leading newline so a turn without one is byte-identical to the prompt
+    before contracts existed.
+
+    Prompt-enhance-off is exempt on purpose: that policy promises the user's
+    own words reach the sampler unrewritten, and a word budget is the one rule
+    that cannot both hold and be verbatim."""
+    if not prompt_enhance:
+        return ""
+    block = RECIPE_END_CONTRACTS.get(recipe_id, "")
+    return ("\n" + block) if block else ""
+
+
 def writer_system_prompt(local_brain, prompt_enhance, recipe_id):
-    """The system prompt one chat turn's writer runs under."""
+    """The system prompt one chat turn's writer runs under.
+
+    The contract goes directly after the craft block it overrides, ahead of
+    TURN_POLICY - measured, 12 turns an arm at the brain's own temperature
+    (2026-08-31), against the same six asks:
+
+                        generate    words   named a fixture
+      no contract         10/12      90.5      6 of 10
+      after the policy    12/12      72.0      2 of 12
+      before the policy   12/12      69.5      1 of 12
+
+    Which corrects the reasoning that put it last. 9.65's finding is that a
+    small model obeys the LAST rule it read, and the naive reading of that is
+    "so put it at the very end". What the end of the prompt actually holds is
+    TURN_POLICY and the enhance policy - rules about WHEN to call the tool,
+    not how to write - and a craft rule stranded after them is separated from
+    every other craft rule. Last ON ITS SUBJECT is what counts, and that is
+    here."""
     base = official_writer_base(local_brain, recipe_id) or \
         (SYSTEM_LOCAL if local_brain else SYSTEM)
-    return base + TURN_POLICY + \
+    return base + recipe_end_contract(recipe_id, prompt_enhance) + \
+        TURN_POLICY + \
         (PROMPT_ENHANCE_ON_POLICY if prompt_enhance else PROMPT_ENHANCE_OFF_POLICY)
 
 
@@ -14373,6 +16141,15 @@ def scene_gate(template, scene, verbatim=False, nsfw=False, repairs=None):
 
 
 
+# An assistant turn with no tool call and at least this many words is a
+# written scene, not conversation. _pending_scene has used 30 since it was
+# written; local_history_view now reads the same number off the same constant,
+# because the two must agree - one decides that a bare "render it" has
+# something to accept, the other decides whether the writer still gets to see
+# it.
+_PROSE_SCENE_WORDS = 30
+
+
 def _pending_scene(convo):
     """True when the newest assistant turn is a written scene awaiting a go.
 
@@ -14388,7 +16165,8 @@ def _pending_scene(convo):
         if role == "assistant":
             if message.get("tool_calls"):
                 return False          # it already acted; nothing is pending
-            return len(str(message.get("content") or "").split()) >= 30
+            return (len(str(message.get("content") or "").split())
+                    >= _PROSE_SCENE_WORDS)
         if role == "user":
             return False              # an unanswered user turn, not a proposal
     return False
@@ -14433,7 +16211,8 @@ _QUEUED_SCENE_RECEIPT_RE = re.compile(
     .replace(re.escape("{template}"), r"[^()]*"))
 
 
-def local_history_view(messages, current_user_index, preserve_latest_render=False):
+def local_history_view(messages, current_user_index, preserve_latest_render=False,
+                       preserve_pending_scene=False):
     """Context view for the local prompt writer, without old render echo.
 
     A completed render otherwise appears three times in history: assistant tool
@@ -14442,11 +16221,17 @@ def local_history_view(messages, current_user_index, preserve_latest_render=Fals
     autoregressive default. Fresh asks retain ordinary chat but omit those old
     generate chains. Explicit iteration keeps only the newest prior chain.
 
-    A queued PROSE scene - an assistant turn with no tool calls whose next
-    message is the server's queue receipt - is the same render in a different
-    costume and follows the same rules. It used to be invisible here: seven
-    prose copies of one wardrobe stayed in context and out-voted every new
-    ask (chat 71979bcf).
+    A PROSE scene - an assistant turn with no tool calls, long enough to be a
+    scene rather than a remark - is the same render in a different costume and
+    follows the same rules, whether or not it was ever queued. Both halves of
+    that were learned the hard way: the queued ones out-voted every new ask in
+    chat 71979bcf, and the UNqueued ones did it again on 2026-08-31, where the
+    writer copied its own wardrobe verbatim into three unrelated scenes and
+    captions ran to twice their length. ``preserve_pending_scene`` keeps the
+    newest one on a turn that is accepting or redirecting it, and only then:
+    dropping six of seven copies and keeping the last changed nothing, because
+    the writer copied the survivor verbatim into a scene that never asked for
+    it.
 
     Messages at and after ``current_user_index`` are the live turn and are never
     filtered, so the current generate/tool pairing remains valid on later rounds.
@@ -14466,6 +16251,45 @@ def local_history_view(messages, current_user_index, preserve_latest_render=Fals
         prior[i + 1].get("role") == "user" and
         isinstance(prior[i + 1].get("content"), str) and
         _QUEUED_SCENE_RECEIPT_RE.fullmatch(prior[i + 1]["content"])}
+    # ...and prose scenes that were never queued at all. The writer prints a
+    # finished scene as chat instead of calling generate on roughly one ask in
+    # six, and until 2026-08-31 nothing removed those: prose_receipts only
+    # matches a scene whose NEXT message is the queue receipt, so a scene the
+    # user never accepted stayed in context for the rest of the session.
+    #
+    # Measured, six asks through /api/chat: seven copies had piled up, the
+    # writer was reproducing its own wardrobe verbatim in unrelated scenes
+    # ("a cropped black crop top with high-waisted denim shorts, paired with
+    # ankle boots" three times), captions had drifted from ~70 words in
+    # isolation to ~150 in the product, and at that length the appended
+    # framing clause stops being obeyed - three renders in a row came back
+    # full length. It is chat 71979bcf's disease one step earlier: that fix
+    # caught the queued copies, and the unqueued ones are the same text.
+    #
+    # The newest survives ONLY on a turn that accepts it ("go", "render it")
+    # or edits it ("make her jacket red"). A new shot that merely happens to
+    # follow one does not count, however substantive it is - see
+    # keeps_pending_scene at the call site for why that distinction is the
+    # whole fix.
+    #
+    # On a FRESH ask it goes too, and keeping it was not a small mistake.
+    # Measured 2026-08-31: dropping six of seven copies changed nothing at all
+    # - the writer reproduced the surviving draft word for word, 148 words and
+    # the same "cropped black crop top with high-waisted denim shorts, paired
+    # with ankle boots", in a scene that had asked for none of it. One copy of
+    # its own prose in front of it is enough; the count was never the point.
+    unqueued_prose = [
+        i for i, message in enumerate(prior)
+        if message.get("role") == "assistant" and
+        not message.get("tool_calls") and
+        i not in prose_receipts and
+        len(str(message.get("content") or "").split()) >= _PROSE_SCENE_WORDS]
+    stale_prose = set(unqueued_prose)
+    if preserve_pending_scene and unqueued_prose and not (
+            prose_receipts and unqueued_prose[-1] < max(prose_receipts)):
+        # ...unless a LATER scene was queued, in which case this is an older
+        # draft and the queued one is the render.
+        stale_prose.discard(unqueued_prose[-1])
     render_indices = sorted(
         [i for i, message in enumerate(prior)
          if message.get("role") == "assistant" and _generate_calls(message)] +
@@ -14476,8 +16300,10 @@ def local_history_view(messages, current_user_index, preserve_latest_render=Fals
         keep_user = next((i for i in range(keep_render - 1, -1, -1)
                           if prior[i].get("role") == "user"), None)
 
-    dropped_scenes = set(prose_receipts) - {keep_render}
-    dropped_receipts = {prose_receipts[i] for i in dropped_scenes}
+    dropped_scenes = (set(prose_receipts) | stale_prose) - {keep_render}
+    # Only the queued ones have a receipt to drop with them.
+    dropped_receipts = {prose_receipts[i] for i in dropped_scenes
+                        if i in prose_receipts}
 
     out, dropped_call_ids = [], set()
     drop_followup = False
@@ -14746,6 +16572,76 @@ async def llm_call(messages, timeout=180, tools=None, cid=None):
     if status == 200 and data.get("choices"):
         _localize(data["choices"][0].get("message") or {})
     return status, data
+
+
+# A provider failure reaches the user as prose, never as a dict. The chat lane
+# used to interpolate the error payload itself, so a Moonshot capacity blip
+# arrived in the bubble as a Python repr of somebody else's JSON:
+#   kimi-k3: {'message': 'The engine is currently overloaded, please try again
+#   later', 'type': 'engine_overloaded_error'}
+# (Jesse, 2026-08-31, mid-render.) The message inside is already a sentence.
+# The type is the part worth reading: it says whether waiting would have
+# helped - and if it would have, waiting is our job, not the user's.
+LLM_TRANSIENT_TYPES = {"engine_overloaded_error", "server_error",
+                       "rate_limit_exceeded", "rate_limit_reached_error",
+                       "service_unavailable_error", "overloaded_error"}
+LLM_TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
+LLM_BUSY_RETRIES = 2            # three attempts total
+LLM_BUSY_BACKOFF = 3.0          # seconds, doubled per attempt: 3s then 6s
+
+
+def llm_error(status, data):
+    """(sentence, transient) for a brain reply that carried no choices.
+
+    Both OpenAI-shaped `{"error": {...}}` and the plain-string `{"error": "..."}`
+    that ensure_local_llm returns are handled, because the chat lane cannot
+    tell which one it is holding.
+    """
+    err = (data or {}).get("error")
+    if isinstance(err, dict):
+        text = str(err.get("message") or "").strip()
+        kind = str(err.get("type") or err.get("code") or "").strip()
+    else:
+        text, kind = str(err or "").strip(), ""
+    transient = kind in LLM_TRANSIENT_TYPES or int(status or 0) in LLM_TRANSIENT_STATUS
+    if not text:
+        text = (f"it answered HTTP {status} with no message" if status
+                else "it did not answer")
+    text = text.strip().rstrip(".")
+    return (f"{brain_name()} is busy right now - {text}" if transient
+            else f"{brain_name()} could not answer - {text}"), transient
+
+
+async def llm_call_patient(messages, timeout=None, tools=None, cid=None):
+    """llm_call, but a capacity blip is waited out instead of shown.
+
+    An overloaded provider is the one brain failure the user can do nothing
+    about and that fixes itself, so retrying is strictly better than handing
+    it over. Terminal failures (a bad key, a malformed request) return on the
+    first try - retrying those just makes the wrong answer slower.
+
+    `timeout` rides only when the caller set one, so the forwarded call keeps
+    the exact shape the chat lane used before this wrapper existed.
+    """
+    kw = {"tools": tools, "cid": cid}
+    if timeout is not None:
+        kw["timeout"] = timeout
+    status, data = await llm_call(messages, **kw)
+    for attempt in range(LLM_BUSY_RETRIES):
+        if "choices" in data:
+            return status, data
+        _note, transient = llm_error(status, data)
+        if not transient:
+            return status, data
+        wait = LLM_BUSY_BACKOFF * (2 ** attempt)
+        if cid:
+            HUB.broadcast(type="thinking", cid=cid,
+                          note=f"{brain_name()} is busy - trying again in "
+                               f"{int(wait)}s")
+        await asyncio.sleep(wait)
+        status, data = await llm_call(messages, **kw)
+    return status, data
+
 
 def motion_length_note(seconds, beats=None):
     """How much can actually happen in this clip, and what fills the rest.
@@ -15600,7 +17496,8 @@ def effective_recipe(opts):
         entry = resolve_model_entry(opts["model"]) if opts.get("model") else None
         if entry and entry["family"] == "minimax_h3":
             if entry.get("variant") == "ref2va":
-                return "h3_ref_still"
+                return ("h3_ref_still_2x"
+                        if opts.get("quality") == "refined" else "h3_ref_still")
             return "h3_still_2x" if opts.get("quality") == "refined" else "h3_still"
         return "identity_edit"
     if any(r.get("kind") == "identity" for r in (opts.get("refs") or [])):
@@ -15645,7 +17542,7 @@ def effective_recipe(opts):
         # in-family 2x latent refine (brief 9.59).
         if entry and entry["family"] == "minimax_h3":
             if entry.get("variant") == "ref2va":
-                return "h3_ref_still"
+                return "h3_ref_still_2x" if refined else "h3_ref_still"
             return "h3_still_2x" if refined else "h3_still"
         if style in ("anime", "fantasy"):
             return style
@@ -15667,7 +17564,8 @@ def effective_recipe(opts):
         # other so they cannot drift.
         if entry and entry["family"] == "minimax_h3":
             if entry.get("variant") == "ref2va":
-                return "h3_ref_still"
+                return ("h3_ref_still_2x"
+                        if opts.get("quality") == "refined" else "h3_ref_still")
             return "h3_still_2x" if opts.get("quality") == "refined" else "h3_still"
     return None
 
@@ -15713,6 +17611,14 @@ def _apply_opts(args, opts):
         # brain-invented character argument outrank it inside build_zara_edit.
         args.pop("character", None)
         args["ref"] = ref
+    # 9.83: the per-render accessory suppression. Sparse like the dials - the
+    # composer sends the key only when the user turned accessories OFF, so an
+    # untouched bundle builds the byte-identical graph. SIGS drops it
+    # everywhere but the h3_ref builders, the only lanes that take it. Stands
+    # clear of the character/ident elif chain above - an if inserted between
+    # an if and its elif re-pairs the elif.
+    if opts.get("accessories") is False:
+        args["accessories"] = False
 
     if identity_source:
         # Identity Edit has a proven default. Carry a selected model only when
@@ -15995,6 +17901,27 @@ _EXPLICIT_RENDER_REQUEST = re.compile(
 _VISUAL_DIRECTIVE = re.compile(
     r"\s*(?:please\s+)?(?:have|put|place|pose|dress|give|swap|move)\s+"
     r"(?:her|him|them|it|the\s+\w+)\b", re.I)
+# "do" is a rendering verb only when it takes a countable object: "can you do
+# one of her in the bathroom", "can you do some close-ups". It is not in the
+# list above because bare "do" is the most overloaded verb in English - "can
+# you do that faster" is not a render - so it needs the count to mean an
+# image. Jesse, 2026-08-31: "can you do one of her taking a selfie" was
+# classed as conversation and answered with a scene plus "say go", while "can
+# you MAKE one of her in the kitchen" rendered on the spot. Same request, one
+# verb apart. Unlike the verbs above, "do" can also head a product ask ("do a
+# couple of those settings"), which is why this branch alone is guarded.
+# A count alone is not enough - "do a release build" and "do some work on the
+# changelog" are counts too. The object has to be a PERSON ("one of her") or a
+# picture ("some close-up selfies"), with room for the adjectives that always
+# ride in front of the noun.
+_DO_RENDER_REQUEST = re.compile(
+    r"\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
+    r"do\s+(?:one|some|a\s+few|a\s+couple|another|more|an?|\d+)\s+"
+    r"(?:[\w-]+\s+){0,3}"
+    r"(?:(?:of|where|with|in|on|showing|featuring)\s+"
+    r"(?:she|he|they|her|him|them|us|me|it|those|these)\b|"
+    r"(?:selfie|shot|photo|pic|picture|image|portrait|render|close-?up|"
+    r"frame|clip|video)s?\b)", re.I)
 _ASSISTANT_REQUEST = re.compile(
     r"\s*(?:can|could|would|will)\s+you\b", re.I)
 _DIRECT_VISUAL_WANT = re.compile(
@@ -16129,6 +18056,11 @@ def user_wants_render(text, has_visual_context=False):
     if _clause_requests_render(clean):
         return True
     if _EXPLICIT_RENDER_REQUEST.match(clean) or _VISUAL_DIRECTIVE.match(clean):
+        return True
+    # "do one of her ...", "do some close-ups" - a count makes it an image ask.
+    # Guarded, because "do" is the one rendering verb that also heads product
+    # requests; the verbs above cannot.
+    if _DO_RENDER_REQUEST.match(clean) and not _has_product_terms(clean):
         return True
     # An assistant-directed request without a rendering verb is conversation,
     # even when punctuation is omitted (for example, a request to work faster).
@@ -16437,6 +18369,23 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                                         _substantive)) or \
         bool(_pending_question(convo) and (_AFFIRMATIVE.match(_utext.strip()) or
                                            _substantive))
+    # Whether the WRITER still gets to see the draft it left hanging, which is
+    # a narrower question than whether generate is offered above. Both start
+    # from _pending_scene, and then they part:
+    #
+    #   "render it", "go"            accepts the draft   -> it must see it
+    #   "make her jacket red"        edits the draft     -> it must see it
+    #   "render her in a chip shop"  a NEW shot          -> it must not
+    #
+    # The third is `substantive` - correctly, because the tool has to be
+    # offered for it - so reusing render_intent's test here keeps the draft in
+    # front of the writer on every ask. Measured: it then reproduces that draft
+    # word for word, 148 words and the same wardrobe, in a scene that asked for
+    # neither. local_iteration is the test that separates an edit from a new
+    # shot, and it is the one this needs.
+    keeps_pending_scene = bool(
+        _pending_scene(convo) and (_AFFIRMATIVE.match(_utext.strip()) or
+                                   local_iteration))
     nudged = rendered = False    # rescue arms only until SOMETHING got queued
     verbatim_bounces = 0         # cloud brains get ONE corrective error before
                                  # the server repairs the scene mechanically
@@ -16569,14 +18518,17 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     ]
     for _ in range(8):
             history = local_history_view(
-                convo, current_user_index, preserve_latest_render=local_iteration
+                convo, current_user_index,
+                preserve_latest_render=local_iteration,
+                preserve_pending_scene=keeps_pending_scene,
             ) if local_brain else convo
-            status, data = await llm_call([{"role": "system", "content": sys_prompt}] + history,
-                                          tools=tools, cid=cid)
+            status, data = await llm_call_patient(
+                [{"role": "system", "content": sys_prompt}] + history,
+                tools=tools, cid=cid)
             if "choices" not in data:
                 HUB.broadcast(type="thinkingdone", cid=cid)
                 HUB.broadcast(type="error", cid=cid,
-                              message=f"{brain_name()}: {data.get('error', data)}")
+                              message=llm_error(status, data)[0])
                 return
             msg = data["choices"][0]["message"]
             convo.append(msg)
@@ -17525,6 +19477,12 @@ async def settings_get(_req):
                     "installed": upscale_model_options(),
                     "image_modes": list(UPSCALE_IMAGE_MODES),
                     "pid_available": _pid_upscale_available(),
+                    # The still VSR segment hides behind the same probe the
+                    # video lane uses - one pack serves both (9.79).
+                    "vsr_available": bool(_video_upscale_node()),
+                    # The still tier row reads its own list: video_modes
+                    # belongs to the clip tab (9.79).
+                    "vsr_tiers": list(UPSCALE_VSR_TIERS),
                     "video_modes": list(UPSCALE_VIDEO_MODES),
                     "video_fps_options": list(UPSCALE_VIDEO_FPS_OPTIONS),
                     "video_available": bool(_video_upscale_node()),
@@ -17544,6 +19502,10 @@ async def settings_get(_req):
                 "stock": list(ZIMAGE_VAE_CANDIDATES)},
         "pid": {**cfg["pid"],
                 "decode_available": _pid_node_available(PID_DECODE_NODE)},
+        # The two H3 model slots (9.91): stored picks, per-lane candidates,
+        # what Automatic resolves to, and the stale flag - everything the
+        # two Settings rows draw, from the one resolver the renders read.
+        "h3": h3_settings_payload(cfg),
         "video": {"default_engine": cfg["video"]["default_engine"],
                   "default_model": cfg["video"]["default_model"],
                   # The H3 2x default (9.31), published with whether it can
@@ -17572,6 +19534,23 @@ async def settings_get(_req):
                                            "available": m.get("available", True)}
                                           for m in e["models"]]}
                               for e in video_engine_options()]},
+        # The still finish (1.1.4b), published with whether the 1x skin model
+        # is actually installed - the same discipline as upscale_2x_available,
+        # so the row disables itself honestly rather than offering a setting
+        # that silently does nothing.
+        "still": {"skin_finish": bool((cfg.get("still") or {})
+                                      .get("skin_finish", False)),
+                  # 9.93: numpy on the delivered frame - nothing to probe,
+                  # so the toggle itself is the whole state.
+                  "de_shine": bool((cfg.get("still") or {})
+                                   .get("de_shine", False)),
+                  "skin_finish_available": h3_skin_finish_available(),
+                  "skin_finish_model": H3_SKIN_MODEL,
+                  # The one-frame spine is not a setting - there is no reason
+                  # to prefer five frames and throw four away - but Settings
+                  # says whether it is running, because it is the difference
+                  # between two graphs and About is where that gets checked.
+                  "one_frame": h3_one_frame_available()},
         "extra_model_roots": cfg["extra_model_roots"],
         "model_roots": [str(r) for r in model_roots(cfg)],
         "catalog_size": len(model_catalog()),
@@ -17679,9 +19658,83 @@ async def settings_post(req):
         cfg["vae"]["zimage"] = want
     if upscale.get("image_mode") in UPSCALE_IMAGE_MODES:
         cfg["upscale"]["image_mode"] = upscale["image_mode"]
+    if "image_vsr_mode" in upscale:
+        # Only the VSR tiers enlarge a still: LTX 2.5 is a video re-render,
+        # and the Deno node's restoration modes are same-size passes. The
+        # same loud refusal "not a console style" gives - a silent fallback
+        # would stand a tier the user never picked.
+        want = upscale["image_vsr_mode"]
+        if want not in UPSCALE_VSR_TIERS:
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not one of {'|'.join(UPSCALE_VSR_TIERS)}: {want}"},
+                status=400)
+        cfg["upscale"]["image_vsr_mode"] = want
+    if upscale.get("image_vsr_scale") is not None:
+        try:
+            low, high = UPSCALE_VIDEO_SCALE_RANGE
+            cfg["upscale"]["image_vsr_scale"] = min(
+                max(float(upscale["image_vsr_scale"]), low), high)
+        except (TypeError, ValueError):
+            pass
     pid_cfg = body.get("pid") or {}
     if "identity_finish" in pid_cfg:
         cfg["pid"]["identity_finish"] = bool(pid_cfg["identity_finish"])
+    still_cfg = body.get("still") or {}
+    if "skin_finish" in still_cfg:
+        # Strictly a bool, the upscale_2x rule: a truthy string would stand a
+        # setting the user never chose on every still they render.
+        if not isinstance(still_cfg["skin_finish"], bool):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not a bool: {still_cfg['skin_finish']}"}, status=400)
+        cfg.setdefault("still", {})["skin_finish"] = still_cfg["skin_finish"]
+    if "de_shine" in still_cfg:
+        # The same strict-bool rule as skin_finish (9.93).
+        if not isinstance(still_cfg["de_shine"], bool):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not a bool: {still_cfg['de_shine']}"}, status=400)
+        cfg.setdefault("still", {})["de_shine"] = still_cfg["de_shine"]
+    h3_cfg = body.get("h3") or {}
+    for key, lane in (("ref_model", "ref"), ("fl_model", "fl")):
+        if key in h3_cfg and isinstance(h3_cfg[key], str):
+            # edit.model's contract (9.91): "" clears back to the scan
+            # ("Automatic"); anything else must be an installed build that
+            # serves the slot's lane, or it is refused here by name rather
+            # than failing every later render. A hybrid validates for BOTH
+            # slots - it carries both architectures.
+            want = h3_cfg[key].strip().replace("/", "\\")
+            if want:
+                low = want.lower()
+                if not any(o["rel"].replace("/", "\\").lower() == low
+                           for o in h3_lane_options(lane)):
+                    words = {"ref": "reference",
+                             "fl": "first/last-frame"}[lane]
+                    return web.json_response(
+                        {"ok": False,
+                         "error": f"not an installed H3 {words} build: {want}"},
+                        status=400)
+            cfg.setdefault("h3", {})[key] = want
+    if "text_encoder" in h3_cfg and isinstance(h3_cfg["text_encoder"], str):
+        # The same contract the model slots keep (9.94): "" clears back to
+        # Automatic (the 32B); anything else must be an OFFERABLE option -
+        # a known id whose encoder AND projection both resolve right now -
+        # or it is refused here by name rather than degrading every later
+        # render to Automatic with no explanation.
+        want = h3_cfg["text_encoder"].strip()
+        if want:
+            known = next((o for o in H3_TEXT_ENCODER_OPTIONS
+                          if o["id"] == want), None)
+            offerable = known is not None and \
+                _video_asset("text_encoders", known["encoder"]) and \
+                _video_asset("clip_projections", known["projection"])
+            if not offerable:
+                return web.json_response(
+                    {"ok": False,
+                     "error": f"not an installed H3 text encoder: {want}"},
+                    status=400)
+        cfg.setdefault("h3", {})["text_encoder"] = want
     video_cfg = body.get("video") or {}
     if "default_engine" in video_cfg and isinstance(video_cfg["default_engine"], str):
         # "" is a real choice: it means "the server's order" (LTX 2.5 first).
@@ -17832,9 +19885,11 @@ async def setup_post(req):
 
 async def settings_rescan(_req):
     """Re-walk every model root now (new LoRAs, new drives) - progress streams to the
-    status row via the scan events."""
+    status row via the scan events. Styles too: recipes/ is files, and this is
+    the button a user reaches for after changing files (9.92)."""
     _CATALOG["at"] = 0
     _SIDECAR_META.clear()
+    refresh_saved_styles(force=True)
     asyncio.create_task(warmup_catalog())
     return web.json_response({"ok": True})
 
@@ -17869,101 +19924,29 @@ async def characters_post(req):
     ch["id"] = re.sub(r"[^a-z0-9]+", "_", (ch.get("id") or ch["name"]).lower()).strip("_")
     if not ch["id"]:
         return web.json_response({"ok": False, "error": "bad id"}, status=400)
-    # 9.51: the reference's clothes leak into every scene the identity lane
-    # renders (Jesse, 2026-08-25: a mesh shirt turning up on a beach). With
-    # the toggle on - the default - a NEW reference is re-rendered in a plain
-    # grey tee on a plain background by the Klein whole-frame lane, and the
-    # neutral frame becomes identity_ref; the upload stays beside it as
-    # identity_ref_original so the toggle can come off without a re-upload.
-    prior = CHARACTERS.get(ch["id"]) or {}
-    # Default OFF (proof, 2026-08-25 23:10): the neutral grey tee leaked into
-    # the scene exactly as the mesh shirt had - any visible garment leaks, so
-    # this is an opt-in for loud references until the neutral is garment-free
-    # (a head-and-neck crop on a plain background, the follow-up).
-    neutral = ch.get("neutral_wardrobe") is True
-    ch["neutral_wardrobe"] = neutral
-    queued = None
-    if neutral:
-        if ref == prior.get("identity_ref") and prior.get("identity_ref_original"):
-            ch["identity_ref_original"] = prior["identity_ref_original"]   # already neutral
-        elif ref != prior.get("identity_ref_original"):
-            ch["identity_ref_original"] = ref
-            queued = True
-        else:
-            ch["identity_ref_original"] = ref                              # same upload, redo
-            queued = True
+    # 9.81: the neutral-wardrobe lane is deleted. Cards written by it may
+    # still carry its two fields; they are dropped here on save. identity_ref
+    # is left exactly as posted - where it names a generated neutral frame,
+    # that frame is what every past render of the character used.
+    ch.pop("neutral_wardrobe", None)
+    ch.pop("identity_ref_original", None)
+    # 9.83: accessory references ride the same save gate as identity_ref -
+    # validated names, required descriptions, the eight-slot cap - so a bad
+    # entry is refused here rather than at render time. An empty list is
+    # dropped: absence and "no accessories" are the same card.
+    try:
+        accessories = validate_character_accessories(ch.get("accessories"))
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    if accessories:
+        ch["accessories"] = accessories
     else:
-        original = ch.get("identity_ref_original") or prior.get("identity_ref_original")
-        if original and (CDIR / "input" / original).is_file() and ref == prior.get("identity_ref"):
-            ch["identity_ref"] = original      # toggle off: the upload comes back
-        ch.pop("identity_ref_original", None)
+        ch.pop("accessories", None)
     CHAR_DIR.mkdir(exist_ok=True)
     (CHAR_DIR / f"{ch['id']}.json").write_text(json.dumps(ch, ensure_ascii=False, indent=1),
                                               encoding="utf-8")
     CHARACTERS[ch["id"]] = ch
-    note = None
-    if queued:
-        note = await queue_reference_neutralise(ch, body.get("cid"))
-    return web.json_response({"ok": True, "id": ch["id"], **({"note": note} if note else {})})
-
-
-NEUTRAL_WARDROBE_INSTRUCTION = (
-    "change {pos} clothing to a plain grey crew-neck t-shirt; plain neutral grey "
-    "studio background; keep {pos} face, hair, skin and expression exactly the same")
-
-
-def neutral_wardrobe_instruction(sex):
-    pos = {"male": "his", "female": "her"}.get(str(sex or "").lower(), "their")
-    return NEUTRAL_WARDROBE_INSTRUCTION.format(pos=pos)
-
-
-async def queue_reference_neutralise(ch, cid=None):
-    """Queue the Klein whole-frame edit that strips a reference's outfit.
-    Returns a note for the caller when nothing could be queued - the
-    character is saved either way, on its original reference."""
-    cid = cid or uuid.uuid4().hex[:8]
-    try:
-        job = await HUB.submit(cid, "chat", "klein_edit",
-                               neutral_wardrobe_instruction(ch.get("sex")),
-                               {"image": ch["identity_ref"]}, 1,
-                               flags={"_neutralize_for": ch["id"]})
-    except Exception as exc:
-        return f"the reference could not be neutralised ({exc}) - kept as uploaded"
-    if job.get("error"):
-        return f"the reference could not be neutralised ({job['error']}) - kept as uploaded"
-    return None
-
-
-def finish_reference_neutralise(job):
-    """finalize hook: the neutral frame becomes the character's identity_ref."""
-    cid_char = job.get("_neutralize_for")
-    ch = CHARACTERS.get(cid_char)
-    if not ch:
-        return
-    if job.get("error") or not job.get("images"):
-        HUB.broadcast(type="text", cid=job["cid"], text=(
-            f"*{ch.get('name', cid_char)}'s reference could not be neutralised - "
-            f"kept as uploaded*"))
-        return
-    img = job["images"][0]
-    src = CDIR / "output" / img.get("subfolder", "") / img["filename"]
-    dst_name = f"pixal_neutral_{cid_char}.png"
-    try:
-        shutil.copyfile(src, CDIR / "input" / dst_name)
-    except OSError as exc:
-        HUB.broadcast(type="text", cid=job["cid"], text=(
-            f"*{ch.get('name', cid_char)}'s neutral reference could not be staged "
-            f"({exc}) - kept as uploaded*"))
-        return
-    ch["identity_ref"] = dst_name
-    try:
-        (CHAR_DIR / f"{cid_char}.json").write_text(
-            json.dumps(ch, ensure_ascii=False, indent=1), encoding="utf-8")
-    except OSError:
-        pass
-    HUB.broadcast(type="text", cid=job["cid"], text=(
-        f"*{ch.get('name', cid_char)}'s reference is neutralised - a plain tee, "
-        f"same face*"))
+    return web.json_response({"ok": True, "id": ch["id"]})
 
 
 async def styles_post(req):
@@ -17986,6 +19969,7 @@ async def styles_post(req):
         check_style_runnable(record)
     except ValueError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    refresh_saved_styles()       # an externally dropped file counts as "prior" too
     prior = SAVED_STYLES.get(record["id"])
     provenance = dict(record.get("provenance") or {})
     provenance.setdefault("created", (prior or {}).get("provenance", {})
@@ -18076,6 +20060,7 @@ async def styles_delete(req):
     style_id = str(req.match_info.get("style_id") or "").strip()
     if not _STYLE_ID_RE.fullmatch(style_id):
         return web.json_response({"ok": False, "error": "invalid style id"}, status=400)
+    refresh_saved_styles()       # a file dropped since boot is still deletable
     if style_id not in SAVED_STYLES:
         return web.json_response({"ok": False, "error": "no such style"}, status=404)
     path = RECIPE_DIR / f"{style_id}.json"
@@ -18121,6 +20106,11 @@ async def style_sampler(req):
         # keeps cfg at 1, and the model page's own recommendation is one click.
         "cfg_locked": bool(seat) and cfg_locked(base_id, model),
         "recommended": model_recommended_tuning(base_id, model) if seat else None,
+        # The curated pairs (2026-08-31). The model page's own line is present
+        # on 3 of 51 models here and on none of the two families actually used,
+        # so these are what the card offers - measured on this box for H3,
+        # published by RES4LYF for Krea 2, and each one says which it is.
+        "presets": sampler_presets(base_id, model) if seat else [],
         "reason": "" if seat else fixed_schedule_reason(base_id, model),
     })
 
@@ -19323,8 +21313,9 @@ async def upscale(req):
     """One click: finished render -> a larger version of the same frame.
 
     Stills go through the enlarger chosen in Settings - an ESRGAN-style model
-    (faithful, nothing reimagined) or NVIDIA PiD (generative tiles, real new
-    texture). Clips go through RTX Video Super Resolution, audio intact."""
+    (faithful, nothing reimagined), NVIDIA PiD (generative tiles, real new
+    texture), or the RTX VSR filter (fast reconstruction, nothing invented).
+    Clips go through RTX Video Super Resolution, audio intact."""
     body = await req.json()
     entry = next((e for e in HUB.ledger_read() if e["id"] == body.get("id")), None)
     if not entry:
@@ -19585,7 +21576,10 @@ async def chats_post(req):
 # what the brain derived from the scene (standing, nsfw, ...).
 _REROLL_COMPOSER_OWNED = (
     "model", "loras", "lora_plan", "aspect", "mp", "overrides", "_style",
-    "_tuning", "_sampler_swap", "character", "ref", "seed",
+            "_tuning", "_sampler_swap", "character", "ref", "seed",
+    # accessories (9.83) is composer-owned too: a card rendered with them off
+    # rerolls with them back ON the moment the composer's switch says so.
+    "accessories",
     # negative/prompt_prefix/prompt_tail are style-file clauses: a reroll
     # after the style moves on must not keep steering from the old one's words.
     # style_slots is the composer half of those clauses (9.77): the fills the

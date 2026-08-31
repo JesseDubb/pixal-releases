@@ -244,7 +244,12 @@ class ClientWiringTests(unittest.TestCase):
     def test_style_slots_are_opts_state_with_the_style(self):
         self.assertRegex(STORE, r'saved_style: "", dials: \{\}, tuning: \{\}, '
                                 r'style_slots: \{\}')
-        body = re.search(r"selectSavedStyle\(id\) \{([\s\S]{0,2200}?)\n  \},", STORE)
+        # The bound is a scan window that isolates the function body, not an
+        # assertion about its length - the claim under test is the
+        # style_slots reset below. selectSavedStyle grew when MiniMax H3 was
+        # added to the keep-the-character rule, and a too-small window fails
+        # as "selectSavedStyle not found", which reads like a deletion.
+        body = re.search(r"selectSavedStyle\(id\) \{([\s\S]{0,3000}?)\n  \},", STORE)
         self.assertIsNotNone(body, "selectSavedStyle not found in store.js")
         # Cleared when the style changes - both the pick and the leave paths.
         self.assertGreaterEqual(body.group(1).count("style_slots: {}"), 2)
@@ -266,6 +271,10 @@ class ClientWiringTests(unittest.TestCase):
                       STYLEFORM)
 
 
+@unittest.skipUnless(
+    (server.RECIPE_DIR / "cosplay_photo.json").is_file(),
+    "recipes/cosplay_photo.json is gitignored user data: absent on a clean "
+    "checkout and in CI, so there is nothing here to assert on")
 class CosplayPhotoSlotTests(unittest.TestCase):
     """The shipped style, recipes/cosplay_photo.json (gitignored user data,
     copied into this worktree): the brief's two slots with their defaults."""

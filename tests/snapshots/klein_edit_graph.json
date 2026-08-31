@@ -1,0 +1,283 @@
+{
+ "graph": {
+  "ke:back": {
+   "_meta": {
+    "title": "Whole Frame Back to Native (builder writes the source's own size)"
+   },
+   "class_type": "ImageScale",
+   "inputs": {
+    "crop": "disabled",
+    "height": 1648,
+    "image": [
+     "ke:decode",
+     0
+    ],
+    "upscale_method": "lanczos",
+    "width": 1232
+   }
+  },
+  "ke:clip": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors",
+    "type": "flux2"
+   }
+  },
+  "ke:decode": {
+   "_meta": {
+    "title": "VAE Decode"
+   },
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "ke:sampler",
+     0
+    ],
+    "vae": [
+     "ke:vae",
+     0
+    ]
+   }
+  },
+  "ke:guider": {
+   "_meta": {
+    "title": "CFG Guider (cfg 1.0 is the distilled schedule)"
+   },
+   "class_type": "CFGGuider",
+   "inputs": {
+    "cfg": 1.0,
+    "model": [
+     "ke:unet",
+     0
+    ],
+    "negative": [
+     "ke:refneg",
+     0
+    ],
+    "positive": [
+     "ke:refpos",
+     0
+    ]
+   }
+  },
+  "ke:img": {
+   "_meta": {
+    "title": "Load Source"
+   },
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "s.png"
+   }
+  },
+  "ke:latent": {
+   "_meta": {
+    "title": "Empty Sampling Latent (the source arrives via the reference latents)"
+   },
+   "class_type": "EmptyFlux2LatentImage",
+   "inputs": {
+    "batch_size": 1,
+    "height": [
+     "ke:size",
+     1
+    ],
+    "width": [
+     "ke:size",
+     0
+    ]
+   }
+  },
+  "ke:neg": {
+   "_meta": {
+    "title": "Zeroed Negative"
+   },
+   "class_type": "ConditioningZeroOut",
+   "inputs": {
+    "conditioning": [
+     "ke:pos",
+     0
+    ]
+   }
+  },
+  "ke:noise": {
+   "_meta": {
+    "title": "Noise (builder writes the render's seed)"
+   },
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 5
+   }
+  },
+  "ke:pos": {
+   "_meta": {
+    "title": "Encode Edit Instruction"
+   },
+   "class_type": "CLIPTextEncode",
+   "inputs": {
+    "clip": [
+     "ke:clip",
+     0
+    ],
+    "text": "remove her earrings"
+   }
+  },
+  "ke:reflatent": {
+   "_meta": {
+    "title": "Encode Source Reference Latent"
+   },
+   "class_type": "VAEEncode",
+   "inputs": {
+    "pixels": [
+     "ke:scale",
+     0
+    ],
+    "vae": [
+     "ke:vae",
+     0
+    ]
+   }
+  },
+  "ke:refneg": {
+   "_meta": {
+    "title": "Reference Latent (negative)"
+   },
+   "class_type": "ReferenceLatent",
+   "inputs": {
+    "conditioning": [
+     "ke:neg",
+     0
+    ],
+    "latent": [
+     "ke:reflatent",
+     0
+    ]
+   }
+  },
+  "ke:refpos": {
+   "_meta": {
+    "title": "Reference Latent (positive)"
+   },
+   "class_type": "ReferenceLatent",
+   "inputs": {
+    "conditioning": [
+     "ke:pos",
+     0
+    ],
+    "latent": [
+     "ke:reflatent",
+     0
+    ]
+   }
+  },
+  "ke:sampler": {
+   "_meta": {
+    "title": "Sampler Custom Advanced"
+   },
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "ke:guider",
+     0
+    ],
+    "latent_image": [
+     "ke:latent",
+     0
+    ],
+    "noise": [
+     "ke:noise",
+     0
+    ],
+    "sampler": [
+     "ke:sampler_sel",
+     0
+    ],
+    "sigmas": [
+     "ke:sched",
+     0
+    ]
+   }
+  },
+  "ke:sampler_sel": {
+   "_meta": {
+    "title": "Sampler (euler)"
+   },
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "euler"
+   }
+  },
+  "ke:save": {
+   "_meta": {
+    "title": "Save Image"
+   },
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/remove_her_earrings",
+    "images": [
+     "ke:back",
+     0
+    ]
+   }
+  },
+  "ke:scale": {
+   "_meta": {
+    "title": "Sampling Canvas (capped; native passes through untouched)"
+   },
+   "class_type": "ImageScaleToTotalPixels",
+   "inputs": {
+    "image": [
+     "ke:img",
+     0
+    ],
+    "megapixels": 1.936279296875,
+    "resolution_steps": 16,
+    "upscale_method": "lanczos"
+   }
+  },
+  "ke:sched": {
+   "_meta": {
+    "title": "Flux2 Scheduler (Klein is 4-step distilled)"
+   },
+   "class_type": "Flux2Scheduler",
+   "inputs": {
+    "height": [
+     "ke:size",
+     1
+    ],
+    "steps": 4,
+    "width": [
+     "ke:size",
+     0
+    ]
+   }
+  },
+  "ke:size": {
+   "_meta": {
+    "title": "Sampling Canvas Size"
+   },
+   "class_type": "GetImageSize",
+   "inputs": {
+    "image": [
+     "ke:scale",
+     0
+    ]
+   }
+  },
+  "ke:unet": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Flux\\flux-2-klein-9b_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "ke:vae": {
+   "_meta": {
+    "title": "Load VAE (Flux2)"
+   },
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "Flux\\flux2-vae.safetensors"
+   }
+  }
+ },
+ "instruction": "remove her earrings"
+}

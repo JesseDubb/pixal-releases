@@ -552,11 +552,14 @@ class ClientRoutingTests(unittest.TestCase):
 
     def test_store_routes_refined_h3_picks_to_the_2x_recipe(self):
         # 9.67 put the ref2va branch in front; the fl2va rule it guards is
-        # unchanged (refined -> 2x, standard -> plain still).
+        # unchanged (refined -> 2x, standard -> plain still). Since 9.84 the
+        # ref2va branch has the same pair, so Refined reaches BOTH lanes.
         self.assertRegex(
             STORE,
             r'if \(meta\?\.family === "minimax_h3"\)\s*'
-            r'return meta\.variant === "ref2va" \? "h3_ref_still"\s*'
+            r'return meta\.variant === "ref2va"\s*'
+            r'\? \(opts\.quality === "refined" '
+            r'\? "h3_ref_still_2x" : "h3_ref_still"\)\s*'
             r': opts\.quality === "refined" \? "h3_still_2x" : "h3_still";')
 
     def test_store_gates_refined_on_the_2x_recipes_availability(self):
@@ -573,14 +576,22 @@ class ClientRoutingTests(unittest.TestCase):
         self.assertIn('recipe.id === "realism_ii" && recipe.available', STORE)
 
     def test_the_composers_refined_availability_is_per_family(self):
+        # 9.84: per family AND per lane. Naming h3_still_2x for every H3
+        # model is what let the Refined row render enabled and tagged
+        # "two-pass finish" on the ref2va lane, whose chooser ignored it.
         self.assertRegex(
             COMPOSER,
-            r'const refinedRecipeId = selectedModelMeta\.family === '
-            r'"minimax_h3"\s*\? "h3_still_2x" : "realism_ii";')
+            r'const refinedRecipeId = selectedModelMeta\.family !== '
+            r'"minimax_h3"\s*\? "realism_ii"\s*'
+            r': \(selectedModelMeta\.variant === "ref2va" && opts\.character\s*'
+            r'\? "h3_ref_still_2x" : "h3_still_2x"\);')
         self.assertRegex(
             COMPOSER,
             r'const refinedAvailable = !!recipeById\(refinedRecipeId\)'
             r'\?\.available')
+        # The old gate compared the RESOLVED id to a literal, which silently
+        # stopped being an "is this H3" test the moment there were two.
+        self.assertNotIn('refinedRecipeId === "h3_still_2x"', COMPOSER)
 
     def test_the_refined_pill_states_the_h3_meaning(self):
         # one fact per line: what it is, what it resolves and repairs, cost

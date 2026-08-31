@@ -4,7 +4,7 @@
 // attached-reference tabs beside the composer. The ordered LoRA chain lives
 // in its execution rail (or in-flow on narrow layouts). Phosphor duotone per
 // the design system; popovers open upward (composer sits at the page bottom).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 // Character iconography is the Phosphor UserCircle family, by state:
 // dashed = empty/draft, check = locked in, plus = create, plain = the
@@ -20,6 +20,7 @@ import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-toke
 import { AspectShape } from "../lib/AspectShape.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { MiniSlider } from "../lib/MiniSlider.jsx";
+import { Switch } from "../lib/Switch.jsx";
 import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Picker } from "../lib/Picker.jsx";
@@ -288,6 +289,12 @@ const Pop = ({ title, onClose, wide, xl, down = false, alignRight = false,
   return rail ? createPortal(panel, portalHost || document.body) : panel;
 };
 
+/* A picker row. The selected one is a SURFACE, not a tinted word: accent-muted
+   fill plus an inset accent rail, which is what PillBtn and the toggle rows in
+   this file already use for "on". Recolouring the label alone was the whole
+   affordance, and in an eighteen-row shelf nobody could tell which one they
+   were on. Hover stays --bg3 and never fires on the selected row, so the two
+   states can't be confused for each other. */
 const Row = ({ sel, onClick, children, style, disabled = false, title }) => (
   <button
     type="button"
@@ -297,13 +304,20 @@ const Row = ({ sel, onClick, children, style, disabled = false, title }) => (
     style={{
       display: "flex", alignItems: "center", gap: SPACE[8], width: "100%",
       padding: `${SPACE[6]}px ${SPACE[8]}px`, border: "none", borderRadius: RADIUS.input,
-      background: "transparent", color: sel ? "var(--accent)" : "var(--textSec)",
-      fontFamily: FONT, fontSize: TYPE.ui, textAlign: "left",
+      background: sel ? "var(--accentMut)" : "transparent",
+      boxShadow: sel ? "inset 2px 0 0 var(--accent)" : "none",
+      color: sel ? "var(--accent)" : "var(--textSec)",
+      fontFamily: FONT, fontSize: TYPE.ui, fontWeight: sel ? W.nav : W.body,
+      textAlign: "left",
       cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.62 : 1,
       transition: `background ${MOTION.hover}`, ...style,
     }}
-    onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "var(--bg3)"; }}
-    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+    onMouseEnter={(e) => {
+      if (!disabled && !sel) e.currentTarget.style.background = "var(--bg3)";
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.background = sel ? "var(--accentMut)" : "transparent";
+    }}
   >
     {children}
   </button>
@@ -941,26 +955,9 @@ const MiniAction = ({ label, disabled, onClick, children }) => (
   </button>
 );
 
-const LoraToggle = ({ checked, disabled = false, label, onChange, title: hint }) => {
-  const action = checked ? "Disable" : "Enable";
-  const title = hint
-    || (disabled ? `${label} is required by this recipe` : `${action} ${label}`);
-  return (
-    <button type="button" role="switch" aria-checked={checked}
-      aria-label={`${action} ${label}`} title={title} disabled={disabled}
-      onClick={onChange}
-      style={{ position: "relative", width: 30, height: 17, flexShrink: 0, padding: 0,
-               border: `1px solid ${checked ? "var(--accent)" : "var(--borderHov)"}`,
-               borderRadius: 999, background: checked ? "var(--accentMut)" : "var(--bg1)",
-               cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
-               transition: `background ${MOTION.hover}, border-color ${MOTION.hover}` }}>
-      <span aria-hidden="true" style={{ position: "absolute", top: 2,
-        left: checked ? 15 : 2, width: 11, height: 11, borderRadius: "50%",
-        background: checked ? "var(--accent)" : "var(--textMut)",
-        transition: `left ${MOTION.hover}, background ${MOTION.hover}` }} />
-    </button>
-  );
-};
+// The LoRA row toggle was this same 30x17 switch hand-rolled a second time;
+// since 9.83 the ONE recipe is the shared lib/Switch (MotionDirector's was
+// the third copy). `onChange` fires with the next value.
 
 const LORA_RAIL_COLLAPSED_KEY = "pixal.loraRail.collapsed.v1";
 // Grid browses by look - the default Jesse chose, and the better glance. List
@@ -1018,6 +1015,18 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
       if (reco[k] !== undefined && !(k === "cfg" && seat.cfg_locked)) change(k, reco[k]);
   };
   const recoLine = reco ? tuningLine(reco) : "";
+  // The curated pairs (2026-08-31). "model" reads the model page's own
+  // "Recommended settings" line, which 3 of 51 models here carry and none of
+  // them are Krea 2 or MiniMax H3 - so that segment has never been clickable
+  // on the two families in daily use, and a hundred and eighty-two RES4LYF
+  // sampler names is not a list anyone picks a good one out of. These are.
+  const presets = seat.presets || [];
+  const presetOn = (p) => Object.entries(p.tuning)
+    .every(([k, v]) => resolved[k] === v);
+  const applyPreset = (p) => {
+    for (const [k, v] of Object.entries(p.tuning))
+      if (keys.includes(k)) change(k, v);
+  };
   const recoActive = !!reco && keys.every((k) => reco[k] === undefined || resolved[k] === reco[k]);
   const labelStyle = { fontSize: TYPE.label, fontWeight: W.label, color: "var(--textSec)",
                        display: "flex", alignItems: "center", gap: SPACE[6], minWidth: 0,
@@ -1095,10 +1104,43 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
               { v: "recipe", label: "recipe", title: "the recipe's own schedule" },
               { v: "model", label: "model", disabled: !reco,
                 title: reco ? `the model page recommends ${recoLine}`
-                            : "no recommendation on the model page" },
+                            : presets.length
+                              ? "this model's page lists no settings - the "
+                                + "known-good pairs below are measured instead"
+                              : "no recommendation on the model page" },
               { v: "custom", label: "custom", disabled: !any || recoActive,
                 title: "your own settings" },
             ]} />
+          {!!presets.length && (
+            <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+              <span style={{ fontSize: TYPE.micro, fontWeight: W.heading,
+                             letterSpacing: "0.08em", textTransform: "uppercase",
+                             color: "var(--textTer)" }}>
+                known good
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE[4] }}>
+                {presets.map((p) => {
+                  const on = presetOn(p);
+                  return (
+                    <button key={p.id} type="button" onClick={() => applyPreset(p)}
+                      title={`${tuningLine(p.tuning)}\n\n${p.note}`}
+                      style={{
+                        height: 22, padding: `0 ${SPACE[10]}px`,
+                        borderRadius: RADIUS.pill,
+                        border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                        background: on ? "var(--accentMut)" : "transparent",
+                        color: on ? "var(--accent)" : "var(--textSec)",
+                        fontFamily: FONT, fontSize: TYPE.label,
+                        fontWeight: on ? W.nav : W.body,
+                        cursor: "pointer", whiteSpace: "nowrap",
+                      }}>
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {reco && (
             <div title={reco._text}
                  style={{ fontSize: TYPE.micro, color: "var(--textMut)",
@@ -1312,7 +1354,12 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   };
   const activeNames = new Set(entries.map((entry) => detailFor(entry).name));
   const recipeNames = new Set(stages.map((stage) => stage.name));
-  const inactiveStages = editableStages.filter((stage) => !activeNames.has(stage.name));
+  // A recipe row that names a file the machine does not have is never
+  // offered: the server annotates every stage with `installed` (the same
+  // _catalog_has the readiness list reads), and a click that can only fail
+  // at build time is worse than no row - "if they have that lora" (9.86).
+  const inactiveStages = editableStages.filter((stage) =>
+    !activeNames.has(stage.name) && stage.installed !== false);
   // The whole chain in render order, reduced to what a thumbnail can carry:
   // which LoRA, where in the stack, and whether it is on.
   const chainGlyphs = [
@@ -2034,11 +2081,12 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                       <AccordionChevron open={cardOpen} />
                     </button>
                   )}
-                  <LoraToggle checked={on} disabled={!setCoreEnabled} label={label}
-                              title={on
-                                ? `Bypass ${label} — it is a core ${recipe?.label || "recipe"} stage, so this is an override`
-                                : `Restore ${label} to the core chain`}
-                              onChange={() => setCoreEnabled && setCoreEnabled(stage.slot, !on)} />
+                  <Switch on={on} disabled={!setCoreEnabled} label={label}
+                          title={on
+                            ? `Bypass ${label} — it is a core ${recipe?.label || "recipe"} stage, so this is an override`
+                            : !setCoreEnabled ? `${label} is required by this recipe`
+                            : `Restore ${label} to the core chain`}
+                          onChange={() => setCoreEnabled && setCoreEnabled(stage.slot, !on)} />
                 </div>
               </div>
               {/* The drawer opens BELOW the header row, inside the card, so
@@ -2151,8 +2199,10 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                                color: "var(--textTer)" }}>{entry.strength}</span>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: SPACE[6] }}>
-                <LoraToggle checked={enabled} disabled={!removable} label={label}
-                            onChange={() => toggleEntry(index)} />
+                <Switch on={enabled} disabled={!removable} label={label}
+                        title={!removable ? `${label} is required by this recipe`
+                                          : `${enabled ? "Disable" : "Enable"} ${label}`}
+                        onChange={() => toggleEntry(index)} />
                 <MiniAction label="Remove LoRA" disabled={!removable}
                             onClick={() => setEntries(entries.filter((_, i) => i !== index))}>
                   <X size={10} weight="bold" />
@@ -2271,6 +2321,39 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
     setFilter(""); setPop(null);
   };
   const selectedModelMeta = ((options && options.model_meta) || {})[opts.model] || {};
+
+  /* ── the saved-style shelf, organised by model family ──────────────────
+     A saved style SETS the model (selectSavedStyle), so the family is the
+     fact that separates one from the next and the axis the shelf is built
+     on. Chips filter, breakers label, and the family you are currently on
+     leads - which is the whole of "I can't tell which of these is MiniMax".
+     `null` on the chip means the family of the model you are on, so opening
+     the shelf lands on your own styles without a click; "All" is one chip
+     away, because picking a style is also HOW you change family. */
+  const savedFamilyOf = (s) =>
+    (((options && options.model_meta) || {})[s.model] || {}).family || "unknown";
+  const currentFamily = selectedModelMeta.family || null;
+  const savedFamilies = [...new Set(savedStyles.map(savedFamilyOf))]
+    .sort((a, b) => (a === currentFamily ? -1 : b === currentFamily ? 1 : 0) ||
+                    familyName(a).localeCompare(familyName(b)));
+  const [savedFamily, setSavedFamily] = useState(null);
+  // A chip for a family that no longer has styles (or a model change that
+  // moved the shelf under you) must not leave an empty list with no reason.
+  const activeFamily = savedFamily && savedFamilies.includes(savedFamily)
+    ? savedFamily
+    : savedFamily === "all"
+      ? "all"
+      : (currentFamily && savedFamilies.includes(currentFamily))
+        ? currentFamily : "all";
+  const savedStyleGroups = savedFamilies
+    .filter((f) => activeFamily === "all" || f === activeFamily)
+    .map((family) => ({
+      family,
+      label: familyName(family),
+      current: family === currentFamily,
+      items: savedStyles.filter((s) => savedFamilyOf(s) === family),
+    }))
+    .filter((g) => g.items.length);
   const modelLabel = opts.model ? (selectedModelMeta.title || short(opts.model))
     : "let Pixal choose";
   const identityRecipe = recipeById("identity_edit");
@@ -2322,12 +2405,18 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
       : compatible.includes(style);
   };
   // Refined is per-family: Realism II on Krea 2, the in-family 2x latent
-  // refine (h3_still_2x) on a MiniMax H3 build - each gated on its own
-  // recipe's availability.
-  const refinedRecipeId = selectedModelMeta.family === "minimax_h3"
-    ? "h3_still_2x" : "realism_ii";
+  // refine on a MiniMax H3 build - each gated on its own recipe's
+  // availability. On H3 the id depends on the LANE: an anchored ref2va build
+  // refines through h3_ref_still_2x (9.84). Naming h3_still_2x for every H3
+  // model is what let this control render enabled and tagged "two-pass
+  // finish" on the one lane whose chooser ignored it, so the row must follow
+  // the same condition store.js routes on - family, variant AND character.
+  const refinedRecipeId = selectedModelMeta.family !== "minimax_h3"
+    ? "realism_ii"
+    : (selectedModelMeta.variant === "ref2va" && opts.character
+        ? "h3_ref_still_2x" : "h3_still_2x");
   const refinedAvailable = !!recipeById(refinedRecipeId)?.available &&
-    (refinedRecipeId === "h3_still_2x" || !opts.model ||
+    (selectedModelMeta.family === "minimax_h3" || !opts.model ||
      selectedModelMeta.family === "krea2");
 
   const chooseStyle = (style) => {
@@ -2744,7 +2833,10 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                   ? "Identity runs on Krea 2 with the identity patch and vector bypass always in the chain. Anime and Fantasy are directed into that render; saved styles on a Krea 2 model still apply."
                   : activeSavedStyle
                     ? `“${activeSavedStyle.name}” runs ${activeSavedStyle.base_label} on ${short(activeSavedStyle.model)}. Picking a built-in style below leaves it.`
-                    : "Choose the look; Pixal selects the matching execution profile."}
+                    // "Which of these work with my model?" has no answer while
+                    // the shelf stays silent about the rule, so state it: a
+                    // saved style carries its own model and switches to it.
+                    : "Built-in styles keep your model. A saved style brings its own and switches to it."}
               </div>
               {STYLES.map((style) => {
                 const assetsReady = styleAvailable(style.key);
@@ -2847,20 +2939,86 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                       {styleImageError}
                     </div>
                   )}
-                  {savedStyles.map((saved) => {
-                    // Under an identity source a style is pickable only when
-                    // its model can carry the identity patch (any Krea 2
-                    // build); other bases stay visible but honest about why.
+                  {/* Tiny label chips, one per family that actually has
+                      styles. They answer "where are the MiniMax ones" before
+                      the list is even read, and they are the only control
+                      here that can be wrong in a harmless direction: All is
+                      always one click away. */}
+                  {savedFamilies.length > 1 && (
+                    <div style={{ display: "flex", flexWrap: "wrap",
+                                  gap: SPACE[4],
+                                  padding: `0 ${SPACE[8]}px ${SPACE[6]}px` }}>
+                      {["all", ...savedFamilies].map((f) => {
+                        const on = activeFamily === f;
+                        return (
+                          <button key={f} type="button"
+                            onClick={() => setSavedFamily(f)}
+                            title={f === "all" ? "Every saved style"
+                              : `Saved styles that run on ${familyName(f)}`}
+                            style={{
+                              height: 20, padding: `0 ${SPACE[10]}px`,
+                              borderRadius: RADIUS.pill,
+                              border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                              background: on ? "var(--accentMut)" : "transparent",
+                              color: on ? "var(--accent)" : "var(--textTer)",
+                              fontFamily: FONT, fontSize: 9,
+                              fontWeight: on ? W.nav : W.body,
+                              letterSpacing: "0.04em", cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}>
+                            {f === "all" ? "All" : familyName(f)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {savedStyleGroups.map((group) => (
+                  <Fragment key={group.family}>
+                  {/* A breaker per model family, the family you are ON first
+                      and said out loud. Eighteen flat rows gave no way to find
+                      the MiniMax ones, and the model is what a saved style
+                      actually switches - so the model is what the list is
+                      organised by. Other families stay below rather than being
+                      filtered away: picking a style IS how you change model,
+                      so hiding them would be a shelf you can never leave. */}
+                  {savedStyleGroups.length > 1 && (
+                    <div style={{ display: "flex", alignItems: "center",
+                                  gap: SPACE[8],
+                                  padding: `${SPACE[8]}px ${SPACE[8]}px ${SPACE[4]}px`,
+                                  fontSize: TYPE.micro, fontWeight: W.heading,
+                                  letterSpacing: "0.08em", textTransform: "uppercase",
+                                  color: group.current ? "var(--accent)" : "var(--textTer)" }}>
+                      <span>{group.label}</span>
+                      {group.current && (
+                        <span style={{ fontSize: 9, letterSpacing: 0,
+                                       textTransform: "none",
+                                       color: "var(--textTer)" }}>
+                          current model
+                        </span>
+                      )}
+                      <span style={{ flex: 1, height: 1, marginLeft: SPACE[4],
+                                     background: "var(--border)" }} />
+                    </div>
+                  )}
+                  {group.items.map((saved) => {
+                    // Under an identity source a style is pickable when its
+                    // model can carry the identity patch (any Krea 2 build) -
+                    // OR when it is MiniMax H3, which needs no patch: the
+                    // anchor's photo rides H3's own reference input (9.67).
+                    // The model rows have exempted H3 since 9.67; this shelf
+                    // never did, so a character greyed out every H3 style -
+                    // including Minimax Realism, the settled ref stack.
                     const meta = ((options && options.model_meta) || {})[saved.model] || {};
-                    const identityOk = meta.family === "krea2" &&
-                      (meta.compatible_recipes || []).includes("identity_edit");
+                    const identityOk = meta.family === "minimax_h3" ||
+                      (meta.family === "krea2" &&
+                       (meta.compatible_recipes || []).includes("identity_edit"));
                     const locked = hasIdentitySource && !identityOk;
                     return (
                     <Row key={saved.id} sel={opts.saved_style === saved.id}
                          disabled={!saved.available || locked}
                          title={locked
                            ? `${saved.name} runs on ${short(saved.model)}, which ` +
-                             "cannot carry the identity patch (Krea 2 only)"
+                             "cannot carry the identity patch (Krea 2 and MiniMax H3 only)"
                            : saved.available
                            ? `${saved.base_label} · ${short(saved.model)}`
                            : saved.missing.join("\n")}
@@ -2870,7 +3028,16 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                                      textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {saved.name}
                       </span>
-                      <Tag>{saved.available ? saved.base_label : "unavailable"}</Tag>
+                      {/* The tag names the MODEL, not the lane. Picking a
+                          saved style sets opts.model to the style's own build
+                          (selectSavedStyle), so the model is the fact that
+                          separates one row from the next - fourteen rows all
+                          tagged "Realism" is what made the shelf unreadable. */}
+                      <Tag title={saved.available
+                             ? `${saved.base_label} · ${short(saved.model)}`
+                             : saved.missing.join("\n")}>
+                        {saved.available ? short(saved.model) : "unavailable"}
+                      </Tag>
                       <button type="button" aria-label={`Edit ${saved.name}`}
                         title={`Edit ${saved.name}`}
                         onClick={(e) => { e.stopPropagation(); onEditStyle(saved.id); }}
@@ -2882,6 +3049,8 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                     </Row>
                     );
                   })}
+                  </Fragment>
+                  ))}
                   {!savedStyles.length && (
                     <div style={{ padding: `0 ${SPACE[8]}px ${SPACE[8]}px`,
                                   color: "var(--textTer)", fontSize: TYPE.label,
@@ -3044,6 +3213,38 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                   </div>
                 );
               })}
+              {/* 9.83: the per-render suppression for the anchor's wired
+                  accessories. Shown only when the selected anchor HAS any -
+                  a toggle that cannot change the render is not offered. The
+                  switch is the control (role=switch is keyboard-reachable);
+                  the row itself is a plain flex line, never a button
+                  wrapping a button. */}
+              {(() => {
+                const sel = (options.characters || [])
+                  .find((c) => c.id === opts.character);
+                return sel && (sel.accessories || 0) > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center",
+                                gap: SPACE[6],
+                                padding: `${SPACE[4]}px ${SPACE[8]}px` }}>
+                    <Switch on={opts.accessories !== false}
+                      label={`wire ${sel.name}'s accessories`}
+                      title={opts.accessories !== false
+                        ? "wired into this render — switch off to leave them behind for this one"
+                        : "off — the anchor keeps its list; this render wires the identity photo alone"}
+                      onChange={(next) => setOpts({ accessories: next })} />
+                    <span style={{ fontSize: TYPE.ui, color: "var(--textSec)" }}>
+                      accessories
+                    </span>
+                    <Tag>{opts.accessories !== false
+                      ? `${sel.accessories} wired` : "off"}</Tag>
+                    <InfoTip size={11} text={"The anchor's accessory references wire "
+                      + "beside its identity photo on the MiniMax H3 lanes. Every "
+                      + "wired reference rides every sampling step, so off is the "
+                      + "fast render. Per-accessory switches live on the character "
+                      + "page (the pencil beside each anchor)."} />
+                  </div>
+                ) : null;
+              })()}
               <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[10]}px 0` }} />
               <Row onClick={() => { setPop(null); onNewCharacter && onNewCharacter(); }}>
                 <UserCirclePlus size={12} weight="duotone" /> new anchor…

@@ -1,5 +1,5 @@
 {
- "caption": "A red barn at dusk She is fully dressed in the clothing described above.",
+ "caption": "A red barn at dusk. She is fully dressed in the clothing described above.",
  "graph": {
   "1": {
    "class_type": "UNETLoader",
@@ -96,7 +96,7 @@
     ],
     "height": 2048,
     "length": 5,
-    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - A red barn at dusk She is fully dressed in the clothing described above. The subject holds the pose; nothing in the frame moves.\n\noverall_soundscape: Room tone, steady, synchronized.",
+    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. A red barn at dusk. She is fully dressed in the clothing described above.\n\noverall_soundscape: Room tone, steady, synchronized.",
     "vae": [
      "3",
      0

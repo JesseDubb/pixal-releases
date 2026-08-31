@@ -79,7 +79,8 @@ class RecipeTests(unittest.TestCase):
             server.PUBLIC_RECIPE_IDS,
             ("realism", "realism_ii", "fantasy", "anime", "zimage", "identity_edit",
              "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "klein_edit",
-             "anima", "h3_still", "h3_still_2x", "h3_ref_still"),
+             "anima", "h3_still", "h3_still_2x", "h3_ref_still",
+             "h3_ref_still_2x"),
         )
         self.assertTrue(set(server.PUBLIC_RECIPE_IDS).issubset(server.BUILDERS))
 
@@ -467,10 +468,104 @@ class RecipeTests(unittest.TestCase):
                  patch.dict(server._COMFY_NODES, {"names": frozenset({"KSampler"})}):
                 with self.assertRaises(ValueError):
                     server.build_upscale_image("x", 1, image="still.png", mode="pid")
+    CFG_VSR = {"upscale": {"image_vsr_mode": "VSR Ultra",
+                           "image_vsr_scale": 2.0}}
+
+    def build_vsr(self, cfg=None, node="DenoRTXVFXEasyUpscale", **kwargs):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "still.png").write_bytes(b"frame")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config",
+                              return_value=cfg or self.CFG_VSR), \
+                 patch.object(server, "_video_upscale_node",
+                              return_value=node):
+                return server.build_upscale_image("back seat", 1,
+                                                  image="still.png", **kwargs)
+
+    def test_vsr_upscale_builds_the_three_node_filter_graph(self):
+        """9.79: a still through the video lane's RTX VFX filter - LoadImage
+        -> VSR -> SaveImage, no VHS anywhere - naming itself for the ledger
+        card the way the other modes do."""
+        graph, _scene, info = self.build_vsr(mode="vsr")
+        self.assert_graph_links("vsr_upscale", graph)
+        self.assertEqual(set(graph), {"up:img", "up:vsr", "up:save"})
+        self.assertEqual(graph["up:img"]["class_type"], "LoadImage")
+        self.assertEqual(graph["up:img"]["inputs"]["image"], "still.png")
+        self.assertEqual(graph["up:vsr"]["class_type"], "DenoRTXVFXEasyUpscale")
+        self.assertEqual(graph["up:vsr"]["inputs"]["images"], ["up:img", 0])
+        self.assertEqual(graph["up:save"]["class_type"], "SaveImage")
+        self.assertEqual(graph["up:save"]["inputs"]["images"], ["up:vsr", 0])
+        self.assertEqual(graph["up:save"]["inputs"]["filename_prefix"],
+                         "pixal_dm/back_seat")
+        self.assertEqual(info["upscaler"], "RTX VSR Ultra 2x")
+        self.assertEqual(info["source_image"], "still.png")
+
+    def test_vsr_node_carries_all_eleven_required_inputs(self):
+        """DenoRTXVFXEasyUpscale answers a missing input with a bare HTTP
+        400 from /prompt and no explanation, so the graph must send ALL
+        eleven - resize_type "Scale" reads only mode+scale, and the rest
+        carry the node's own defaults from the hand-verified graph."""
+        cfg = {"upscale": {"image_vsr_mode": "VSR High",
+                           "image_vsr_scale": 3.0}}
+        graph, _scene, _info = self.build_vsr(cfg=cfg, mode="vsr")
+        inputs = graph["up:vsr"]["inputs"]
+        self.assertEqual(set(inputs),
+                         {"images", "mode", "resize_type", "scale",
+                          "megapixels", "width", "height", "divisible_by",
+                          "device", "ratio_preset", "resize_method"})
+        self.assertEqual(inputs["mode"], "VSR High")
+        self.assertEqual(inputs["scale"], 3.0)
+        self.assertEqual(inputs["resize_type"], "Scale")
+        self.assertEqual(inputs["megapixels"], 2.0)
+        self.assertEqual(inputs["width"], 1920)
+        self.assertEqual(inputs["height"], 1080)
+        self.assertEqual(inputs["divisible_by"], "1")
+        self.assertEqual(inputs["device"], 0)
+        self.assertEqual(inputs["ratio_preset"], "16:9")
+        self.assertEqual(inputs["resize_method"], "Center Crop (Fill)")
+
+    def test_vsr_rtx_pack_branch_sends_only_a_quality_tier(self):
+        """The NVIDIA pack's RTXVideoSuperResolution takes quality, not a
+        mode string - the same branch build_upscale_video already runs."""
+        graph, _scene, _info = self.build_vsr(node="RTXVideoSuperResolution",
+                                              mode="vsr")
+        self.assertEqual(graph["up:vsr"]["class_type"],
+                         "RTXVideoSuperResolution")
+        self.assertEqual(graph["up:vsr"]["inputs"],
+                         {"images": ["up:img", 0], "resize_type": "Scale",
+                          "quality": "ULTRA"})
+
+    def test_vsr_upscale_is_refused_when_the_pack_is_missing(self):
+        """Same shape of refusal as PiD's: a probed ComfyUI with neither VSR
+        node fails at build time with a plain sentence naming the pack."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "still.png").write_bytes(b"frame")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config",
+                              return_value=self.CFG_VSR), \
+                 patch.dict(server._COMFY_NODES,
+                            {"names": frozenset({"KSampler"})}):
+                with self.assertRaisesRegex(ValueError,
+                                            "Deno RTX VFX node pack"):
+                    server.build_upscale_image("x", 1, image="still.png",
+                                               mode="vsr")
+
+    def test_vsr_a_hand_edited_bad_tier_falls_back_to_the_default(self):
+        """settings_post refuses a non-VSR tier, but config.json is a file:
+        a hand edit must not queue a mode the node would 400."""
+        cfg = {"upscale": {"image_vsr_mode": "LTX 2.5 2x",
+                           "image_vsr_scale": 2.0}}
+        graph, _scene, info = self.build_vsr(cfg=cfg, mode="vsr")
+        self.assertEqual(graph["up:vsr"]["inputs"]["mode"], "VSR Ultra")
+        self.assertEqual(info["upscaler"], "RTX VSR Ultra 2x")
 
     def test_template_links_target_existing_nodes(self):
         for name in ("realism", "realism_ii", "zimage", "identity_edit", "ltx_i2v",
-                     "ltx25_i2v", "qwen_edit", "pid_upscale"):
+                     "ltx25_i2v", "qwen_edit", "pid_upscale", "vsr_upscale"):
             graph = server.TEMPLATES[name]
             for node_id, node in graph.items():
                 for value in node.get("inputs", {}).values():
@@ -513,6 +608,15 @@ class RecipeTests(unittest.TestCase):
         of replayed a stage short. Every revision is pinned per recipe here -
         a stage list may only change together with its revision.
         """
+        # The four still rows share ONE stage list object in server.py, so
+        # this table names it once too - a per-row copy here would be a
+        # second place for them to drift apart.
+        H3_STILL_LANE = [
+            ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
+            ("digicam", server.H3_DIGICAM_LORA, 0.2, "editable"),
+            ("galaxyace", server.H3_GALAXYACE_LORA, 0.2, "editable"),
+            ("relim", server.H3_RELIM_LORA, 0.2, "editable"),
+        ]
         expected = {
             "realism": (2, [
                 ("vector_bypass", server.KREA_BYPASS_LORA, 1.0, "core"),
@@ -529,18 +633,15 @@ class RecipeTests(unittest.TestCase):
                 ("identity_edit", server.IDENTITY_LORA, 1.0, "core"),
                 ("rawgirl", server.IDENTITY_STYLE_LORA, 1.0, "editable"),
             ]),
-            # 9.74: the H3 stills gained one editable style lane (no core
+            # 9.74: the H3 stills gained an editable style lane (no core
             # entries, off by default) - the revision moved with the stage
-            # list, as this table's rule requires.
-            "h3_still": (2, [
-                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
-            ]),
-            "h3_still_2x": (2, [
-                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
-            ]),
-            "h3_ref_still": (2, [
-                ("style", server.H3_HMNSFW_LORA, 1.0, "editable"),
-            ]),
+            # list, as this table's rule requires. 1.1.4b added the three
+            # LoRAs the reference-realism session settled on, at the 0.2
+            # stack strength, and moved the revision again.
+            "h3_still": (3, H3_STILL_LANE),
+            "h3_still_2x": (3, H3_STILL_LANE),
+            "h3_ref_still": (3, H3_STILL_LANE),
+            "h3_ref_still_2x": (3, H3_STILL_LANE),
         }
         for recipe, (revision, wanted) in expected.items():
             spec = server.RECIPE_SPECS[recipe]
@@ -870,6 +971,133 @@ class RecipeTests(unittest.TestCase):
              patch.object(server, "recipe_model_candidates", return_value=[fallback]):
             picked = server.pick_recipe_model(None, "zimage")
         self.assertEqual(picked, fallback)
+
+    @staticmethod
+    def _candidates(recipe_id, rels, family, variant="edit"):
+        """recipe_model_candidates over a stubbed catalog, in the given order."""
+        raw = [{"rel": r, "kind": "diffusion_models", "root": "R",
+                "mtime": 0, "size": 1} for r in rels]
+        with patch.object(server, "model_catalog",
+                          side_effect=lambda kind: raw
+                          if kind == "diffusion_models" else []), \
+             patch.object(server, "model_profile",
+                          side_effect=lambda rel, kind: {
+                              "family": family, "variant": variant,
+                              "media": "image"}), \
+             patch.object(server, "compatible_recipes",
+                          side_effect=lambda entry: {recipe_id}):
+            return [e["rel"] for e in server.recipe_model_candidates(recipe_id)]
+
+    def test_a_recipe_can_prefer_a_build_over_alphabetical_order(self):
+        """Found 2026-08-31, smoke-testing the edit lane on a real install.
+
+        qwen_edit's authored default is a GGUF that is not on every box, so
+        the fallback decides the lane - and it sorted alphabetically, which
+        put "FireRed-Image-Edit-1.1..." ahead of "qwen_image_edit_2511..."
+        purely because F precedes q. FireRed lost Jesse's 2026-08-20 A/B and
+        is installed-but-not-endorsed, so the wrong editor was the default on
+        any machine holding both.
+        """
+        self.assertIn("qwen_image_edit_2511",
+                      server.RECIPE_SPECS["qwen_edit"]["prefer"])
+        firered = "Qwen\\FireRed-Image-Edit-1.1-transformer_mxfp8.safetensors"
+        endorsed = "Qwen\\qwen_image_edit_2511_nvfp4.safetensors"
+        got = self._candidates("qwen_edit", [firered, endorsed], "qwen_edit")
+        self.assertEqual(got, [endorsed, firered])
+        # ...and it is what the lane actually picks when nothing was asked for.
+        with patch.object(server, "resolve_model_entry", return_value=None), \
+             patch.object(server, "recipe_model_candidates",
+                          return_value=[{"rel": endorsed,
+                                         "kind": "diffusion_models",
+                                         "family": "qwen_edit",
+                                         "variant": "edit"}]):
+            self.assertEqual(
+                server.pick_recipe_model(None, "qwen_edit")["rel"], endorsed)
+
+    def test_the_ui_and_the_render_agree_on_every_default(self):
+        """Found 2026-08-31 by restarting onto HEAD and asking the live app.
+
+        The prefer fix landed on recipe_model_candidates - what RENDERS - and
+        /api/options still named FireRed, because HUB.options resolved its own
+        fallback with a separate `next(name for name in models ...)` over an
+        alphabetically sorted list. So the sampler loaded Qwen 2511 while
+        Settings said FireRed: the worst shape a default can have, since the
+        composer sends the name the UI showed.
+
+        The invariant is not "qwen_edit prefers 2511" - that is one instance.
+        It is that the resolver the RENDER uses and the resolver the UI uses
+        cannot disagree, for any recipe that states a preference.
+        """
+        for rid, spec in server.RECIPE_SPECS.items():
+            prefer = tuple(spec.get("prefer") or ())
+            if not prefer:
+                continue
+            rival = "AAAA_rival.safetensors"          # sorts before anything
+            wanted = f"{prefer[0]}_build.safetensors"
+            self.assertLess(rival, wanted, "the rival must sort first")
+
+            # the render path, driven for real through the catalog
+            rendered = self._candidates(rid, [rival, wanted], spec["family"],
+                                        spec.get("variants", ["any"])[0]
+                                        if spec.get("variants") else "any")
+            # the UI path: HUB.options picks min() over the compatible names
+            shown = min([rival, wanted], key=lambda n: server.prefer_key(rid, n))
+
+            self.assertEqual(rendered[0], wanted,
+                             f"{rid}: the render lane took the alphabetical "
+                             f"rival over its stated preference")
+            self.assertEqual(shown, rendered[0],
+                             f"{rid}: Settings would name {shown} while the "
+                             f"sampler loads {rendered[0]}")
+
+    def test_the_options_payload_asks_the_render_lane_what_can_run(self):
+        """Two divergences in one afternoon, both this shape.
+
+        HUB.options used to decide for itself which installed models could run
+        a recipe - `models` filtered by compatible_recipes. That is a SUBSET
+        of what recipe_model_candidates enforces: it misses the nvidia_pid
+        exclusion (PiD ships DECODER weights that read as qwen_image family
+        and render garbage as a UNet) and the no_gguf one. On Jesse's box that
+        made /api/options advertise qwen_image with `missing: []` and a PiD
+        tiled upscaler as its model, while pick_recipe_model raised for the
+        same recipe. A lane you can pick and cannot render.
+
+        So the payload must ASK the resolver, not re-derive it. Structural,
+        because the failure is a second implementation drifting - which no
+        output-level test catches until the two already disagree.
+        """
+        src = (Path(__file__).resolve().parents[1] / "server.py").read_text(
+            encoding="utf-8")
+        body = src[src.index("    def options(self)"):][:20000]
+        self.assertIn("recipe_model_candidates(", body,
+                      "HUB.options must ask the render lane's resolver")
+        # the re-derivation it replaced must not creep back
+        self.assertNotIn('if rid in model_meta[name]["compatible_recipes"]', body)
+        # ...and there must still be only one ranking helper behind it.
+        self.assertEqual(src.count("def prefer_key("), 1)
+
+    def test_pid_decoder_weights_are_never_a_recipe_candidate(self):
+        """The old missing-check was "is any installed model tagged
+        compatible", which a PiD decoder satisfies - it reads as qwen_image
+        family. The question the payload must ask is whether anything can RUN,
+        and PiD ships decoder weights that would be loaded as a UNet.
+        """
+        pid = model("nvidia_pid\\pid_1.5_qwenimage_1024_to_4096_4step.safetensors",
+                    "qwen_image", "any")
+        with assets(pid):
+            rels = [e["rel"] for e in
+                    server.recipe_model_candidates("qwen_image")]
+        self.assertEqual(rels, [],
+                         "PiD decoder weights are not generation models")
+
+    def test_a_recipe_with_no_preference_stays_alphabetical(self):
+        # The tie-break is unchanged for every other lane.
+        self.assertFalse(server.RECIPE_SPECS["klein_edit"].get("prefer"))
+        got = self._candidates(
+            "klein_edit", ["Flux\\zzz_klein.safetensors",
+                           "Flux\\aaa_klein.safetensors"], "klein")
+        self.assertEqual(got, ["Flux\\aaa_klein.safetensors",
+                               "Flux\\zzz_klein.safetensors"])
 
     def test_unknown_lora_is_not_treated_as_architecture_neutral(self):
         with patch.object(server, "resolve_lora", return_value="misc\\mystery.safetensors"), \
@@ -3243,3 +3471,81 @@ class EditLaneSettingsTests(unittest.TestCase):
                     encoding="utf-8")
                 self.assertEqual(server.load_config()["edit"]["inpaint_model"],
                                  self.KLEIN_BF16["rel"])
+
+class VsrStillSettingsTests(unittest.TestCase):
+    """9.79: upscale.image_vsr_mode rides /api/settings like the other
+    upscale keys, and refuses anything outside the four VSR tiers - LTX 2.5
+    is a generative video re-render that cannot run on a still, and the
+    Deno node's restoration modes are same-size passes, not enlargers."""
+
+    def _full_cfg(self, upscale):
+        return {"llm": {"base_url": "", "model": ""},
+                "critic": {"model": ""}, "edit": {}, "vae": {}, "pid": {},
+                "video": {"default_engine": "", "default_model": ""},
+                "upscale": {"image_mode": "vsr",
+                            "image_vsr_mode": "VSR Ultra",
+                            "image_vsr_scale": 2.0,
+                            "video_mode": "VSR High", "video_scale": 2.0,
+                            "video_fps": 0, **upscale},
+                "extra_model_roots": [], "comfy_editor": False,
+                "comfy_console": "tui", "explicit": "auto",
+                "vram_profile": "auto"}
+
+    def test_settings_post_rejects_a_non_vsr_tier_naming_the_list(self):
+        for bad in ("LTX 2.5 2x", "Denoise", "High Bitrate", "Deblur", "",
+                    True, 1, None, ["VSR High"]):
+            with self.subTest(bad=bad):
+                saved = []
+                with patch.object(server, "load_config",
+                                  return_value=self._full_cfg({})), \
+                     patch.object(server, "save_config",
+                                  side_effect=lambda cfg: saved.append(cfg)):
+                    response = asyncio.run(server.settings_post(
+                        FakeRequest({"upscale": {"image_vsr_mode": bad}})))
+                self.assertEqual(response.status, 400)
+                self.assertEqual(
+                    json.loads(response.text),
+                    {"ok": False,
+                     "error": "not one of VSR Low|VSR Medium|VSR High|"
+                              f"VSR Ultra: {bad}"})
+                self.assertEqual(saved, [],
+                                 "a refused tier must not touch config")
+
+    def test_settings_post_round_trips_a_vsr_tier(self):
+        for tier in server.UPSCALE_VSR_TIERS:
+            with self.subTest(tier=tier):
+                saved = []
+                with patch.object(server, "load_config",
+                                  return_value=self._full_cfg({})), \
+                     patch.object(server, "save_config",
+                                  side_effect=lambda c: saved.append(c)):
+                    response = asyncio.run(server.settings_post(
+                        FakeRequest({"upscale": {"image_vsr_mode": tier}})))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.text), {"ok": True})
+                self.assertEqual(saved[0]["upscale"]["image_vsr_mode"], tier)
+
+    def test_settings_post_clamps_the_still_scale(self):
+        for posted, want in ((2.0, 2.0), (0.5, 1.0), (9, 4.0), ("junk", 2.0)):
+            with self.subTest(posted=posted):
+                saved = []
+                with patch.object(server, "load_config",
+                                  return_value=self._full_cfg({})), \
+                     patch.object(server, "save_config",
+                                  side_effect=lambda c: saved.append(c)):
+                    response = asyncio.run(server.settings_post(
+                        FakeRequest({"upscale": {"image_vsr_scale": posted}})))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(saved[0]["upscale"]["image_vsr_scale"], want)
+
+    def test_the_tier_list_is_exactly_the_vsr_video_modes(self):
+        self.assertEqual(list(server.UPSCALE_VSR_TIERS),
+                         ["VSR Low", "VSR Medium", "VSR High", "VSR Ultra"])
+        self.assertNotIn(server.LTX25_UPSCALE_MODE, server.UPSCALE_VSR_TIERS)
+
+    def test_load_config_defaults_the_still_vsr_keys(self):
+        self.assertIn("vsr", server.UPSCALE_IMAGE_MODES)
+        self.assertEqual(server.UPSCALE_IMAGE_DEFAULT_MODE, "model")
+        cfg = server.load_config()
+        self.assertEqual(cfg["upscale"]["image_vsr_mode"], "VSR Ultra")
+        self.assertEqual(cfg["upscale"]["image_vsr_scale"], 2.0)

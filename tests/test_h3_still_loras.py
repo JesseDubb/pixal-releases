@@ -14,7 +14,7 @@ Minimax H3 folder), with variant "speed" for the turbo/lightx2v/step-count
 distills and "any" for everything else; lora_compatible refuses "variant"
 when a still profile (fl2va/ref2va) meets a non-"any" LoRA, so the speed
 distills stay the Animate lanes' speed-mode property; the three still rows
-declare lora_variants ["any"] and one editable style stage at revision 2;
+declare lora_variants ["any"] and four editable style stages at revision 3;
 and the builders resolve the plan and chain LoraLoaderModelOnly nodes off
 the loader, BOTH consumers (BasicScheduler "8" and BasicGuider "9", plus the
 2x refine's up:sigmas/up:sample) seeing the identical literal tail.
@@ -30,8 +30,10 @@ What these tests pin:
                    supported for the video lane (the speed ladder still
                    names them); compatible_recipes names the three still
                    rows for a style LoRA and none for a distill.
-  RecipeRows   - lora_variants ["any"], revision 2, and ONE editable,
-                   removable, off-by-default style stage on each still row.
+  RecipeRows   - lora_variants ["any"], revision 3, and FOUR editable,
+                   removable, off-by-default style stages on each still
+                   row - the 1.1.4b reference-realism trio joined the
+                   pinned one.
   Stack        - resolve_recipe_lora_stack keeps a style LoRA, drops a
                    distill with the "incompatible" warning, and an empty
                    plan resolves to an empty chain.
@@ -43,7 +45,8 @@ What these tests pin:
   Options      - /api/options ships the LoRAs classified, the still rows in
                    each style LoRA's compatible_recipes, the distill's
                    refusal in its incompatible map, and the recipe rows'
-                   new stage at revision 2.
+                   new stages at revision 3, each with whether it is
+                   installed.
 
 Same sanctioned simulation as every sibling file: stubbed catalog, no
 generation, no ComfyUI, no GPU.
@@ -279,7 +282,8 @@ class GateTests(unittest.TestCase):
         with sidecar, roots:
             self.assertEqual(
                 server.compatible_recipes(server.lora_profile(STYLE)),
-                ["h3_still", "h3_still_2x", "h3_ref_still"])
+                ["h3_still", "h3_still_2x", "h3_ref_still",
+                 "h3_ref_still_2x"])
             self.assertEqual(
                 server.compatible_recipes(server.lora_profile(DISTILL)), [])
 
@@ -292,25 +296,35 @@ class GateTests(unittest.TestCase):
 class RecipeRowTests(unittest.TestCase):
     """Each still row: lora_variants ["any"], revision 2, one editable stage."""
 
-    def test_the_three_rows_carry_the_lane(self):
-        for rid in ("h3_still", "h3_still_2x", "h3_ref_still"):
+    def test_the_still_rows_carry_the_lane(self):
+        # 1.1.4b: the lane went from one row to four at revision 3. The three
+        # new ones are the LoRAs the 2026-08-30 reference session settled on,
+        # pinned at 0.2 - the stack strength, not any one of their solo picks.
+        wanted = [("style", STYLE, 1.0),
+                  ("digicam", server.H3_DIGICAM_LORA, 0.2),
+                  ("galaxyace", server.H3_GALAXYACE_LORA, 0.2),
+                  ("relim", server.H3_RELIM_LORA, 0.2)]
+        for rid in ("h3_still", "h3_still_2x", "h3_ref_still",
+                    "h3_ref_still_2x"):
             with self.subTest(recipe=rid):
                 spec = server.RECIPE_SPECS[rid]
                 self.assertEqual(spec["lora_variants"], ["any"])
-                self.assertEqual(spec["lora_stack_revision"], 2)
+                self.assertEqual(spec["lora_stack_revision"], 3)
                 self.assertEqual(spec["lora_boundary"], "sampler")
-                self.assertEqual(len(spec["lora_stages"]), 1)
-                stage = spec["lora_stages"][0]
-                # realism's editable-row shape: a style role in the editable
-                # zone, order unlocked, strength open, removable - and OFF by
-                # default, so an untouched plan renders the pre-9.74 graph.
-                self.assertEqual(stage["role"], "style")
-                self.assertEqual(stage["zone"], "editable")
-                self.assertFalse(stage["order_locked"])
-                self.assertTrue(stage["strength_editable"])
-                self.assertTrue(stage["removable"])
-                self.assertFalse(stage["active_by_default"])
-                self.assertEqual(stage["name"], STYLE)
+                self.assertEqual(
+                    [(s["slot"], s["name"], s["strength"])
+                     for s in spec["lora_stages"]], wanted)
+                for stage in spec["lora_stages"]:
+                    # realism's editable-row shape: a style role in the
+                    # editable zone, order unlocked, strength open, removable
+                    # - and every one OFF by default, so an untouched plan
+                    # still renders the pre-9.74 graph.
+                    self.assertEqual(stage["role"], "style")
+                    self.assertEqual(stage["zone"], "editable")
+                    self.assertFalse(stage["order_locked"])
+                    self.assertTrue(stage["strength_editable"])
+                    self.assertTrue(stage["removable"])
+                    self.assertFalse(stage["active_by_default"])
                 # No core entries: the lane is the whole stack.
                 self.assertEqual(
                     [s for s in spec["lora_stages"] if s["zone"] == "core"],
@@ -512,7 +526,8 @@ class OptionsTests(unittest.TestCase):
             options = self.options(h3_entries(Path(td)))
         loras = {l["name"]: l for l in options["loras"]}
         self.assertEqual(loras[STYLE]["compatible_recipes"],
-                         ["h3_still", "h3_still_2x", "h3_ref_still"])
+                         ["h3_still", "h3_still_2x", "h3_ref_still",
+                          "h3_ref_still_2x"])
         for rel in SPEED_LORAS:
             self.assertEqual(loras[rel]["compatible_recipes"], [], rel)
 
@@ -531,19 +546,29 @@ class OptionsTests(unittest.TestCase):
             self.assertEqual(inc.get("minimax_h3:fl2va"), "variant", rel)
             self.assertEqual(inc.get("minimax_h3:ref2va"), "variant", rel)
 
-    def test_the_recipe_rows_ship_the_lane_at_revision_2(self):
+    def test_the_recipe_rows_ship_the_lane_at_revision_3(self):
         with TemporaryDirectory() as td:
             options = self.options(h3_entries(Path(td)))
         recipes = {r["id"]: r for r in options["recipes"]}
-        for rid in ("h3_still", "h3_still_2x", "h3_ref_still"):
+        for rid in ("h3_still", "h3_still_2x", "h3_ref_still",
+                    "h3_ref_still_2x"):
             recipe = recipes[rid]
-            self.assertEqual(recipe["lora_stack_revision"], 2, rid)
+            self.assertEqual(recipe["lora_stack_revision"], 3, rid)
             self.assertEqual(recipe["lora_boundary"], "sampler", rid)
-            self.assertEqual(len(recipe["lora_stages"]), 1, rid)
-            stage = recipe["lora_stages"][0]
-            self.assertEqual((stage["slot"], stage["name"], stage["zone"]),
-                             ("style", STYLE, "editable"), rid)
-            self.assertTrue(stage["installed"], rid)
+            self.assertEqual(
+                [(s["slot"], s["name"], s["zone"])
+                 for s in recipe["lora_stages"]],
+                [("style", STYLE, "editable"),
+                 ("digicam", server.H3_DIGICAM_LORA, "editable"),
+                 ("galaxyace", server.H3_GALAXYACE_LORA, "editable"),
+                 ("relim", server.H3_RELIM_LORA, "editable")], rid)
+            # The stub catalog holds the pinned style file and none of the
+            # three new ones, which is the point of publishing `installed`:
+            # a row for a LoRA that is not on this box shows as unavailable
+            # rather than failing at render time.
+            self.assertTrue(recipe["lora_stages"][0]["installed"], rid)
+            for stage in recipe["lora_stages"][1:]:
+                self.assertFalse(stage["installed"], rid)
 
 
 if __name__ == "__main__":

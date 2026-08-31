@@ -47,6 +47,7 @@ function loadOpts() {
   const defaults = { engine: "auto", style: "realism", quality: "standard",
                      model: "", aspect: "", mp: null, cinematic: false,
                      loras: [], lora_plans: {}, refs: [], character: "",
+                     accessories: true,
                      saved_style: "", dials: {}, tuning: {}, style_slots: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(OPTS_KEY)) || {};
@@ -57,6 +58,10 @@ function loadOpts() {
     o.tuning = o.tuning && typeof o.tuning === "object" ? o.tuning : {};
     o.refs = Array.isArray(o.refs) ? o.refs : [];
     o.cinematic = o.cinematic === true;
+    // 9.83: the anchor's accessories wire by default; only an explicit off
+    // survives a reload (absent/old bundles heal to on, never to a silent
+    // suppression the user cannot see).
+    o.accessories = o.accessories !== false;
     o.saved_style = typeof o.saved_style === "string" ? o.saved_style : "";
     o.style_slots = o.style_slots && typeof o.style_slots === "object"
       && !Array.isArray(o.style_slots) ? o.style_slots : {};
@@ -146,7 +151,8 @@ export function activeRecipeId(opts, options) {
   if (opts.character) {
     const h3 = ((options.model_meta || {})[opts.model]) || {};
     if (h3.family === "minimax_h3")
-      return h3.variant === "ref2va" ? "h3_ref_still"
+      return h3.variant === "ref2va"
+        ? (opts.quality === "refined" ? "h3_ref_still_2x" : "h3_ref_still")
         : opts.quality === "refined" ? "h3_still_2x" : "h3_still";
     return "identity_edit";
   }
@@ -171,10 +177,12 @@ export function activeRecipeId(opts, options) {
   // Anima IS the style - one graph, no style or quality variants.
   if (meta?.family === "anima") return "anima";
   // An H3 build picked for a still renders one frame: the ref2va build runs
-  // the reference still (9.67); an fl2va build runs h3_still, with the
-  // Refined quality adding the in-family 2x latent refine (h3_still_2x).
+  // the reference still (9.67), an fl2va build runs h3_still, and on EITHER
+  // lane the Refined quality adds that lane's in-family 2x latent refine
+  // (9.84 - before it, refined was accepted and dropped on ref2va).
   if (meta?.family === "minimax_h3")
-    return meta.variant === "ref2va" ? "h3_ref_still"
+    return meta.variant === "ref2va"
+      ? (opts.quality === "refined" ? "h3_ref_still_2x" : "h3_ref_still")
       : opts.quality === "refined" ? "h3_still_2x" : "h3_still";
   if (style === "anime" || style === "fantasy") return style;
   return opts.quality === "refined" ? "realism_ii" : "realism";
@@ -193,13 +201,17 @@ export function withExecutionRecipe(opts, options) {
     // H3 carries the anchor's photo through its own reference input (9.67):
     // with one picked the anchor is NOT an identity_edit mode - the ref2va
     // build runs the reference still, fl2va keeps its still pair, and the
-    // style pin is the non-identity path's (realism, refined gated on
-    // h3_still_2x's availability; ref2va has no 2x variant).
+    // style pin is the non-identity path's (realism, refined gated on the
+    // availability of whichever 2x recipe that lane refines through).
     const idMeta = ((options || {}).model_meta || {})[opts.model];
     if (opts.character && idMeta?.family === "minimax_h3") {
-      const h3Quality = idMeta.variant !== "ref2va" &&
-        opts.quality === "refined" && (options?.recipes || [])
-          .some((r) => r.id === "h3_still_2x" && r.available)
+      // Each lane has its own 2x recipe since 9.84. Gating every H3 pick on
+      // h3_still_2x while forcing ref2va to "standard" is what silently
+      // stripped Refined from every anchored render.
+      const refineId = idMeta.variant === "ref2va"
+        ? "h3_ref_still_2x" : "h3_still_2x";
+      const h3Quality = opts.quality === "refined" && (options?.recipes || [])
+          .some((r) => r.id === refineId && r.available)
         ? "refined" : "standard";
       return { ...opts, style: "realism", quality: h3Quality,
                engine: activeRecipeId(
@@ -595,6 +607,9 @@ export function renderIntent(promptEnhance, o = state.opts) {
   if (o.cinematic && promptEnhance) bits.push("Cinematic");
   if (character) bits.push((options && (options.characters || [])
     .find(c => c.id === character)?.name) || character);
+  // The suppression is said out loud: a render that leaves the anchor's
+  // accessories behind must not read as an ordinary anchored render.
+  if (character && o.accessories === false) bits.push("accessories off");
   if (o.model) bits.push(o.model.split("\\").pop().replace(".safetensors", ""));
   if (o.aspect) bits.push(o.aspect.split(" ")[0] + (o.mp ? "@" + o.mp + "MP" : ""));
   else if (o.mp) bits.push(o.mp + "MP");
@@ -632,6 +647,10 @@ export function renderIntent(promptEnhance, o = state.opts) {
   if (o.quality) body.quality = o.quality;
   if (o.cinematic && promptEnhance) body.cinematic = true;
   if (character) body.character = character;
+  // 9.83: sparse like the dials - only the OFF rides the wire (an untouched
+  // composer submits exactly what it did before accessories existed), and
+  // only beside an anchor, the one thing it can mean anything to.
+  if (character && o.accessories === false) body.accessories = false;
   if (o.model) body.model = o.model;
   if (o.aspect) body.aspect = o.aspect;
   if (o.mp) body.mp = o.mp;
@@ -1061,8 +1080,15 @@ export const api = {
     // the identity patch (any Krea 2 build): the style contributes its model
     // and stack to the identity graph server-side. Incompatible bases
     // (Z-Image, Anima) keep the old rule - the click wins, the character goes.
+    // MiniMax H3 keeps the character too, and for a different reason: it needs
+    // no identity patch at all - the anchor's photo rides H3's own reference
+    // input and activeRecipeId routes it to h3_ref_still (9.67). Testing only
+    // for identity_edit support dropped the anchor the moment a MiniMax style
+    // was picked, which is the ref lane's whole subject.
+    const styleMeta = ((state.options || {}).model_meta || {})[style.model] || {};
     const keepCharacter = !!state.opts.character &&
-      modelSupportsRecipe(style.model, "identity_edit", state.options);
+      (styleMeta.family === "minimax_h3" ||
+       modelSupportsRecipe(style.model, "identity_edit", state.options));
     const patch = { saved_style: id, model: style.model,
                     ...(keepCharacter ? {} : { character: "" }),
                     // A new style's slots are new questions: another style's

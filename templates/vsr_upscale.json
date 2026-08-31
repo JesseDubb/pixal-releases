@@ -1,0 +1,46 @@
+{
+ "up:img": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "example-source.png"
+  },
+  "_meta": {
+   "title": "Load Source Image"
+  }
+ },
+ "up:vsr": {
+  "class_type": "DenoRTXVFXEasyUpscale",
+  "inputs": {
+   "images": [
+    "up:img",
+    0
+   ],
+   "mode": "VSR Ultra",
+   "resize_type": "Scale",
+   "scale": 2.0,
+   "megapixels": 2.0,
+   "width": 1920,
+   "height": 1080,
+   "divisible_by": "1",
+   "device": 0,
+   "ratio_preset": "16:9",
+   "resize_method": "Center Crop (Fill)"
+  },
+  "_meta": {
+   "title": "RTX Video Super Resolution"
+  }
+ },
+ "up:save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "up:vsr",
+    0
+   ],
+   "filename_prefix": "pixal_dm/upscaled"
+  },
+  "_meta": {
+   "title": "Save Image"
+  }
+ }
+}

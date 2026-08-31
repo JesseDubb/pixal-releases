@@ -203,6 +203,10 @@ class ResolvedStyleTests(unittest.TestCase):
         self.assertIn("prompt_tail", server._REROLL_COMPOSER_OWNED)
 
 
+@unittest.skipUnless(
+    (server.RECIPE_DIR / "phone_photo.json").is_file(),
+    "recipes/phone_photo.json is gitignored user data: absent on a clean "
+    "checkout and in CI, so there is nothing here to assert on")
 class PhonePhotoStyleTests(unittest.TestCase):
     """The shipped arm-D style: recipes/phone_photo.json."""
 

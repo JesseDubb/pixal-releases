@@ -23,6 +23,7 @@ import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W, LH } from "../lib/design-
 import { LightricksMark, MiniMaxMark } from "../lib/BrandMarks.jsx";
 import { Disclosure } from "../lib/Disclosure.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { Switch } from "../lib/Switch.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Picker } from "../lib/Picker.jsx";
@@ -102,22 +103,8 @@ const MICRO = { fontSize: TYPE.micro, color: "var(--textTer)", fontWeight: W.lab
                 textTransform: "uppercase", letterSpacing: "0.08em" };
 const CAPTION = { fontSize: TYPE.label, color: "var(--textTer)", lineHeight: LH.body };
 
-// One switch recipe for every on/off in the dialog (was hand-rolled per row).
-const Switch = ({ on, onChange, disabled, label, title }) => (
-  <button type="button" role="switch" aria-checked={on} aria-label={label}
-    disabled={disabled} title={title} onClick={() => !disabled && onChange(!on)}
-    style={{ position: "relative", width: 30, height: 17, padding: 0, flex: "none",
-             cursor: disabled ? "default" : "pointer",
-             border: `1px solid ${on ? "var(--accent)" : "var(--borderHov)"}`,
-             borderRadius: RADIUS.pill, opacity: disabled ? 0.45 : 1,
-             background: on ? "var(--accentMut)" : "var(--bg1)",
-             transition: `background ${MOTION.hover}, border-color ${MOTION.hover}` }}>
-    <span aria-hidden="true" style={{ position: "absolute", top: 2, left: on ? 15 : 2,
-      width: 11, height: 11, borderRadius: "50%",
-      background: on ? "var(--accent)" : "var(--textMut)",
-      transition: `left ${MOTION.state}, background ${MOTION.state}` }} />
-  </button>
-);
+// The one switch recipe for every on/off in the dialog (was hand-rolled per
+// row) is the shared lib/Switch since 9.83 - same 30x17 pill, one home.
 
 // Compact − n + stepper. Eight numbered pills for the shot count was the loudest
 // row in the old dialog for the least-changed setting.

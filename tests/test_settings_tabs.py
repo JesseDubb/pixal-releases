@@ -47,7 +47,9 @@ TAB_KEYS = {
                 "/api/ram/free", "/api/desktop/reset", "local_idle_minutes",
                 "/api/settings/rescan"],
     "image": ["zimage", "edit: { model", "image_mode", "image_model",
-              "identity_finish"],
+              "image_vsr_mode", "identity_finish",
+              # 9.91: the two H3 model slots.
+              "h3: { ref_model", "h3: { fl_model"],
     "video": ["default_engine", "default_model", "video_mode", "upscale_2x",
               "video_fps", "h3_resolution"],
     "brain": ["base_url", "local_model", "local_keep", "local_gpu_layers",
@@ -116,6 +118,10 @@ class SettingsTabs(unittest.TestCase):
             "comfy_url", "comfy_editor", "comfy_console", "explicit",
             "vram_profile", "video", "critic", "vae", "edit", "upscale",
             "pid", "llm", "extra_model_roots",
+            # 1.1.4b: the still finish joined the write surface.
+            "still",
+            # 9.91: the H3 model slots joined the write surface.
+            "h3",
         }
 
 

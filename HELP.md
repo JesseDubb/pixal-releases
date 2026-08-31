@@ -251,25 +251,33 @@ Make one:
 1. Click the **new character** button in the left rail (or the "Invent a
    character" chip in an empty chat, or "new anchor…" in the composer's
    character popup). The dialog is headed "new character anchor".
-2. Fill in who they are. **name** ("Mia"), **age** ("24"), **race**
-   ("Korean"), **sex** (female / male / other), **style** — "how they read
-   at a glance", placeholder "short black bob, silver rings, oversized work
-   jackets" — and **notes** — "who they are off-camera", placeholder "barista
-   by day, queues ranked by night; hair changes daily; never poses, always
-   mid-task". As you type, the "every caption will carry" card previews the
-   exact sentence future prompts will inject.
-3. The wardrobe lock closes every caption because, in the dialog's words,
-   "the last clause is the strongest one — leave it blank for the generic
-   lock. An explicit NSFW ask lifts it." Open "customize the wardrobe lock"
-   to write your own.
-4. Set the **identity reference** — marked "(required)", and the dialog is
+2. The dialog leads with the sentence: the "every caption will carry" card
+   at the top previews the exact clause future prompts will inject, live as
+   you type. Everything below it is a way to change that sentence. The
+   wardrobe lock travels with the card — open "customize the wardrobe lock"
+   to write your own; it closes every caption because, in the dialog's
+   words, "the last clause is the strongest one — leave it blank for the
+   generic lock. An explicit NSFW ask lifts it."
+3. **identity** — "the photo decides the face — nothing typed here changes
+   it". **name** ("Mia"), **age** ("24"), **race** ("Korean"), **sex**
+   (female / male / other). Age is the honest exception: renders that wire
+   the reference take face and age from the photo itself, so the number is
+   for scenes written without one.
+4. **always true** — "only what is true in every picture — what changes shot
+   to shot belongs in the prompt". One field, **look**, with a placeholder
+   that models a good answer: "long platinum hair to her lower back,
+   manicured nails, always wears earrings".
+5. **for the writer** — "look and identity only, not jobs or lifestyle".
+   Guidance the scene writer reads, not backstory: the writer is told to
+   honour look and identity and drop jobs, homes and lifestyle unless asked.
+6. Set the **identity reference** — marked "(required)", and the dialog is
    blunt about why: "The identity source — the anchor becomes selectable
    once a face is set." Pick any image from the `ComfyUI/input` grid, or
    **upload** one. Two tools fix the photo first: **edit** ("change
    accessories, clothing or background — Identity Edit carries over
    everything in this photo, so fix it here") and **crop** ("keep only a
    region — Identity Edit sees just what you crop to").
-5. **save anchor**. Naming someone whose name is taken warns first: "saving
+7. **save anchor**. Naming someone whose name is taken warns first: "saving
    replaces the existing “…” anchor".
 
 Use one:
@@ -688,6 +696,17 @@ GB to preview what that tier honestly gets. The tip: what the machine can
 hold resident is advisory — pickers flag what a tier holds poorly; the card
 itself is still managed at render time.
 
+**H3 text encoder** — same section, one picker. "Automatic — Qwen3-VL 32B"
+is the encoder MiniMax H3 was measured with, and the option names what it
+weighs, because the row is a VRAM control. A 4B or 8B encoder with a
+ClipProj projection stands in for the 32B: several GB freed and a faster
+render, with likeness slightly less reliable. An option appears only when
+its encoder and its projection are both on disk — the 4B carries two
+projections, the 8B one, and which of them renders best is your eye's
+call. A pick whose files leave shows as missing and runs Automatic until
+they return; every H3 lane (stills, refined, and the Animate side) loads
+the same answer.
+
 **Model folders** — "Where checkpoints and LoRAs live." plus the count
 it indexed ("Found 412 files."). The list is every folder Pixal scans: your
 ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
@@ -713,6 +732,21 @@ recipe's own. The tip: a painted mask routes the edit to the masked lane;
 no mask runs the whole-frame lane. Whole-frame releases differ in encoder
 node, not just weights — the graph switches on the filename, so any
 compatible generation works.
+
+**H3 models** — two pickers, one per H3 lane. **Reference model** covers
+renders that carry a character's photo (MiniMax H3 Ref and Ref 2x);
+**First/last-frame model** covers renders that start from a frame (MiniMax
+H3 and H3 2x, and the Animate side's first/last-frame clips). Both default
+to "Automatic — <build>", and the option names the build Automatic actually
+resolves to, so the row never hides what will render: one build of a kind
+on disk is the default outright; with several, Automatic keeps the app's
+standing preference (the b30-49 hybrid for reference, stock FL2VA for
+first/last-frame). A hybrid FL2VA/REF2VA build appears in both lists
+because it carries both. Picking a build makes it the default everywhere a
+render names none — the Animate popup's own chip still wins per clip, and
+naming a model on any render wins over the slot. A pick whose file leaves
+the catalog shows as missing in the row and Automatic runs until the file
+returns. The tip explains the two lanes.
 
 **Edit speed** — there is no Settings control for this one; it lives only
 in `config.json` in the Pixal folder. `"edit": {"speed": "turbo"}` is the
@@ -1152,7 +1186,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.2b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.4b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

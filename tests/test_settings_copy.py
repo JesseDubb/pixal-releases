@@ -339,6 +339,10 @@ class SettingsCopy(unittest.TestCase):
             "comfy_url", "comfy_editor", "comfy_console", "explicit",
             "vram_profile", "video", "critic", "vae", "edit", "upscale",
             "pid", "llm", "extra_model_roots",
+            # 1.1.4b: the still finish joined the write surface.
+            "still",
+            # 9.91: the H3 model slots joined the write surface.
+            "h3",
         })
 
     def test_help_settings_section_quotes_the_new_copy(self):

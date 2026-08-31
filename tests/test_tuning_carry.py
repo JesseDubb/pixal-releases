@@ -98,14 +98,18 @@ def options_payload(entries):
 class SeatSignatureTests(unittest.TestCase):
     """seat_signature + the /api/options recipe rows (9.75)."""
 
-    def test_the_h3_trio_shares_one_signature(self):
-        still, twox, ref = (server.seat_signature(rid) for rid in
-                            ("h3_still", "h3_still_2x", "h3_ref_still"))
-        self.assertIsNotNone(still)
-        self.assertEqual(still, twox)
-        self.assertEqual(twox, ref)
-        self.assertEqual(still["class"], "KSamplerSelect")
-        self.assertEqual(still["keys"], ["steps", "sampler_name", "scheduler"])
+    def test_the_h3_stills_share_one_signature(self):
+        # Four rows since 9.84 - each lane and its 2x twin. Every one seats
+        # the FIRST pass, so all four signatures must be the same object's
+        # worth of keys; a divergence would mean a tuning carry silently
+        # dropped when the composer flipped Refined.
+        ids = ("h3_still", "h3_still_2x", "h3_ref_still", "h3_ref_still_2x")
+        sigs = [server.seat_signature(rid) for rid in ids]
+        self.assertNotIn(None, sigs)
+        for rid, sig in zip(ids[1:], sigs[1:]):
+            self.assertEqual(sigs[0], sig, rid)
+        self.assertEqual(sigs[0]["class"], "KSamplerSelect")
+        self.assertEqual(sigs[0]["keys"], ["steps", "sampler_name", "scheduler"])
 
     def test_the_krea2_stills_share_one_signature(self):
         # realism_ii's seat is a different NODE ("265" vs "30:51") but the

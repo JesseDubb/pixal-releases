@@ -1,7 +1,7 @@
 """Brief 9.60 - official prompting: the model maker's own expansion prompt
 as the writer.
 
-Six same-seed A/B pairs (2026-08-27, Desktop\\Zara Promo\\26-prompt-ab): the
+Six same-seed A/B pairs (2026-08-27, Desktop\\Pixal Renders\\zara\\2026-08-27-prompt-ab): the
 local brain running Krea's official expansion.txt verbatim as its system
 prompt beat Pixal's writer on all four Zara shots and tied on two
 plain-realism shots. llm.official_prompting (default True since 2026-08-27's product A/B; Off is byte-identical to the pre-9.60 prompts - an untouched
@@ -54,11 +54,18 @@ PIXAL_CRAFT = "ONE named light source"
 # The Off position, hashed BEFORE this branch touched anything (2026-08-27):
 # base + TURN_POLICY + enhance policy, per lane and policy. Byte-identical or
 # the toggle is not a no-op when off.
+# Re-pinned 2026-08-30 (9.80): SYSTEM_LOCAL gained the h3_ref_still template
+# line on purpose - the local lane's two hashes moved, the remote lane's are
+# untouched. The baseline is now "before the next intentional change".
+# Rehashed for 1.1.4b: SYSTEM_LOCAL's h3_ref_still line was rewritten
+# (9.80's lamps-in-frame half was retracted; the caption budget, the
+# sign rule and "write the moment" joined it), so the two local=True
+# hashes moved and the remote ones did not.
 OFF_SNAPSHOT = {
     (False, False): "6e1e350fa6c55e90b4555098ff87daa6ab69e2b9b345922c6a582ef0e46e914f",
     (False, True): "aa1e3fd0bc80a7c3c91231fb4e17b8c397d54d76a14ae39878c5ac6548d42ae0",
-    (True, False): "55afa2464c0231db771e30a9da0fd610ecba4ad8aa80bf5a02058dc217eaffb6",
-    (True, True): "9aef9f2a8fbea0b3104919995409fcbda03404c6d9c91f0444727b6565ce23cb",
+    (True, False): "584f5dfe74004653124b6144375ac164e394bf45017e0bf5b220b04597a57c96",
+    (True, True): "87557f9ca6681c1adf5ccfbd285c31fdad84928e9da20e8c149c19a667522d25",
 }
 
 

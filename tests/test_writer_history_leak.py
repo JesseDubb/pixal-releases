@@ -3,6 +3,18 @@ render. Chat 71979bcf: from turn 9 on every render was the local brain printing
 the scene as prose (no tool_calls), the server queueing it and appending the
 receipt as a user turn. local_history_view only recognised generate CHAINS, so
 seven prose scenes stayed in context and out-voted every new ask.
+
+2026-08-31: the same thing again, one step earlier. That fix keyed on the
+queue RECEIPT, so it only ever saw a prose scene the user had accepted. The
+writer prints a scene as chat on roughly one ask in six and most of those are
+never accepted, so they accumulated untouched: six asks through /api/chat left
+seven copies in context, the writer reproduced its own wardrobe verbatim in
+three unrelated scenes ("a cropped black crop top with high-waisted denim
+shorts, paired with ankle boots"), and captions went from ~70 words in
+isolation to ~150 in the product - long enough that the appended framing
+clause stopped being obeyed and three renders in a row came back full length.
+An unqueued prose scene is now dropped the same way, except the newest, which
+is what a bare "render it" accepts.
 """
 import json
 import unittest
@@ -70,6 +82,151 @@ def chat_71979bcf():
         {"role": "user", "content": queued_scene_receipt("9c0d1e2f")},
         {"role": "user", "content": "a quiet diner, counter seat, coffee"},
     ]
+
+
+def unaccepted_chat():
+    """2026-08-31's real shape: the writer answered four asks with prose and
+    the user never said go, so not one of them has a receipt."""
+    return [
+        {"role": "user", "content": "render her on a night bus, half asleep"},
+        prose_scene("the top deck of a night bus"),
+        {"role": "user", "content": "make me one in a chip shop at 2am"},
+        prose_scene("a chip shop at two in the morning"),
+        {"role": "user", "content": "shoot her on a front step at dawn"},
+        prose_scene("a front step at dawn"),
+        {"role": "user", "content": "render her in a laundrette, eating a banana"},
+    ]
+
+
+class UnqueuedProseTests(unittest.TestCase):
+    """A scene the user never accepted is still a scene."""
+
+    def test_a_fresh_ask_drops_every_unaccepted_scene(self):
+        """Not "all but the newest" - all of them. Keeping the last one was
+        measured and changed nothing: the writer reproduced the survivor word
+        for word, 148 words and the same wardrobe, in a scene that had asked
+        for neither. One copy of its own prose is enough."""
+        messages = unaccepted_chat()
+        original = json.loads(json.dumps(messages))
+
+        view = server.local_history_view(messages, 6, preserve_latest_render=False)
+        encoded = json.dumps(view)
+
+        # Every ask is conversation and stays.
+        for ask in ("night bus, half asleep", "chip shop at 2am",
+                    "front step at dawn", "laundrette, eating a banana"):
+            self.assertIn(ask, encoded)
+        # No prior scene text at all.
+        self.assertNotIn("Louis Vuitton", encoded)
+        self.assertNotIn("hourglass", encoded)
+        # The persisted conversation is never mutated.
+        self.assertEqual(messages, original)
+
+    def test_the_pending_scene_survives_the_turn_that_accepts_it(self):
+        """_pending_scene reads the unfiltered convo to decide a bare "render
+        it" has something to accept. On that turn - and only that turn - the
+        writer must still be able to see it, or the server offers to render
+        something the writer cannot read."""
+        messages = unaccepted_chat()[:-1]          # ends on the prose scene
+        self.assertTrue(server._pending_scene(messages))
+        accepting = server.local_history_view(
+            messages, len(messages), preserve_pending_scene=True)
+        self.assertIn("a front step at dawn, wearing", json.dumps(accepting))
+        # ...and not on a turn that is asking for something new.
+        fresh = server.local_history_view(
+            messages, len(messages), preserve_pending_scene=False)
+        self.assertNotIn("Louis Vuitton", json.dumps(fresh))
+
+    def test_only_an_accept_or_an_edit_keeps_the_draft(self):
+        """The crux, and the thing that made the first two attempts useless.
+
+        render_intent asks "does the user want a picture", and answers yes for
+        a brand new ask - correctly, or the tool would not be offered. Reusing
+        that test to decide whether the WRITER sees its last draft keeps the
+        draft in front of it on every single turn, and it then reproduces the
+        draft verbatim. The narrower question is whether this turn accepts the
+        draft or edits it, which is what local_iteration already answers.
+        """
+        accepts_or_edits = ("render it", "go", "show me", "yes",
+                            "make her jacket red", "make it an 80s slasher",
+                            "now a laundromat at night")
+        new_shots = ("render her in a chip shop at 2am, eating chips",
+                     "shoot her on a front step at dawn with a coffee",
+                     "render her sat on the kerb outside a house party")
+        for utext in accepts_or_edits:
+            with self.subTest(utext=utext):
+                self.assertTrue(
+                    server._AFFIRMATIVE.match(utext.strip()) or
+                    server._LOCAL_ITERATION_RE.search(utext) or
+                    server._REFERS_BACK_RE.search(utext))
+        for utext in new_shots:
+            with self.subTest(utext=utext):
+                self.assertFalse(server._AFFIRMATIVE.match(utext.strip()))
+                self.assertFalse(server._LOCAL_ITERATION_RE.search(utext))
+                self.assertFalse(server._REFERS_BACK_RE.search(utext))
+                # ...while still plainly being a render request, which is why
+                # render_intent's own test cannot be reused here.
+                self.assertTrue(server.substantive_redirect(utext))
+
+    def test_short_replies_are_conversation_and_stay(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "What are we making?"},
+            {"role": "user", "content": "something on a night bus"},
+        ]
+        view = server.local_history_view(messages, 2, preserve_latest_render=False)
+        self.assertIn("What are we making?", json.dumps(view))
+
+    def test_the_word_threshold_is_the_one_pending_scene_uses(self):
+        # Two readings of "is this a scene" that disagree would let a scene be
+        # offered for acceptance and then hidden from the writer, or kept in
+        # context forever while nothing could accept it.
+        self.assertEqual(server._PROSE_SCENE_WORDS, 30)
+        short = {"role": "assistant", "content": " ".join(["word"] * 29)}
+        long = {"role": "assistant", "content": " ".join(["word"] * 30)}
+        self.assertFalse(server._pending_scene([short]))
+        self.assertTrue(server._pending_scene([long]))
+
+    def test_a_queued_scene_and_an_unaccepted_one_both_go(self):
+        messages = [
+            {"role": "user", "content": "put her at a rooftop party"},
+            prose_scene("a rooftop party at golden hour"),
+            {"role": "user", "content": queued_scene_receipt("1a2b3c4d")},
+            {"role": "user", "content": "now a laundromat at night"},
+            prose_scene("an all-night laundromat"),
+            {"role": "user", "content": "a quiet diner, counter seat, coffee"},
+        ]
+        fresh = json.dumps(server.local_history_view(messages, 5))
+        self.assertNotIn("Louis Vuitton", fresh)
+        self.assertNotIn("queued that scene", fresh)
+        # On the turn that accepts it, the unqueued one - and only it - stays.
+        accepting = json.dumps(server.local_history_view(
+            messages, 5, preserve_pending_scene=True))
+        self.assertEqual(accepting.count("Louis Vuitton"), 1)
+        self.assertIn("an all-night laundromat", accepting)
+        self.assertNotIn("rooftop party at golden hour, wearing", accepting)
+
+
+    def test_an_older_draft_goes_when_a_newer_scene_was_accepted(self):
+        """The survivor is the PENDING scene, not merely the newest unqueued
+        one. Once a later scene has been queued, the earlier draft is what the
+        rule exists to remove."""
+        messages = [
+            {"role": "user", "content": "put her at a rooftop party"},
+            prose_scene("a rooftop party at golden hour"),
+            {"role": "user", "content": "now a laundromat at night"},
+            prose_scene("an all-night laundromat"),
+            {"role": "user", "content": queued_scene_receipt("5e6f7a8b")},
+            {"role": "user", "content": "a quiet diner, counter seat, coffee"},
+        ]
+        # Even asked to preserve the pending draft, there is none to preserve:
+        # a later scene was queued, so the rooftop draft is just an old draft.
+        encoded = json.dumps(server.local_history_view(
+            messages, 5, preserve_pending_scene=True))
+        self.assertNotIn("Louis Vuitton", encoded)
+        self.assertNotIn("queued that scene", encoded)
+        self.assertIn("put her at a rooftop party", encoded)
+        self.assertIn("a quiet diner", encoded)
 
 
 class ProseSceneRenderTests(unittest.TestCase):

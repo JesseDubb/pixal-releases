@@ -164,5 +164,70 @@ class CharacterEditingTests(unittest.TestCase):
         self.assertTrue(payload(response)["subject"])
 
 
+class NeutralWardrobeMigrationTests(unittest.TestCase):
+    """9.81: the neutral-wardrobe lane is deleted. Cards written by it load
+    and re-save without its two fields, and an identity_ref that names a
+    generated neutral frame is never reverted to the original upload."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "input").mkdir()
+        for name in ("zara_upload.png", "pixal_neutral_zara.png"):
+            (root / "input" / name).write_bytes(b"png")
+        self.chars = root / "characters"
+        patches = [patch.object(server, "CDIR", root),
+                   patch.object(server, "CHAR_DIR", self.chars),
+                   patch.object(server, "CHARACTERS", {})]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def post(self, character):
+        request = SimpleNamespace(
+            json=AsyncMock(return_value={"character": character}))
+        return asyncio.run(server.characters_post(request))
+
+    def stored(self):
+        return json.loads((self.chars / "zara.json").read_text(encoding="utf-8"))
+
+    def test_a_card_saved_with_the_old_fields_re_saves_without_them(self):
+        # The old-client shape: both dead fields arrive in the posted body.
+        response = self.post({"id": "zara", "name": "Zara", "sex": "female",
+                              "identity_ref": "zara_upload.png",
+                              "neutral_wardrobe": True,
+                              "identity_ref_original": "zara_upload.png"})
+        self.assertEqual(response.status, 200)
+        card = self.stored()
+        self.assertNotIn("neutral_wardrobe", card)
+        self.assertNotIn("identity_ref_original", card)
+
+    def test_load_ignores_the_old_fields(self):
+        self.chars.mkdir()
+        (self.chars / "zara.json").write_text(json.dumps(
+            {"id": "zara", "name": "Zara",
+             "identity_ref": "pixal_neutral_zara.png",
+             "neutral_wardrobe": True,
+             "identity_ref_original": "zara_upload.png"}), encoding="utf-8")
+        card = server.load_characters()["zara"]
+        self.assertNotIn("neutral_wardrobe", card)
+        self.assertNotIn("identity_ref_original", card)
+        self.assertEqual(card["identity_ref"], "pixal_neutral_zara.png")
+
+    def test_a_generated_neutral_identity_ref_is_kept(self):
+        # The one rewrite the migration must not do: an identity_ref naming a
+        # generated neutral frame is what every past render of the character
+        # used - reverting to the upload would change how they look.
+        response = self.post({"id": "zara", "name": "Zara", "sex": "female",
+                              "identity_ref": "pixal_neutral_zara.png",
+                              "neutral_wardrobe": False,
+                              "identity_ref_original": "zara_upload.png"})
+        self.assertEqual(response.status, 200)
+        card = self.stored()
+        self.assertEqual(card["identity_ref"], "pixal_neutral_zara.png")
+        self.assertNotIn("identity_ref_original", card)
+
+
 if __name__ == "__main__":
     unittest.main()

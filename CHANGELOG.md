@@ -1,6 +1,271 @@
 # Changelog
 
-## 1.1.2b — unreleased
+## 1.1.4b — unreleased
+
+MiniMax H3 reference stills got a night of hard measurement, and almost every
+answer turned out to be something Pixal was *adding*. This release takes those
+things out, and puts back the two that measured. It also carries everything
+from 1.1.3b, which was built but never published.
+
+**The bug that undressed people is fixed, properly this time.** On this model
+family the last clause a caption ends on is the one that decides whether the
+subject stays dressed - and the wardrobe clause was never actually last. 1.1.3b
+moved it to the end of the caption; the builder then wrapped the caption in a
+sentence of its own, so what the model read last was "nothing in the frame
+moves". At one seed, on both graph shapes, a scene that named only a hoody
+rendered the subject in underwear from the waist down. The freeze instruction
+now leads and the scene closes, so the wardrobe really is the last thing read.
+
+**H3 reference stills render one frame instead of five.** The still lane was
+driving a video model at its five-frame floor and throwing four frames away.
+With MiniMax's one-frame node and their T1 image VAE installed it now builds a
+true single-frame graph: one VAE doing both ends instead of three, no audio VAE
+loaded for audio nobody decodes, and no frame to fish out of a batch. Their
+image VAE's encoder is bit-identical to the video one, so nothing is traded for
+it. Without those two files, the graph you had before, unchanged.
+
+**Skin finish.** A 1x detail model can now run over an H3 still on its way out
+of the render - skin, hair and fabric texture added at the same size, nothing
+enlarged and nothing repainted, for a couple of seconds. It measured between
++80% and +220% more fine detail across a whole session of frames. It is a
+switch on the Image tab rather than a default, on purpose: those frames were
+also being downscaled by half afterwards, which is what buries the slightly
+uniform texture it adds, and nothing here does that. Worth turning on and
+judging at full size. Greyed out honestly when the file is not installed.
+
+**The three LoRAs that won, as switches.** digicam, GalaxyAce and relim now sit
+in the H3 still stack at 0.2 each. Each was picked by eye at full strength, and
+a third of each turned out to render a look that is none of their house styles.
+All off by default; nothing changes until you turn one on.
+
+**Hybrid H3 builds are preferred, and say what they are.** Stock ref2va is the
+degraded build - its own author documents training issues that affect quality
+even outside reference work - and an fl2va/ref2va hybrid beat it on skin
+texture, hair and fabric with identity intact on every comparison. If you have
+one, the reference still opens on it. If you pick something else, that wins.
+Hybrids no longer sit in the model list labelled as anonymous community
+finetunes.
+
+**Pixal was naming one model and loading another.** Three lanes, all found in
+one afternoon, by restarting onto the current build, asking the running app
+which model a recipe would use, and then building the render and reading what
+the sampler actually loaded.
+
+Editing said FireRed and ran Qwen 2511. The picture was right - Qwen 2511 won
+that comparison in August and is the better lane - but the panel named the one
+that lost, so anyone reading Settings to find out what made their edit was
+told the wrong thing.
+
+The plain image lane was worse. It showed as ready and listed nothing missing,
+and it could not render at all: the model it had settled on was a tiled
+upscaler's decoder weights, a file that is not a checkpoint and had no business
+in that list. Picking the lane and pressing render was the only way to find
+out.
+
+And the H3 reference still named stock ref2va in the panel while the sampler
+loaded the hybrid.
+
+Every one of them had a passing test agreeing with the bug, because the test
+was asking the code the same wrong question the panel was. What they had in
+common is the actual fault: two separate pieces of code answering "which model
+does this recipe use", written months apart, drifting. There is one answer
+now, and the panel and the sampler both read it.
+
+**H3's two lanes get their own model settings.** H3 wants different weights
+depending on the job - a reference render carries a character's photograph into
+the scene, a first/last-frame render starts from a frame you give it - and
+Pixal was choosing for you with nowhere to see the choice or change it.
+Settings has a row for each now. If only one build on your disk can serve a
+lane, that is the default. Pick another and your pick stands until you change
+it. A hybrid build does both jobs, so it appears in both rows. Each row names
+what Automatic currently resolves to rather than leaving you to guess, and a
+pick whose file you later delete says so and quietly falls back until the file
+returns.
+
+**Signs get spelled or they get cut.** Naming a sign without its words is the
+fastest way to give a picture away: "a chalkboard price sign" came back
+lettered with confident nonsense. Pixal now removes a sign from a caption when
+the caption does not say what it reads, and leaves it completely alone when it
+does. Two short words is the length that survives.
+
+**The prompt writer was taught the wrong thing about light, and has been
+corrected.** It had been told to light a subject from lamps inside the frame.
+An entire ten-shot set built that way was thrown out - including three frames
+picked as favourites an hour earlier - because a fixture in frame with the
+room gone black is a lit set, not a photograph. It now asks for ordinary light
+from out of frame and a room that stays lit. It also has a word budget, and
+knows to write the moment rather than the expression.
+
+**...and it was being told that somewhere it could not win.** The writer reads a
+block of general photo rules before it reads the ones for the recipe in hand,
+and on three points the general block said the opposite: sixty to a hundred and
+thirty words against about forty-five, one named light source against no fixture
+in the shot, and name the shoes against a frame that stops at the waist. A
+writer cannot follow a brief that argues with itself, so the three rules that
+decide this lane are now restated once, together, right after the general ones
+they overrule - and after a model maker's own prompt too, when official
+prompting is on.
+
+Asked directly, with everything else held, the writer does noticeably better on
+all three: captions came back about a quarter shorter and stopped naming lamps
+and strip lights almost entirely. Two things came out of getting there and both
+are worth writing down. Rules phrased as prohibitions - "not 60-130 words",
+"name no lamp or neon" - bought nothing at all, and one caption came back
+reading "the taxi interior glows with warm ambient light from above, but no lamp
+or bulb is visible": the writer had copied the rule into the picture as a
+negation, which this model family cannot represent. Every rule is now a thing to
+do, and a test keeps it that way. And putting the block at the very end of the
+prompt - the obvious reading of "obeys the last rule it read" - was wrong; the
+end is where the rules about *when* to render live, and a writing rule stranded
+past them is cut off from every other writing rule.
+
+**The writer was reading its own rejected drafts back to itself.** This is the
+big one, and it had been quietly spoiling every chat render for a while.
+
+When you ask for a picture, Pixal's writer occasionally answers with the scene
+written out as a chat message instead of actually rendering it. That has always
+happened, and saying "render it" queues it, so it looked harmless. It was not:
+those unrendered drafts stayed in the writer's context forever. Six asks in,
+the model was being handed seven copies of its own earlier replies - and it did
+what a language model does with seven examples in front of it. It copied them.
+It answered in prose because its last four "replies" were prose. It matched
+their length, so captions ran to a hundred and fifty words. And it reproduced
+its own wardrobe word for word - the same crop top, the same shorts, the same
+boots - in a laundrette, on a night bus and on a kerb, none of which had asked
+for any of it. At that caption length the waist-up instruction stops being
+obeyed too, so the pictures came back full length as well.
+
+Pixal already had a filter for exactly this, and it had a blind spot: it only
+recognised a written-out scene once you had ACCEPTED it. The ones you ignored -
+most of them - were invisible to it. Now they are dropped too, and the draft
+stays in view only on the turn that actually uses it: "render it" accepts it,
+"make her jacket red" edits it, and a brand new ask gets a clean slate.
+
+The same ask, before and after: a hundred and forty-eight words of recycled
+wardrobe, versus ninety-four words of the scene you actually asked for, with
+the render fired directly instead of needing a nudge. The picture went from a
+posed full-length shot in boots to someone genuinely asleep on a bus.
+
+**What is still not fixed.** Captions run around seventy to ninety words rather
+than the forty-five the lane wants, so there is more to win here. The writer
+still answers in prose sometimes, and when it does, "render it" sends that chat
+message to the sampler as-is - mood paragraph and all - which is worse than the
+failure it recovers from. Both are written up in the notes with the numbers, so
+the next pass starts from evidence.
+
+**Character references are not just accessories.** The slots beside a
+character's identity photo always took any photograph; calling them
+"accessories" hid what turned out to be the single biggest fix of that
+session. A second person in frame renders badly no matter how well she is
+described, because a description is not the identity mechanism - the wired
+photograph is. Same feature, honest label.
+
+**The ComfyUI window shows the queue.** It could tell you a render was
+sampling, but not that three more were waiting behind it, and it went quiet
+during the minutes a job spends loading weights, encoding and decoding. It now
+says how many are waiting and shows a job as working when it is alive but not
+sampling.
+
+**A guide for Claude Code.** A `CLAUDE.md` ships with the install: how to drive
+Pixal headlessly, the endpoints, and the handful of rules that were expensive
+to learn - free the card before a batch that changes checkpoint, never write
+config.json from PowerShell, put the settings in the filename.
+
+**Saved styles say which model they run on, and which one you are on.** The
+shelf listed every style with its lane, so fourteen of them read "Realism" and
+nothing told you which was the MiniMax one. Picking a style *sets* the model,
+so the model is the fact that separates one from the next - it is now what each
+row is tagged with. Tiny pills filter by family and open on the family you are
+already using, with a labelled break between each group. The other families
+stay one click away rather than being hidden: choosing a style is how you
+change model, so a shelf filtered to your current one would be a shelf you
+could never leave.
+
+**And a MiniMax style is selectable with a character picked.** It was greyed
+out. The rule it hit is the identity patch, which only Krea 2 builds carry -
+but MiniMax H3 needs no patch, because the character's photo rides H3's own
+reference input, and it was exempted from that rule everywhere except here.
+Selecting one also used to drop the character, which is the whole subject of a
+reference render. Both fixed.
+
+**Every picker shows what is selected.** The selected row was marked by
+recolouring its label and nothing else, which is invisible in a long list. It
+now fills, with an accent rail down its edge - the same treatment the pills and
+toggles in the same bar already used. Model, style, character, size: all of
+them.
+
+**"Can you do one of her..." renders it.** It used to answer with a written
+scene and ask you to say go. "Can you *make* one of her in the kitchen" fired
+immediately - one verb apart, and the difference was that "do" was not on the
+list of words that mean render, so the turn was filed as conversation and the
+render tool was withheld from it. "Do" now counts when it is followed by a
+person or a picture - one of her, one where she is, some close-ups - and stays
+conversation in front of anything else.
+
+**Drop a preset into `recipes/` and it appears.** Saved styles were read once
+at startup, so a new file, an edit, or a delete needed a restart before the app
+agreed it had happened. The folder is now checked when something asks, and a
+broken file is reported by name with the reason instead of vanishing quietly.
+
+**Skin shine removal.** Specular highlights on skin - the hot spots on
+foreheads, cheeks and chests - pulled down toward the tone around them. It only
+ever darkens, it adds no texture at all, and eyes and teeth fall outside the
+range it works in, so it leaves them alone. It costs nothing: no model file, no
+VRAM, no extra node. Off by default, on the Image tab beside the other
+finishing controls, and it runs before any upscale model rather than after.
+
+**The MiniMax text encoder is a setting.** H3 loaded a 14.6 GB text encoder
+with no way to change it. The smaller 4B and 8B encoders now stand in for it
+through their projection files, several gigabytes lighter and faster, at some
+cost to how reliably a face comes back - so it is a switch you own rather than
+a decision baked into the source. Automatic is the big one and renders exactly
+what it rendered before. An option only appears when both its files are on
+disk, and a pick whose files go missing quietly runs Automatic. It sits with
+the two H3 model slots, under MiniMax H3 on the Image tab.
+
+**A busy model provider no longer lands in the chat as raw code.** When a
+hosted brain was at capacity, the chat printed the service's own error object,
+braces and all. It now says what happened in a sentence - and, because that
+particular failure is one nobody can act on and one that clears by itself,
+Pixal waits it out and tries again before saying anything.
+
+## 1.1.3b — never published, folded into 1.1.4b
+
+Your character gets a page worth using, H3 stills stop carrying forty words that
+never did anything, and the Klein edit lane can finally reach the LoRAs sitting
+in your folder.
+
+**The character page, redesigned.** The form that defines a character was a
+stack of boxes; it is now laid out like something you would actually sit and
+fill in, with the identity photo where your eye goes first and the fields
+grouped the way you think about a person rather than the way they are stored.
+
+**Characters can carry their things.** A character can hold reference
+photographs of the objects that belong to them - a jacket, a bag, a pair of
+glasses - and H3 wires each one into the render beside their identity photo,
+every accessory with its own description. Switch one off for a single render
+without editing the character. A described object is a guess; a wired
+photograph is the object.
+
+**H3 stills stopped shouting at the model.** Every H3 still used to end with
+forty words about HDR, low noise and punchy colour - a description of what a
+phone does to a photograph after taking it. Rendered with and without, at the
+same seed, the two are the same picture: the clause was occupying the strongest
+position in the caption and doing nothing with it. It is gone. What now sits
+last is the wardrobe, which is the clause that actually matters - this model
+family will undress a subject when the last thing it reads is her body, and the
+old order had a framing note landing after the lock. That was a real bug and it
+is fixed.
+
+**The Klein edit lane takes LoRAs.** Around thirty Klein LoRAs can sit in your
+Flux folder and the masked edit lane could reach none of them, because of one
+function signature. It can now, and the Enhanced Details LoRA is offered as a
+switch on the edit popup when you have the file - at the strength that was
+measured, not the author's suggestion. Turn it on and sunglasses stop rendering
+as flat black holes with the eyes gone. Leave it off and your edits render
+exactly as they did before, to the byte.
+
+## 1.1.2b — 2026-08-28
 
 Your character sits for MiniMax H3, every render you own becomes a recipe, and
 Pixal stops running your graphics card to the edge.

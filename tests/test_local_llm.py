@@ -379,6 +379,42 @@ class ConversationIntentTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(text=text):
                 self.assertTrue(server.user_wants_render(text))
 
+    def test_do_one_of_her_is_a_render_not_a_conversation(self):
+        """Jesse's own phrasings, 2026-08-31: "these are all things I could
+        and would write". "can you MAKE one of her in the kitchen" rendered
+        while "can you DO one of her taking a selfie" answered with a scene
+        and "say go" - one verb apart, and he was retyping go all session."""
+        for text in ("can you do one of her taking a selfie in the bathroom "
+                     "with a white top and jean shorts",
+                     "Can you do some close up real selfies?",
+                     "can you do one where she is sitting on the counter",
+                     "can you do a couple of her in the kitchen",
+                     "could you do another one of her outside",
+                     "can you do 3 of her in the bathroom",
+                     "do one of her at the beach",
+                     "I want to see her in a red dress",
+                     "make a ultra real photo of her in the kitchen",
+                     "can you change her outfit",
+                     "can you change her hair style",
+                     "can you make her sitting down"):
+            with self.subTest(text=text):
+                self.assertTrue(server.user_wants_render(
+                    text, has_visual_context=True))
+
+    def test_do_a_thing_that_is_not_a_picture_never_renders(self):
+        """"do" earns its place only in front of a person or a picture. It is
+        the one rendering verb that also heads product asks, so a bare count
+        ("do a release build") must stay conversation - a false positive here
+        spends the GPU."""
+        for text in ("can you do that faster", "can you do this again",
+                     "can you do a release build",
+                     "can you do some work on the changelog",
+                     "can you do some of the settings under minimax",
+                     "what do you think"):
+            with self.subTest(text=text):
+                self.assertFalse(server.user_wants_render(
+                    text, has_visual_context=True))
+
     def test_unknown_status_statements_never_render(self):
         for text in ("The weather is nice today", "My coffee is cold",
                      "I closed your window by accident",

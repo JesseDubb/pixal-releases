@@ -1,0 +1,1256 @@
+{
+ "h3_i2v": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 1
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "VAEDecodeAudio",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "4",
+     0
+    ]
+   }
+  },
+  "14": {
+   "class_type": "VHS_VideoCombine",
+   "inputs": {
+    "audio": [
+     "13",
+     0
+    ],
+    "crf": 14,
+    "filename_prefix": "pixal_dm/h3_she_turns_audio_generate",
+    "format": "video/h264-mp4",
+    "frame_rate": 24,
+    "images": [
+     "12",
+     0
+    ],
+    "loop_count": 0,
+    "pingpong": false,
+    "pix_fmt": "yuv420p",
+    "save_output": true
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "prepared.png"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "first_frame": [
+     "5",
+     0
+    ],
+    "height": 768,
+    "length": 124,
+    "prompt": "She turns.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1344
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "res_multistep"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "h3:sla",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "h3:sla",
+     0
+    ]
+   }
+  },
+  "h3:sla": {
+   "class_type": "H3SLAAttention",
+   "inputs": {
+    "block_size": "64",
+    "model": [
+     "1",
+     0
+    ],
+    "sparsity_ratio": 0.9
+   }
+  }
+ },
+ "h3_multishot": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "prepared.png"
+   }
+  },
+  "6": {
+   "class_type": "H3MultishotMemorySampler",
+   "inputs": {
+    "anchor_frames": 1,
+    "audio_vae": [
+     "4",
+     0
+    ],
+    "clip": [
+     "2",
+     0
+    ],
+    "frames_per_shot": 124,
+    "height": 768,
+    "memory_frames": 2,
+    "model": [
+     "h3:sla",
+     0
+    ],
+    "sampler_name": "res_multistep",
+    "scheduler": "simple",
+    "script": "One.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A\n---\nTwo.\n\nAudio: Generate synchronized ambience and action sounds that match the visible scene. Preserve any quoted dialogue exactly with matching mouth articulation; when no dialogue is quoted, do not invent speech.\nAll speech must BEGIN and FINISH inside the clip, with the final word completed before the last second of the duration; never let a line still be running when the clip ends.\n\nnon_diegetic_music: N/A",
+    "seed": 1,
+    "seed_per_shot": true,
+    "shot_count": 2,
+    "start_image": [
+     "5",
+     0
+    ],
+    "steps": 20,
+    "video_vae": [
+     "3",
+     0
+    ],
+    "width": 1344
+   }
+  },
+  "7": {
+   "class_type": "VHS_VideoCombine",
+   "inputs": {
+    "audio": [
+     "6",
+     1
+    ],
+    "crf": 14,
+    "filename_prefix": "pixal_dm/h3_multishot_one",
+    "format": "video/h264-mp4",
+    "frame_rate": 24,
+    "images": [
+     "6",
+     0
+    ],
+    "loop_count": 0,
+    "pingpong": false,
+    "pix_fmt": "yuv420p",
+    "save_output": true
+   }
+  },
+  "h3:sla": {
+   "class_type": "H3SLAAttention",
+   "inputs": {
+    "block_size": "64",
+    "model": [
+     "1",
+     0
+    ],
+    "sparsity_ratio": 0.9
+   }
+  }
+ },
+ "h3_ref2v": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 1
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "VAEDecodeAudio",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "4",
+     0
+    ]
+   }
+  },
+  "14": {
+   "class_type": "VHS_VideoCombine",
+   "inputs": {
+    "audio": [
+     "13",
+     0
+    ],
+    "crf": 14,
+    "filename_prefix": "pixal_dm/h3_ref_she_browses_the_shelf",
+    "format": "video/h264-mp4",
+    "frame_rate": 24,
+    "images": [
+     "12",
+     0
+    ],
+    "loop_count": 0,
+    "pingpong": false,
+    "pix_fmt": "yuv420p",
+    "save_output": true
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "ref0.png"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ReferenceToVideo",
+   "inputs": {
+    "audio_vae": [
+     "4",
+     0
+    ],
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 768,
+    "length": 124,
+    "prompt": "She browses the shelf.",
+    "ref_image_size": "match",
+    "ref_images.ref_image_0": [
+     "5",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1344
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "res_multistep"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "h3:sla",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "h3:sla",
+     0
+    ]
+   }
+  },
+  "h3:sla": {
+   "class_type": "H3SLAAttention",
+   "inputs": {
+    "block_size": "64",
+    "model": [
+     "1",
+     0
+    ],
+    "sparsity_ratio": 0.9
+   }
+  }
+ },
+ "h3_ref_still": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424242
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "14": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/a_red_barn_at_dusk",
+    "images": [
+     "12",
+     0
+    ]
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_t1_image_vae_step1597.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "mia.png"
+   }
+  },
+  "6": {
+   "class_type": "MM1FrameMiniMaxH3ReferenceToImage",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 2048,
+    "prompt": "subject_definitions:\n<Subject 1> is the person in <Picture 1>.\n\nsummary:\n[reference generation] The target video carries <Subject 1> into a new scene.\n\nretention_analysis:\n<Subject 1>: fully_preserved - the features named in subject_definitions are retained.\n\ndetailed_description:\nThe target video is in realistic photographic style.\n[Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. She is a Korean woman. Silver pixie cut, lean runner's build. A red barn at dusk. Framed waist-up. She is fully dressed in the clothing described above.\n\noverall_soundscape:\nRoom tone, steady, synchronized.\n\nnon_diegetic_music:\nN/A",
+    "ref_image_size": "match",
+    "ref_images.ref_image_0": [
+     "5",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1536
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "dpmpp_sde_gpu"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  }
+ },
+ "h3_ref_still_2x": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424242
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "ImageFromBatch",
+   "inputs": {
+    "batch_index": 0,
+    "image": [
+     "up:decode",
+     0
+    ],
+    "length": 1
+   }
+  },
+  "14": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/a_red_barn_at_dusk",
+    "images": [
+     "13",
+     0
+    ]
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "mia.png"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ReferenceToVideo",
+   "inputs": {
+    "audio_vae": [
+     "4",
+     0
+    ],
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 2048,
+    "length": 5,
+    "prompt": "subject_definitions:\n<Subject 1> is the person in <Picture 1>.\n\nsummary:\n[reference generation] The target video carries <Subject 1> into a new scene.\n\nretention_analysis:\n<Subject 1>: fully_preserved - the features named in subject_definitions are retained.\n\ndetailed_description:\nThe target video is in realistic photographic style.\n[Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. She is a Korean woman. Silver pixie cut, lean runner's build. A red barn at dusk. Framed waist-up. She is fully dressed in the clothing described above.\n\noverall_soundscape:\nRoom tone, steady, synchronized.\n\nnon_diegetic_music:\nN/A",
+    "ref_image_size": "match",
+    "ref_images.ref_image_0": [
+     "5",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1536
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "dpmpp_sde_gpu"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  },
+  "up:cond": {
+   "class_type": "MiniMaxH3ReferenceToVideo",
+   "inputs": {
+    "audio_vae": [
+     "4",
+     0
+    ],
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 4096,
+    "length": 5,
+    "prompt": "subject_definitions:\n<Subject 1> is the person in <Picture 1>.\n\nsummary:\n[reference generation] The target video carries <Subject 1> into a new scene.\n\nretention_analysis:\n<Subject 1>: fully_preserved - the features named in subject_definitions are retained.\n\ndetailed_description:\nThe target video is in realistic photographic style.\n[Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. She is a Korean woman. Silver pixie cut, lean runner's build. A red barn at dusk. Framed waist-up. She is fully dressed in the clothing described above.\n\noverall_soundscape:\nRoom tone, steady, synchronized.\n\nnon_diegetic_music:\nN/A",
+    "ref_image_size": "match",
+    "ref_images.ref_image_0": [
+     "5",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 3072
+   }
+  },
+  "up:decode": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "up:sample",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "up:noise": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424243
+   }
+  },
+  "up:param": {
+   "class_type": "MMH3LatentUpscaleWithModelParams",
+   "inputs": {
+    "device": "cuda",
+    "height": 4096,
+    "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+    "precision": "bf16",
+    "width": 3072
+   }
+  },
+  "up:sample": {
+   "class_type": "MMH3UltimateUpscale",
+   "inputs": {
+    "cfg": 1.0,
+    "conditioning": [
+     "up:cond",
+     0
+    ],
+    "latent": [
+     "11",
+     0
+    ],
+    "latent_upscale_param": [
+     "up:param",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ],
+    "noise": [
+     "up:noise",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "up:sigmas",
+     0
+    ],
+    "spatial_split_param": [
+     "up:tiles",
+     0
+    ]
+   }
+  },
+  "up:sigmas": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 0.22,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 6
+   }
+  },
+  "up:tiles": {
+   "class_type": "MMH3SpatialSplitParams",
+   "inputs": {
+    "fade_height": 224,
+    "fade_width": 224,
+    "min_tile_size": 256,
+    "overlap_blend": "smoothstep",
+    "overlap_mode": "earlier",
+    "spatial_h_overlap": 256,
+    "spatial_w_overlap": 256,
+    "tile_height": 896,
+    "tile_width": 960
+   }
+  }
+ },
+ "h3_still": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424242
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "ImageFromBatch",
+   "inputs": {
+    "batch_index": 0,
+    "image": [
+     "12",
+     0
+    ],
+    "length": 1
+   }
+  },
+  "14": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/a_red_barn_at_dusk",
+    "images": [
+     "13",
+     0
+    ]
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 2048,
+    "length": 5,
+    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. A red barn at dusk. She is fully dressed in the clothing described above.\n\noverall_soundscape: Room tone, steady, synchronized.",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1536
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "dpmpp_sde_gpu"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  }
+ },
+ "h3_still_2x": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "10": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424242
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "guider": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "6",
+     1
+    ],
+    "noise": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "8",
+     0
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "ImageFromBatch",
+   "inputs": {
+    "batch_index": 0,
+    "image": [
+     "up:decode",
+     0
+    ],
+    "length": 1
+   }
+  },
+  "14": {
+   "class_type": "SaveImage",
+   "inputs": {
+    "filename_prefix": "pixal_dm/a_red_barn_at_dusk",
+    "images": [
+     "13",
+     0
+    ]
+   }
+  },
+  "2": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "device": "default",
+    "type": "minimax"
+   }
+  },
+  "3": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "MiniMax-H3\\minimax_h3_video_vae_fp16.safetensors"
+   }
+  },
+  "6": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 2048,
+    "length": 5,
+    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. A red barn at dusk. She is fully dressed in the clothing described above.\n\noverall_soundscape: Room tone, steady, synchronized.",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 1536
+   }
+  },
+  "7": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "dpmpp_sde_gpu"
+   }
+  },
+  "8": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 1.0,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 20
+   }
+  },
+  "9": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "conditioning": [
+     "6",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ]
+   }
+  },
+  "up:cond": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "2",
+     0
+    ],
+    "height": 4096,
+    "length": 5,
+    "prompt": "integrated_multimodal_description: [Shot 1] Live-action, a frozen instant held completely still - the subject holds the pose and nothing in the frame moves. A red barn at dusk. She is fully dressed in the clothing described above.\n\noverall_soundscape: Room tone, steady, synchronized.",
+    "vae": [
+     "3",
+     0
+    ],
+    "width": 3072
+   }
+  },
+  "up:decode": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "up:sample",
+     0
+    ],
+    "vae": [
+     "3",
+     0
+    ]
+   }
+  },
+  "up:noise": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 424243
+   }
+  },
+  "up:param": {
+   "class_type": "MMH3LatentUpscaleWithModelParams",
+   "inputs": {
+    "device": "cuda",
+    "height": 4096,
+    "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+    "precision": "bf16",
+    "width": 3072
+   }
+  },
+  "up:sample": {
+   "class_type": "MMH3UltimateUpscale",
+   "inputs": {
+    "cfg": 1.0,
+    "conditioning": [
+     "up:cond",
+     0
+    ],
+    "latent": [
+     "11",
+     0
+    ],
+    "latent_upscale_param": [
+     "up:param",
+     0
+    ],
+    "model": [
+     "1",
+     0
+    ],
+    "noise": [
+     "up:noise",
+     0
+    ],
+    "sampler": [
+     "7",
+     0
+    ],
+    "sigmas": [
+     "up:sigmas",
+     0
+    ],
+    "spatial_split_param": [
+     "up:tiles",
+     0
+    ]
+   }
+  },
+  "up:sigmas": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "denoise": 0.22,
+    "model": [
+     "1",
+     0
+    ],
+    "scheduler": "beta",
+    "steps": 6
+   }
+  },
+  "up:tiles": {
+   "class_type": "MMH3SpatialSplitParams",
+   "inputs": {
+    "fade_height": 224,
+    "fade_width": 224,
+    "min_tile_size": 256,
+    "overlap_blend": "smoothstep",
+    "overlap_mode": "earlier",
+    "spatial_h_overlap": 256,
+    "spatial_w_overlap": 256,
+    "tile_height": 896,
+    "tile_width": 960
+   }
+  }
+ }
+}

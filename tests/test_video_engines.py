@@ -2308,7 +2308,11 @@ class ClipFrameRateTests(unittest.TestCase):
         self.assertEqual(graph["uv:decimate"]["class_type"],
                          "VHS_SelectEveryNthImage")
         self.assertEqual(graph["uv:decimate"]["inputs"],
-                         {"images": ["uv:rife", 0], "select_every_nth": 4})
+                         {"images": ["uv:rife", 0], "select_every_nth": 4,
+                          # required by the installed VHS build - omitting it
+                          # failed validation at queue time, which broke every
+                          # rate that is not a whole multiple of 24 (30 and 60).
+                          "skip_first_images": 0})
         # interpolate at the SMALL size, then enlarge.
         self.assertEqual(graph["uv:vsr"]["inputs"]["images"],
                          ["uv:decimate", 0])

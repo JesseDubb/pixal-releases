@@ -22,7 +22,9 @@ export const prettyTemplate = (t) => ({
   h3_i2v: "MiniMax H3",
   h3_multishot: "MiniMax H3 Multishot",
   h3_still: "MiniMax H3",
+  h3_still_2x: "MiniMax H3 2x",
   h3_ref_still: "MiniMax H3 Ref",
+  h3_ref_still_2x: "MiniMax H3 Ref 2x",
   vl_review: "review",
 }[t] || String(t || "").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 

@@ -32,6 +32,7 @@ CALLSITE_FILES = [
     WEB / "components" / "SettingsMenu.jsx",
     WEB / "components" / "MotionDirector.jsx",
     WEB / "components" / "Composer.jsx",
+    WEB / "components" / "CharacterForm.jsx",
 ]
 CALLSITES = {p.name: p.read_text(encoding="utf-8") for p in CALLSITE_FILES}
 
@@ -174,10 +175,15 @@ class OneOptionKey(unittest.TestCase):
         # the dropdown names that choice now), plus the 9.46 brain-idle row
         # and the 9.53 frame-rate row on the clip finisher, plus 9.55's two
         # Resolution rows (the Animate fold's and the Settings default), plus
-        # 9.60's official-prompting row on the Brain tab.
+        # 9.60's official-prompting row on the Brain tab, plus the 9.79 VSR
+        # quality row under the still upscaler, plus the 9.82
+        # character-anchor sex row, plus 1.1.4b's skin-finish row on
+        # the Image tab, plus 9.93's shine-removal row beside it.
         total = sum(text.count("<SegmentedControl")
                     for text in CALLSITES.values())
-        self.assertEqual(total, 27,
+        total = sum(text.count("<SegmentedControl")
+                    for text in CALLSITES.values())
+        self.assertEqual(total, 31,
                          "call sites drifted from the 9.23b census")
 
 

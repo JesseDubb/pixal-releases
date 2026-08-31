@@ -295,6 +295,14 @@ class StandardGraphUnchangedTests(unittest.TestCase):
             (root / "input").mkdir()
             (root / "input" / "prepared.png").write_bytes(b"prepared")
             with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config", return_value={
+                     # 9.94: the encoder resolver reads config, and this
+                     # kind-blind asset stub would resolve a real pick -
+                     # pin Automatic or the machine's own settings decide
+                     # what "the fixture" means.
+                     "h3": {"ref_model": "", "fl_model": "",
+                            "text_encoder": ""},
+                     "extra_model_roots": []}), \
                  patch.object(server, "_video_asset",
                               side_effect=all_video_assets):
                 return server.build_h3_i2v(

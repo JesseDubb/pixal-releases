@@ -218,6 +218,51 @@ const editLaneOptions = (list, detectedGb, group) => (list || []).map((e) => {
     ...(group ? { group } : {}),
   };
 });
+// 9.91: one H3 slot's picker options. "Automatic" leads and names what it
+// currently resolves to - the row never hides the actual answer, because
+// naming one build while loading another is the bug these rows exist to
+// end. The installed candidates follow, a hybrid in both rows. A pick
+// whose file left the catalog stays listed, marked as missing: the render
+// lanes run Automatic over it, and the row says so rather than silently
+// showing a name that does nothing.
+const h3LaneOptions = (h3, lane) => {
+  const side = (h3 && h3[lane]) || {};
+  const stored = (h3 && h3[lane === "ref" ? "ref_model" : "fl_model"]) || "";
+  const resolved = side.resolved;
+  const options = [{
+    id: "",
+    label: resolved ? `Automatic — ${resolved.label}` : "Automatic",
+  }];
+  (side.options || []).forEach((o) => options.push({ id: o.rel, label: o.label }));
+  if (side.stale && stored) {
+    const stem = stored.split("\\").pop().replace(/\.safetensors$/i, "");
+    options.push({ id: stored, label: `${stem} — missing, running Automatic` });
+  }
+  return options;
+};
+// 9.94: the H3 text encoder row's picker options, the 9.91 shape. Automatic
+// leads and names the 32B it resolves to - with what it weighs, because the
+// row is a VRAM control and the size is the point, not decoration. The
+// offerable pairs follow (the payload only lists a pair when BOTH its files
+// resolve), each naming its own cost. A pick whose files left stays listed,
+// marked as missing: the render lanes run Automatic over it, and the row
+// says so rather than silently showing a name that does nothing.
+const h3EncoderOptions = (h3) => {
+  const row = (h3 && h3.encoder) || {};
+  const stored = (h3 && h3.text_encoder) || "";
+  const gb = (size) => (size ? ` · ${(size / 1e9).toFixed(1)} GB` : "");
+  const auto = row.automatic || {};
+  const options = [{
+    id: "",
+    label: `Automatic — ${auto.label || "Qwen3-VL 32B"}${gb(auto.size)}`,
+  }];
+  (row.options || []).forEach((o) =>
+    options.push({ id: o.id, label: `${o.label}${gb(o.size)}` }));
+  if (row.stale && stored) {
+    options.push({ id: stored, label: `${stored} — missing, running Automatic` });
+  }
+  return options;
+};
 
 const PickRow = ({ selected, onClick, children, title }) => (
   <button type="button" onClick={onClick} title={title}
@@ -530,6 +575,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [vae, setVae] = useState(null);
   const [pidCfg, setPidCfg] = useState(null);
   const [videoCfg, setVideoCfg] = useState(null);
+  const [stillCfg, setStillCfg] = useState(null);
+  const [h3Cfg, setH3Cfg] = useState(null);
   const [comfyEditor, setComfyEditor] = useState(false);
   const [comfyConsole, setComfyConsole] = useState("tui");
   const [explicit, setExplicit] = useState("auto");
@@ -589,6 +636,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       setVae(d.vae || null);
       setPidCfg(d.pid || null);
       setVideoCfg(d.video || null);
+      setStillCfg(d.still || null);
+      setH3Cfg(d.h3 || null);
       setRoots(d.model_roots);
       setExtraRoots(d.extra_model_roots);
       setComfyUrl(d.comfy_url || "");
@@ -1378,8 +1427,143 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Field>
           </>)}
         </Section>
+        <Section title={<>MiniMax H3 <InfoTip text="H3 has two lanes and they take different builds. Reference renders carry a character's photo into the scene; first/last-frame renders start from a frame. Automatic is the lane's only build, or the preferred one when several are on disk. A hybrid build appears in both rows because it carries both — and a pick whose file leaves the catalog runs Automatic until the file returns. The Animate popup's own chip still wins per clip; these rows answer every render that names no build." /></>}>
+          {/* 9.91: Settings owns which H3 build a lane renders with when
+              the render names none - the options payload and the sampler
+              read the one resolver, so they cannot name one build and load
+              another (three instances in one afternoon). The Automatic
+              option's label names what Automatic resolves to - the row
+              never hides the actual answer, which is the bug this exists
+              to end. No gloss and no hints on purpose: the panel's
+              visible-word budget (tests/test_settings_copy.py) sat at
+              149/150, so the lane facts live in the tip and the state
+              lives in the control values - a stale pick shows itself as
+              "missing, running Automatic" in its own row. */}
+          {h3Cfg ? (<>
+            <Field className="px-ghost-in" label="Reference model">
+              <Picker label="Reference model"
+                value={h3Cfg.ref_model || ""}
+                placeholder="Automatic"
+                options={h3LaneOptions(h3Cfg, "ref")}
+                onChange={(name) => {
+                  setH3Cfg({ ...h3Cfg, ref_model: name });
+                  apply({ h3: { ref_model: name } },
+                        name ? "reference model applied" : "back to automatic");
+                }} />
+            </Field>
+            <Field className="px-ghost-in" label="First/last-frame model">
+              <Picker label="First/last-frame model"
+                value={h3Cfg.fl_model || ""}
+                placeholder="Automatic"
+                options={h3LaneOptions(h3Cfg, "fl")}
+                onChange={(name) => {
+                  setH3Cfg({ ...h3Cfg, fl_model: name });
+                  apply({ h3: { fl_model: name } },
+                        name ? "first/last-frame model applied" : "back to automatic");
+                }} />
+            </Field>
+            {/* 9.94, seated here rather than under VRAM optimizations
+                (Jesse, 2026-08-31: "I want the option in settings under
+                minimax"). The two rows above answer WHICH BUILD and this
+                answers WHICH ENCODER, but all three answer the same
+                question - what an H3 render loads - and nobody hunting for
+                a MiniMax setting looks in a global VRAM list. Pickers, not
+                segmented rows, so the two-row rule in
+                tests/test_settings_tabs.py does not apply; the move is
+                word-neutral against the panel's 150-word budget. */}
+            <Field className="px-ghost-in" label={<>Text encoder <InfoTip size={12} text="The 32B encoder is the one MiniMax H3 was measured with. A 4B or 8B encoder with a ClipProj projection stands in for it: several GB freed and a faster render, and likeness is slightly less reliable with it. Automatic is the 32B. An option appears only when its encoder and its projection are both on disk; a pick whose files leave runs Automatic until they return." /></>}>
+              <Picker label="Text encoder"
+                value={h3Cfg.text_encoder || ""}
+                placeholder="Automatic"
+                options={h3EncoderOptions(h3Cfg)}
+                onChange={(id) => {
+                  setH3Cfg({ ...h3Cfg, text_encoder: id });
+                  apply({ h3: { text_encoder: id } },
+                        id ? "text encoder applied" : "back to automatic");
+                }} />
+            </Field>
+          </>) : (<>
+            {/* the edit pickers' ghost shape: two 28px bars, the shared
+                trigger's own height, so nothing below moves on land */}
+            <Field label="Reference model">
+              <Bar h={28} />
+            </Field>
+            <Field label="First/last-frame model">
+              <Bar h={28} />
+            </Field>
+            <Field label="Text encoder">
+              <Bar h={28} />
+            </Field>
+          </>)}
+        </Section>
         <GroupLabel>finishing</GroupLabel>
-        <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model mode upscales the frame it already made; PiD mode repaints it tile by tile with NVIDIA's pixel-diffusion decoder. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
+        {/* 1.1.4b. Unlike the Upscaler below it this is not a button on a
+            finished frame - it runs inside the render, between the decode
+            and the save, so it belongs to the render's settings. On by
+            default when the file is there: it measured +80% to +220% fine
+            detail across a whole session, costs a couple of seconds, needs
+            no VRAM headroom and changes no dimension. */}
+        <Section title={<>Skin finish <InfoTip text="A 1× detail model run over MiniMax H3 stills on their way out of the render. It adds skin, hair and fabric texture at the same size — nothing is enlarged or repainted. Measured +80% to +220% fine detail, and costs a couple of seconds. Greyed out until 1x-ITF-SkinDiffDetail-Lite-v1.pth is in ComfyUI/models/upscale_models." /></>}>
+          {/* No gloss and no hint: the whole screen has a 150-word visible-
+              prose budget, so the tip carries what it needs to say and the
+              two option titles carry the disabled reason on hover. */}
+          {stillCfg ? (
+            <>
+            <Field className="px-ghost-in">
+              <SegmentedControl ariaLabel="Skin finish"
+                value={stillCfg.skin_finish ? "on" : "off"}
+                onChange={(id) => {
+                  const on = id === "on";
+                  setStillCfg((s) => ({ ...(s || {}), skin_finish: on }));
+                  apply({ still: { skin_finish: on } },
+                        on ? "skin finish on" : "skin finish off");
+                }}
+                options={[
+                  { v: "off", label: "Off",
+                    disabled: !stillCfg.skin_finish_available,
+                    title: stillCfg.skin_finish_available
+                      ? "The decode as the model rendered it."
+                      : `Needs ${stillCfg.skin_finish_model} in upscale_models.` },
+                  { v: "on", label: "On",
+                    disabled: !stillCfg.skin_finish_available,
+                    title: stillCfg.skin_finish_available
+                      ? "Texture added at the same size, inside the render."
+                      : `Needs ${stillCfg.skin_finish_model} in upscale_models.` },
+                ]} />
+            </Field>
+            {/* 9.93: "AI Skin Shine Removal". The brief asked for beside
+                the upscale-model selection; DESIGN.md's two-segmented-rows
+                rule already seats mode + VSR quality in the Upscaler
+                section, so the row lives here - the same finishing group,
+                the only section with headroom. No availability gate: numpy
+                on the delivered frame, nothing to install. Label + tip,
+                no gloss and no hint - the budget sat at 149/150
+                (tests/test_settings_copy.py). */}
+            <Field className="px-ghost-in" label={<>shine removal <InfoTip size={12} text="Lowers specular highlights on skin toward the tone around them — the shiny hotspots on foreheads, cheeks and chests. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
+              <SegmentedControl ariaLabel="Shine removal"
+                value={stillCfg.de_shine ? "on" : "off"}
+                onChange={(id) => {
+                  const on = id === "on";
+                  setStillCfg((s) => ({ ...(s || {}), de_shine: on }));
+                  apply({ still: { de_shine: on } },
+                        on ? "shine removal on" : "shine removal off");
+                }}
+                options={[
+                  { v: "off", label: "Off",
+                    title: "The frame as the render delivered it." },
+                  { v: "on", label: "On",
+                    title: "Specular highlights pulled toward local skin tone." },
+                ]} />
+            </Field>
+            </>
+          ) : (
+            <>
+              <SegGhost segments={2} />
+              <SegGhost segments={2} />
+            </>
+          )}
+        </Section>
+        <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model is faithful and invents nothing. PiD repaints tile by tile and invents texture. VSR reconstructs detail in about five seconds. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
                  gloss={upscale ? (
                    <span className="px-ghost-in">{`Model upscales; PiD repaints. ${(upscale.installed || []).length} installed.`}</span>
                  ) : (
@@ -1391,15 +1575,21 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                      hint={(upscale.image_mode || "model") === "pid"
                        ? "Invents texture; first use downloads it. " +
                          "Non-commercial license."
-                       : upscale.pid_available === false
-                         ? "Install the ComfyUI-PiD node pack for PiD."
-                         : undefined}>
+                       : (upscale.image_mode || "model") === "vsr"
+                         ? "Reconstructs detail; about five seconds."
+                         : upscale.pid_available === false
+                           ? "Install the ComfyUI-PiD node pack for PiD."
+                           : upscale.vsr_available === false
+                             ? "Install the Deno RTX VFX node pack."
+                             : undefined}>
                 <SegmentedControl ariaLabel="Image upscale mode"
                   value={upscale.image_mode || "model"}
                   onChange={(m) => {
                     setUpscale({ ...upscale, image_mode: m });
                     apply({ upscale: { image_mode: m } },
-                          m === "pid" ? "PiD upscaler applied" : "model upscaler applied");
+                          m === "pid" ? "PiD upscaler applied"
+                            : m === "vsr" ? "VSR upscaler applied"
+                            : "model upscaler applied");
                   }}
                   options={[
                     { v: "model", label: "Upscale" },
@@ -1407,12 +1597,16 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       disabled: upscale.pid_available === false,
                       title: upscale.pid_available === false
                         ? "install the ComfyUI-PiD node pack" : undefined },
+                    { v: "vsr", label: "VSR", Icon: NvidiaAccent,
+                      disabled: upscale.vsr_available === false,
+                      title: upscale.vsr_available === false
+                        ? "install the Deno RTX VFX node pack" : undefined },
                   ]} />
               </Field>
-              {/* PiD never reads image_model - build_upscale_image returns
-                  before it does - so offering an ESRGAN pick in PiD mode is
-                  a control that does nothing. */}
-              {(upscale.image_mode || "model") !== "pid" && (
+              {/* PiD and VSR never read image_model - build_upscale_image
+                  returns before it does - so offering an ESRGAN pick in
+                  those modes is a control that does nothing. */}
+              {(upscale.image_mode || "model") === "model" && (
               <Field className="px-ghost-in" sub label="upscale model">
               <ScrollPicker
                 value={upscale.image_model || ""}
@@ -1430,6 +1624,21 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 }} />
               </Field>
               )}
+              {/* VSR's own tier (9.79) - the same four the clip lane offers,
+                  stored under its own key so a still preference never drags
+                  the clip setting around. */}
+              {(upscale.image_mode || "model") === "vsr" && (
+              <Field className="px-ghost-in" sub label="quality">
+                <SegmentedControl ariaLabel="VSR quality"
+                  value={upscale.image_vsr_mode || "VSR Ultra"}
+                  onChange={(m) => {
+                    setUpscale({ ...upscale, image_vsr_mode: m });
+                    apply({ upscale: { image_vsr_mode: m } },
+                          "still quality applied");
+                  }}
+                  options={(upscale.vsr_tiers || []).map((m) => ({ v: m, label: m.replace("VSR ", "") }))} />
+              </Field>
+              )}
             </>
           ) : (
             <>
@@ -1438,7 +1647,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   one-time shrink is the stored setting correcting itself,
                   not a load reflow) */}
               <Field label="still frames">
-                <SegGhost segments={2} />
+                <SegGhost segments={3} />
               </Field>
               <Field sub label="upscale model">
                 <PickerGhost />

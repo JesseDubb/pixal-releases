@@ -359,6 +359,7 @@ class Boot:
         self.last_render = ""
         self.port_ok = None
         self.gpu = None                   # (used_mb, total_mb, util, temp)
+        self.queue = None                 # (running, pending) from /queue
         self._held = None                 # the sampler bar's newest frame
 
     # -- boot geometry ----------------------------------------------------
@@ -717,6 +718,23 @@ class Telemetry(threading.Thread):
                 self.state.port_ok = False
             if self.state.port_ok and not self.state.up:
                 self.state.mark_up()
+            # The queue, on the same two-second beat. The sampler bar is
+            # parsed out of the log and only ever describes the job on the
+            # card; the depth behind it is only visible here, and "is it
+            # stuck or is it fourth in line" is the question this window
+            # exists to answer. None (not zero) while the port is down, so
+            # an unreachable ComfyUI never draws an empty queue.
+            self.state.queue = self._queue() if self.state.port_ok else None
+
+    def _queue(self):
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{self.url}/queue", timeout=3) as r:
+                body = json.loads(r.read().decode("utf-8", "replace"))
+            return (len(body.get("queue_running") or []),
+                    len(body.get("queue_pending") or []))
+        except Exception:
+            return None
 
     @staticmethod
     def _card():
@@ -842,16 +860,43 @@ def compose(state, width, height, paths, confirm_quit):
             rgb("  ·  ", DIM) + rgb("port " + port, tint),
             rgb(f"{state.renders} renders", MUTE))
         row("")
+        # The depth behind whatever is on the card, right-aligned so it sits
+        # in one column whichever of the three states below is drawing.
+        waiting = state.queue[1] if state.queue else 0
+        behind = rgb(f"{waiting} waiting", WARN if waiting else DIM) if waiting             else ""
         if state.sampling and time.monotonic() - state.sampling_at < 20:
             pct, done, total, eta, rate = state.sampling
+            # "+3", not "3 waiting": this is the busiest line in the window
+            # and the depth must not cost the step counter its digits.
             pace = f"{rate}  eta {eta}"
-            row(rgb(spin + " sampling  ", ACCENT) +
-                bar(pct / 100, max(10, panel - 26 - len(pace))) +
-                rgb(f"  {done}/{total}", TEXT), rgb(pace, DIM))
+            tail = f"  +{waiting}" if waiting else ""
+            right = rgb(pace, DIM) + rgb(tail, WARN)
+            head = spin + " sampling  "
+            count = f"  {done}/{total}"
+            # The bar is sized from what row() will ACTUALLY allow, never
+            # from a constant. row() clips the left text to
+            # `panel - 4 - right`, so a bar sized against a different number
+            # overflows that budget and clip_ansi eats the END of the line -
+            # which is the step count. That is how "16/20" shipped as "16/":
+            # the old width had a max(10, ...) floor, and once the queue
+            # depth widened the right column the floor won and the digits
+            # paid for it. The count is the one thing here that must never
+            # be cut, so the BAR takes the squeeze and vanishes entirely
+            # before a digit goes.
+            room = panel - 4 - _plain_len(right) - len(head) - len(count)
+            meter = bar(pct / 100, room) if room >= 6 else ""
+            row(rgb(head, ACCENT) + meter + rgb(count, TEXT), right)
+        elif state.queue and state.queue[0]:
+            # Running but not sampling: loading weights, encoding the prompt,
+            # decoding, saving. Every one of those is silent on the log, and
+            # this is the line that says the job is alive anyway.
+            row(rgb(spin + " working", ACCENT), behind)
         elif state.last_render:
-            row(rgb("idle", DIM), rgb("last render " + state.last_render, MUTE))
+            row(rgb("idle", DIM),
+                behind or rgb("last render " + state.last_render, MUTE))
         else:
-            row(rgb("idle - waiting for the studio to ask for something", DIM))
+            row(rgb("idle - waiting for the studio to ask for something", DIM),
+                behind)
     else:
         for i, (_, name) in enumerate(PHASES):
             seconds = state.phase_seconds(i)

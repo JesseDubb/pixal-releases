@@ -5,22 +5,27 @@
 // data to pixal_dm/characters/<id>.json.
 //
 // An anchor is two things: a sentence and a face. The dialog is shaped around
-// exactly that — a landscape two-pane modal where the left pane writes the
-// sentence (facts, style, notes, and the live caption preview the server
-// renders through the same character_subject()/wardrobe_lock_for() the
-// builders call) and the right pane picks the face. The wardrobe-lock
+// exactly that — a landscape two-pane modal where the left pane LEADS with the
+// sentence (the live caption preview the server renders through the same
+// character_subject()/wardrobe_lock_for() the builders call) and the right
+// pane picks the face. Below the sentence the fields sit in groups named for
+// where their words go — identity (the photo decides the face), always true
+// (rides every render) and the writer's guidance. The wardrobe-lock
 // machinery hides behind a disclosure because most anchors ride the generic
 // lock; header and save bar stay put while the panes scroll.
 import { useEffect, useMemo, useRef, useState } from "react";
 // Dashed user-circle = a DRAFT anchor (the character icon family's empty state).
-import { Crop, ImageSquare, PencilSimple, UserCircleDashed, X }
+import { Crop, ImageSquare, PencilSimple, Plus, UserCircleDashed, X }
   from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, OVERLAY } from "../lib/design-tokens.js";
 import { Disclosure } from "../lib/Disclosure.jsx";
 import { ModalShell } from "../lib/ModalShell.jsx";
+import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { Switch } from "../lib/Switch.jsx";
 import { characterPreview, characterRecord, inputFullUrl, inputImages,
          inputImgUrl, stageInput, upload } from "../transport.js";
 import { EditDirector } from "./EditDirector.jsx";
+import { InfoTip } from "./InfoTip.jsx";
 
 const MONO = "ui-monospace, Consolas, monospace";
 // Same three as the reference picker: newest-first alone stops being findable
@@ -35,9 +40,12 @@ const SORTS = [
 // so the left column bottoms out with the picker instead of above it. `hint`
 // trails the label in a thin lowercase parenthetical — a long bold uppercase
 // label is unreadable, so the label stays one word and the hint stays quiet.
-const Field = ({ label, hint, children, grow }) => (
-  <label style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0,
-                  flex: grow ? "1 1 auto" : "0 0 auto" }}>
+// `as="div"` is for the one field that is not a single input (the sex
+// radiogroup): a <label> adopts the first labelable descendant as its labeled
+// control, so wrapping the buttons made the word "sex" select female on click.
+const Field = ({ label, hint, children, grow, as: Tag = "label" }) => (
+  <Tag style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0,
+                flex: grow ? "1 1 auto" : "0 0 auto" }}>
     <span style={{ fontSize: TYPE.micro, fontWeight: W.heading, letterSpacing: "0.08em",
                    textTransform: "uppercase", color: "var(--textTer)",
                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
@@ -47,7 +55,7 @@ const Field = ({ label, hint, children, grow }) => (
                               letterSpacing: 0 }}> ({hint})</span>}
     </span>
     {children}
-  </label>
+  </Tag>
 );
 
 const inputStyle = {
@@ -55,6 +63,29 @@ const inputStyle = {
   borderRadius: RADIUS.input, padding: `7px ${SPACE[10]}px`, fontSize: TYPE.ui,
   color: "var(--text)", fontFamily: FONT, outline: "none", width: "100%",
 };
+
+const sectionLabel = {
+  fontSize: TYPE.micro, fontWeight: W.heading, letterSpacing: "0.08em",
+  textTransform: "uppercase", color: "var(--textTer)",
+};
+
+// The H3 reference node has nine slots and the identity photo holds slot 0,
+// so eight accessories is the ceiling (the server enforces the same number).
+const ACCESSORY_MAX = 8;
+
+// A group is a label and one subline — where these words go, and the one
+// rule that governs them. Not an accordion, not a card: the pane stays one
+// scrolling column (9.82). The accessories group (9.83) is one of these.
+const Group = ({ label, sub, children }) => (
+  <div style={{ display: "flex", flexDirection: "column", gap: SPACE[8] }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={sectionLabel}>{label}</span>
+      <span style={{ fontSize: TYPE.label, lineHeight: 1.4,
+                     color: "var(--textTer)" }}>{sub}</span>
+    </div>
+    {children}
+  </div>
+);
 
 // The dialog goes side-by-side only when the viewport can afford it; on a
 // phone the panes stack and the whole body scrolls as one.
@@ -70,12 +101,12 @@ const useNarrow = () => {
   return narrow;
 };
 
-const InputCard = ({ image, selected, onPick }) => {
+const InputCard = ({ image, selected, onPick, purpose = "the identity reference" }) => {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
     <button type="button" aria-pressed={selected}
-      aria-label={`Use ${image.name} as the identity reference`} title={image.name}
+      aria-label={`Use ${image.name} as ${purpose}`} title={image.name}
       onClick={onPick}
       style={{ minWidth: 0, padding: 4, display: "flex", flexDirection: "column", gap: 4,
                border: "1px solid", borderRadius: RADIUS.input,
@@ -233,6 +264,121 @@ const CropDialog = ({ imageUrl, busy, onClose, onUse }) => {
   );
 };
 
+// AccessoryPicker — the add-an-accessory dialog (9.83): the identity pane's
+// own atoms (filter, the three sorts, the InputCard grid, upload) pointed at
+// picking ONE input image to wire as an accessory reference. Uploads are
+// tagged kind "object" - that is what an accessory is to the model. Stacks
+// above the form exactly like the crop and edit dialogs.
+const AccessoryPicker = ({ options, onClose, onPick, refreshOptions }) => {
+  const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState("new");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const inputAll = useMemo(() => inputImages(options), [options]);
+  const inputList = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const rows = q ? inputAll.filter((i) => i.name.toLowerCase().includes(q))
+                   : inputAll.slice();
+    return rows.sort(
+      sort === "name" ? byName
+        : sort === "old" ? (a, b) => (a.mtime || 0) - (b.mtime || 0) || byName(a, b)
+          : (a, b) => (b.mtime || 0) - (a.mtime || 0) || byName(a, b));
+  }, [inputAll, filter, sort]);
+
+  const doUpload = async (f) => {
+    if (!f) return;
+    setBusy(true); setErr(null);
+    try {
+      const image = await upload(f, "object");
+      if (refreshOptions) await refreshOptions();
+      onPick(image.name);
+    } catch (error) {
+      setErr(error?.message || "The accessory image could not be uploaded.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} z={OVERLAY.form}
+      boxProps={{ role: "dialog", "aria-label": "Add a wired reference" }}
+      boxStyle={{
+        width: 480, maxWidth: "94vw", maxHeight: "88vh",
+        background: "var(--bg1)", border: "1px solid var(--borderHov)",
+        borderRadius: RADIUS.dialog, boxShadow: "0 18px 44px rgba(0,0,0,0.6)",
+        padding: SPACE[16], display: "flex", flexDirection: "column", gap: SPACE[8],
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE[6],
+                       fontSize: TYPE.h3, fontWeight: W.heading }}>
+          <ImageSquare size={15} weight="duotone" style={{ color: "var(--accent)" }} />
+          add a reference
+        </span>
+        <label style={{
+          marginLeft: "auto", display: "inline-flex", alignItems: "center",
+          gap: SPACE[6], height: 26, padding: `0 ${SPACE[10]}px`,
+          background: "var(--bg2)", cursor: "pointer",
+          border: "1px solid var(--border)", borderRadius: RADIUS.input,
+          fontSize: TYPE.ui, color: "var(--textSec)",
+        }}>
+          <ImageSquare size={12} weight="duotone" />
+          {busy ? "uploading…" : "upload"}
+          <input type="file" accept="image/*" style={{ display: "none" }}
+                 onChange={(e) => { doUpload(e.target.files[0]); e.target.value = ""; }} />
+        </label>
+        <button type="button" onClick={onClose}
+          style={{ background: "none", border: "none", color: "var(--textTer)",
+                   cursor: "pointer", padding: 4 }}>
+          <X size={14} weight="bold" />
+        </button>
+      </div>
+      <input value={filter} onChange={(e) => setFilter(e.target.value)}
+             placeholder="filter input images by name…" autoFocus
+             style={{ ...inputStyle, height: 30, padding: `0 ${SPACE[10]}px` }} />
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE[4],
+                    color: "var(--textTer)", fontSize: TYPE.label }}>
+        <span>ComfyUI/input</span>
+        <span style={{ fontFamily: MONO, fontSize: 9 }}>
+          {filter.trim() ? `${inputList.length} of ${inputAll.length}` : inputList.length}
+        </span>
+        <span role="group" aria-label="Sort input images"
+              style={{ marginLeft: "auto", display: "inline-flex", gap: 2 }}>
+          {SORTS.map((s) => (
+            <button key={s.key} type="button" aria-pressed={sort === s.key}
+              onClick={() => setSort(s.key)}
+              style={{ height: 20, padding: `0 ${SPACE[6]}px`, border: "1px solid",
+                       borderColor: sort === s.key ? "var(--accent)" : "var(--border)",
+                       borderRadius: RADIUS.pill, cursor: "pointer", fontSize: 9,
+                       fontFamily: FONT,
+                       background: sort === s.key ? "var(--accentMut)" : "transparent",
+                       color: sort === s.key ? "var(--accent)" : "var(--textTer)" }}>
+              {s.label}
+            </button>
+          ))}
+        </span>
+      </div>
+      <div className="px-scroll"
+           style={{ minHeight: 0, maxHeight: "56vh", overflowY: "auto",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))",
+                    gap: SPACE[6], alignContent: "start",
+                    border: "1px solid var(--border)", borderRadius: RADIUS.input,
+                    padding: SPACE[6] }}>
+        {inputList.map((image) => (
+          <InputCard key={image.name} image={image} selected={false}
+                     purpose="an accessory reference"
+                     onPick={() => onPick(image.name)} />
+        ))}
+      </div>
+      {err && (
+        <span role="alert" style={{ fontSize: TYPE.label, color: "#E3A7B0",
+                                    lineHeight: 1.4 }}>{err}</span>
+      )}
+    </ModalShell>
+  );
+};
+
 export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                                 history = [], editInput, editId = "" }) => {
   const [name, setName] = useState("");
@@ -243,9 +389,6 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   const [notes, setNotes] = useState("");
   const [wardrobe, setWardrobe] = useState("");
   const [wardOpen, setWardOpen] = useState(false);
-  // 9.51: the reference's clothes leak into scenes; on = the server re-renders
-  // a new reference in a plain grey tee and keeps the upload beside it.
-  const [neutral, setNeutral] = useState(false);
   const [ref, setRef] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -258,6 +401,14 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   // Armed when an edit render is in flight for the reference: a snapshot of
   // history ids at launch, so the one entry that appears after it is ours.
   const [pendingEdit, setPendingEdit] = useState(null);
+  // 9.83: the accessory reference rows — {k, image, description, enabled}.
+  // `k` is a dialog-local uid so a removed row never shifts another's key;
+  // it is stripped at save (the server stores image/description/enabled).
+  const [accessories, setAccessories] = useState([]);
+  const [accPickerOpen, setAccPickerOpen] = useState(false);
+  // The uid of the row just added: its description input takes focus once.
+  const [lastAcc, setLastAcc] = useState(null);
+  const accKey = useRef(0);
   const narrow = useNarrow();
 
   // Edit mode: /api/options carries only the picker's summary, so the rest of
@@ -275,11 +426,14 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
         setStyle(ch.style || "");
         setNotes(ch.notes || "");
         setWardrobe(ch.wardrobe_lock || "");
-        setNeutral(ch.neutral_wardrobe === true);
         // A custom lock is the one thing worth un-hiding on open: they wrote
         // it once, so they should see it is still in force.
         if (ch.wardrobe_lock) setWardOpen(true);
         setRef(ch.identity_ref || "");
+        setAccessories((Array.isArray(ch.accessories) ? ch.accessories : [])
+          .map((a) => ({ k: ++accKey.current, image: a.image || "",
+                         description: a.description || "",
+                         enabled: a.enabled !== false })));
       })
       .catch((e) => live && setErr(e?.message || "that anchor could not be loaded"))
       .finally(() => live && setLoading(false));
@@ -346,6 +500,16 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
     return () => { live = false; };
   }, [history, pendingEdit, refreshOptions]);
 
+  // A picked (or freshly uploaded) image becomes a new enabled row with an
+  // empty description - the one field the user must write, so it takes focus.
+  const addAccessory = (name) => {
+    const k = ++accKey.current;
+    setAccessories((rows) => [...rows, { k, image: name, description: "",
+                                         enabled: true }]);
+    setLastAcc(k);
+    setAccPickerOpen(false);
+  };
+
   // Saving keys on a slug of the name, so a new anchor named like an existing
   // one silently replaces it. Say so before they press the button.
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_")
@@ -389,12 +553,24 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   const save = async () => {
     if (!name.trim()) { setErr("give them a name"); return; }
     if (!ref) { setErr("choose or upload a reference image"); return; }
+    // The description is load-bearing, not a caption: the model addresses a
+    // wired reference by its <Subject N> definition, so an accessory without
+    // one is refused here with the server's own words rather than as a 400.
+    const accOut = accessories.map((a) => ({
+      image: a.image,
+      description: a.description.replace(/\s+/g, " ").trim(),
+      enabled: a.enabled !== false,
+    }));
+    if (accOut.some((a) => !a.description)) {
+      setErr("every accessory needs a description - the model names the wired picture by it");
+      return;
+    }
     setBusy(true); setErr(null);
     const ch = { name: name.trim(), sex, style: style.trim(), notes: notes.trim() };
     if (age.trim()) ch.age = parseInt(age, 10) || age.trim();
     if (race.trim()) ch.race = race.trim();
     if (wardrobe.trim()) ch.wardrobe_lock = wardrobe.trim();
-    ch.neutral_wardrobe = neutral;
+    if (accOut.length) ch.accessories = accOut;
     // The id is what makes this an EDIT rather than a second anchor: without it
     // the server re-slugs the name, and a renamed character forks in two.
     if (editId) ch.id = editId;
@@ -408,11 +584,6 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
       else setErr(d.error || "save failed");
     } catch (e) { setErr(e.message); }
     setBusy(false);
-  };
-
-  const sectionLabel = {
-    fontSize: TYPE.micro, fontWeight: W.heading, letterSpacing: "0.08em",
-    textTransform: "uppercase", color: "var(--textTer)",
   };
 
   return (
@@ -445,73 +616,15 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                       flexDirection: narrow ? "column" : "row",
                       overflowY: narrow ? "auto" : "hidden" }}>
 
-          {/* LEFT — write the sentence: facts, look, notes, and the caption
-              they add up to. */}
+          {/* LEFT — the sentence first, then the fields that change
+              it, grouped by where their words go. */}
           <div className={narrow ? undefined : "px-scroll"}
                style={{ flex: narrow ? "0 0 auto" : "1.15 1 0", minWidth: 0,
                         minHeight: 0, overflowY: narrow ? "visible" : "auto",
                         padding: SPACE[16], display: "flex",
                         flexDirection: "column", gap: SPACE[12] }}>
-            <div style={{ display: "flex", gap: SPACE[8] }}>
-              <div style={{ flex: 2, minWidth: 0 }}><Field label="name">
-                <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)}
-                       placeholder="Mia" autoFocus />
-              </Field></div>
-              <div style={{ flex: 1, minWidth: 0 }}><Field label="age">
-                <input style={inputStyle} value={age} onChange={(e) => setAge(e.target.value)}
-                       placeholder="24" />
-              </Field></div>
-            </div>
-            <div style={{ display: "flex", gap: SPACE[8] }}>
-              <div style={{ flex: 1, minWidth: 0 }}><Field label="race">
-                <input style={inputStyle} value={race} onChange={(e) => setRace(e.target.value)}
-                       placeholder="Korean" />
-              </Field></div>
-              <div style={{ flex: 1, minWidth: 0 }}><Field label="sex">
-                <div style={{ display: "flex", gap: SPACE[6] }}>
-                  {["female", "male", "other"].map((s) => (
-                    <button key={s} type="button" onClick={() => setSex(s)}
-                      style={{
-                        flex: 1, height: 30, fontSize: TYPE.label, cursor: "pointer",
-                        borderRadius: RADIUS.input, border: "1px solid",
-                        borderColor: sex === s ? "var(--accent)" : "var(--border)",
-                        background: sex === s ? "var(--accentMut)" : "transparent",
-                        color: sex === s ? "var(--accent)" : "var(--textSec)",
-                      }}>{s}</button>
-                  ))}
-                </div>
-              </Field></div>
-            </div>
-            <Field label="neutral wardrobe"
-                   hint="re-renders the reference in a plain grey tee, same face - for a loud outfit; a tight crop leaks least">
-              <div style={{ display: "flex", gap: SPACE[6] }}>
-                {[["on", true], ["off", false]].map(([label, v]) => (
-                  <button key={label} type="button" onClick={() => setNeutral(v)}
-                    style={{
-                      flex: 1, height: 30, fontSize: TYPE.label, cursor: "pointer",
-                      borderRadius: RADIUS.input, border: "1px solid",
-                      borderColor: neutral === v ? "var(--accent)" : "var(--border)",
-                      background: neutral === v ? "var(--accentMut)" : "transparent",
-                      color: neutral === v ? "var(--accent)" : "var(--textSec)",
-                    }}>{label}</button>
-                ))}
-              </div>
-            </Field>
-            <Field label="style" hint="how they read at a glance">
-              <input style={inputStyle} value={style} onChange={(e) => setStyle(e.target.value)}
-                     placeholder="short black bob, silver rings, oversized work jackets" />
-            </Field>
-            <Field label="notes" hint="who they are off-camera" grow={!narrow}>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-                placeholder="barista by day, queues ranked by night; hair changes daily; never poses, always mid-task"
-                style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5,
-                         padding: `${SPACE[8]}px ${SPACE[10]}px`,
-                         flex: narrow ? undefined : "1 1 auto",
-                         minHeight: narrow ? undefined : 66 }} />
-            </Field>
-
-            {/* An anchor is a sentence, not a profile. Show the sentence; keep
-                the machinery that shapes its last clause folded away. */}
+            {/* An anchor is a sentence, not a profile. The sentence leads;
+                the machinery that shapes its last clause stays folded away. */}
             <div style={{ border: "1px solid var(--border)", borderRadius: RADIUS.card,
                           background: "var(--bg2)", padding: SPACE[12],
                           display: "flex", flexDirection: "column", gap: SPACE[6] }}>
@@ -546,6 +659,117 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                   </span>
               </Disclosure>
             </div>
+
+            <Group label="identity"
+                   sub="the photo decides the face — nothing typed here changes it">
+              <div style={{ display: "flex", gap: SPACE[8] }}>
+                <div style={{ flex: 2, minWidth: 0 }}><Field label="name">
+                  <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)}
+                         placeholder="Mia" autoFocus />
+                </Field></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Field label={<>age <InfoTip size={11} text={"Renders that wire the reference take "
+                    + "face and age from the photo. Scenes without one still read this."} /></>}>
+                    <input style={inputStyle} value={age} onChange={(e) => setAge(e.target.value)}
+                           placeholder="24" />
+                  </Field>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: SPACE[8] }}>
+                <div style={{ flex: 1, minWidth: 0 }}><Field label="race">
+                  <input style={inputStyle} value={race} onChange={(e) => setRace(e.target.value)}
+                         placeholder="Korean" />
+                </Field></div>
+                <div style={{ flex: 1, minWidth: 0 }}><Field label="sex" as="div">
+                  <SegmentedControl variant="grid" ariaLabel="sex" value={sex} onChange={setSex}
+                    options={[{ v: "female", label: "female" }, { v: "male", label: "male" },
+                              { v: "other", label: "other" }]} />
+                </Field></div>
+              </div>
+            </Group>
+            <Group label="always true"
+                   sub="only what is true in every picture — what changes shot to shot belongs in the prompt">
+              <Field label="look">
+                <input style={inputStyle} value={style} onChange={(e) => setStyle(e.target.value)}
+                       placeholder="long platinum hair to her lower back, manicured nails, always wears earrings" />
+              </Field>
+            </Group>
+            {/* 9.83: reference images wired beside the identity photo on the
+                H3 lanes, each independently toggleable. The description is
+                load-bearing - it becomes the wired picture's <Subject N>
+                definition - and the count is the cost: every wired reference
+                rides every sampling step.
+
+                Called "accessories" until 1.1.4b, which undersold it. The
+                single biggest fix of the 2026-08-30 reference session was
+                wiring a SECOND PERSON here: a friend in frame rendered badly
+                no matter how she was described, because a description is not
+                the identity mechanism - the wired photograph is, and in a
+                two-up she also gets half the pixels. Nothing in the data
+                changed; the label was the whole barrier. */}
+            <Group label="references"
+                   sub={`${accessories.filter((a) => a.enabled).length} of ${ACCESSORY_MAX} on — a bag, a jacket, or a second person`}>
+              {accessories.map((row) => {
+                const rec = inputAll.find((i) => i.name === row.image)
+                  || { name: row.image };
+                return (
+                  <div key={row.k}
+                       style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
+                    <img src={inputImgUrl(rec)} alt="" decoding="async"
+                      style={{ width: 40, height: 40, objectFit: "cover", flex: "0 0 auto",
+                               borderRadius: RADIUS.chip,
+                               border: "1px solid var(--border)" }} />
+                    <input style={inputStyle} value={row.description}
+                      autoFocus={row.k === lastAcc}
+                      onChange={(e) => setAccessories(accessories.map((a) =>
+                        a.k === row.k ? { ...a, description: e.target.value } : a))}
+                      placeholder="what it is — green pebbled leather phone case; or twenty, long cornrow braids" />
+                    <Switch on={row.enabled}
+                      label={row.description || row.image.split("/").pop()}
+                      title={row.enabled
+                        ? "wired into every render of this anchor — switch off to keep it here but out of the graph"
+                        : "off — kept on the anchor, never sent to the model"}
+                      onChange={(next) => setAccessories(accessories.map((a) =>
+                        a.k === row.k ? { ...a, enabled: next } : a))} />
+                    <button type="button"
+                      aria-label={`Remove ${row.description || row.image.split("/").pop()}`}
+                      title="remove this accessory"
+                      onClick={() => setAccessories(accessories.filter((a) => a.k !== row.k))}
+                      style={{ display: "inline-flex", alignItems: "center", padding: 4,
+                               background: "none", border: "none", cursor: "pointer",
+                               color: "var(--textTer)", flex: "0 0 auto" }}>
+                      <X size={12} weight="bold" />
+                    </button>
+                  </div>
+                );
+              })}
+              <button type="button" disabled={accessories.length >= ACCESSORY_MAX}
+                onClick={() => setAccPickerOpen(true)}
+                title={accessories.length >= ACCESSORY_MAX
+                  ? "eight references fill the nine slots beside the identity photo"
+                  : "an object or another person — each one rides every sampling step"}
+                style={{ display: "inline-flex", alignItems: "center", alignSelf: "flex-start",
+                         gap: SPACE[6], height: 30, padding: `0 ${SPACE[12]}px`,
+                         border: "1px dashed var(--borderHov)", borderRadius: RADIUS.input,
+                         background: "transparent", fontFamily: FONT, fontSize: TYPE.ui,
+                         color: accessories.length >= ACCESSORY_MAX
+                           ? "var(--textMut)" : "var(--textSec)",
+                         cursor: accessories.length >= ACCESSORY_MAX ? "default" : "pointer" }}>
+                <Plus size={12} weight="bold" /> add reference
+                <span style={{ fontFamily: MONO, fontSize: 9, color: "var(--textTer)" }}>
+                  {accessories.length}/{ACCESSORY_MAX}
+                </span>
+              </button>
+            </Group>
+            <Field label="for the writer" hint="look and identity only, not jobs or lifestyle"
+                   grow={!narrow}>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+                placeholder="dry humour, competitive; hair changes daily; never poses, always mid-task"
+                style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5,
+                         padding: `${SPACE[8]}px ${SPACE[10]}px`,
+                         flex: narrow ? undefined : "1 1 auto",
+                         minHeight: narrow ? undefined : 66 }} />
+            </Field>
           </div>
 
           {/* RIGHT — pick the face. The picker is a pane of its own instead of
@@ -718,6 +942,10 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
       {cropOpen && refRecord && (
         <CropDialog imageUrl={inputFullUrl(ref)} busy={busy}
           onClose={() => setCropOpen(false)} onUse={adoptCrop} />
+      )}
+      {accPickerOpen && (
+        <AccessoryPicker options={options} refreshOptions={refreshOptions}
+          onClose={() => setAccPickerOpen(false)} onPick={addAccessory} />
       )}
     </>
   );

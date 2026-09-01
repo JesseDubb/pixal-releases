@@ -280,7 +280,7 @@ class Ref2VAGraphTests(unittest.TestCase):
         graph, _, _ = build_ref2v(director_brief(), ("ref0.png",))
         self.assertEqual(graph["1"]["inputs"]["unet_name"], server.H3_REF2V_MODEL)
 
-    def test_the_spine_and_vhs_tail_are_byte_identical_to_fl2va(self):
+    def test_the_spine_and_save_tail_are_byte_identical_to_fl2va(self):
         with TemporaryDirectory() as td:
             root = Path(td)
             (root / "input").mkdir()
@@ -291,15 +291,15 @@ class Ref2VAGraphTests(unittest.TestCase):
                     "She turns toward the window.", 987, "prepared.png",
                     seconds=5, width=1344, height=768, model="fl2va")
         ref2v, _, _ = build_ref2v(director_brief(), ("ref0.png",))
-        # Nodes 7-13 are the proven sampler spine; 14 is the VHS tail with
-        # only the filename prefix differing between lanes.
-        for node_id in ("7", "8", "9", "10", "11", "12", "13"):
+        # Nodes 7-13 are the proven sampler spine; 14/15 are the 9.96 core
+        # 10-bit save with only the filename prefix differing between lanes.
+        for node_id in ("7", "8", "9", "10", "11", "12", "13", "14"):
             self.assertEqual(ref2v[node_id], fl2va[node_id], node_id)
-        tail = dict(ref2v["14"]["inputs"])
-        expected = dict(fl2va["14"]["inputs"])
+        tail = dict(ref2v["15"]["inputs"])
+        expected = dict(fl2va["15"]["inputs"])
         self.assertTrue(tail.pop("filename_prefix").startswith("pixal_dm/h3_ref_"))
         self.assertTrue(expected.pop("filename_prefix").startswith("pixal_dm/h3_"))
-        self.assertEqual(ref2v["14"]["class_type"], fl2va["14"]["class_type"])
+        self.assertEqual(ref2v["15"]["class_type"], fl2va["15"]["class_type"])
         self.assertEqual(tail, expected)
 
     def test_every_link_resolves(self):

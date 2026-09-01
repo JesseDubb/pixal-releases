@@ -1,6 +1,68 @@
 # Changelog
 
-## 1.1.4b — unreleased
+## 1.1.5b — unreleased
+
+**Every text encoder option refused the render it was for.** 1.1.4b put the
+MiniMax H3 text encoder in Settings and offered three smaller encoders in place
+of the stock 14.6 GB one. All three were unusable. The loader was told to
+expect the 32B architecture no matter which file it was handed, so picking any
+of them ended the render before it started, with the encoder's own complaint:
+"is a 4B, but the type is set to minimax." The setting existed, the files were
+on disk, and nothing in the row could be selected without breaking the lane.
+It reads the file's own header now, which is what the loader documents as the
+right answer.
+
+**And the smaller encoder now gets out of the way.** It was being pinned in
+video memory for the whole render - which is the opposite of the point, since
+the reason to run a smaller encoder is to leave room for the model that does
+the actual work at every step. It hands the memory back once it has read your
+prompt, and pays a moment to load again next time. Measured on a still: 41.4
+seconds pinned, 42.7 seconds not. That second and a bit buys back five
+gigabytes.
+
+Worth knowing what the swap is really for: on a 32 GB card the stock encoder
+cannot sit beside the diffusion model, so every render evicts one to load the
+other. With the 4B, that stops - and the render is quicker too. Same picture,
+same seed, same size: 42.7 and 41.4 seconds on the 4B against 48.9 and 58.6 on
+the 32B. Identity is the trade - the smaller encoder brought a face back three
+times in four where the stock one managed four - so it stays a switch you own
+rather than a new default.
+
+**The character card stops fighting the photo.** A card's look was one
+free-text blob doing four jobs at once - build, hair, grooming, wardrobe - so
+a render could only take all of it or none. Measured on the reference lane,
+all of it was the wrong answer: with the blob sent, framing broke in four of
+five renders and the hair colour drifted; with it left out, both held. The
+model was reading a paragraph about a body while the reference photo tried to
+assert a specific person. The card now has separate fields for build, hair and
+grooming, each riding as its own short sentence - and a render with a
+reference photo wired sends the hair and grooming but drops the build, because
+the photo already carries it completely. Hair is always sent: its colour is
+the one thing that drifts without a stated defence. The character form shows
+both versions of what will be sent, and cards written before this release
+compose exactly as they always did.
+
+**H3 video now encodes at 10 bits.** The three MiniMax H3 video lanes write
+their clips through ComfyUI's own video saver at 10-bit depth, which keeps
+smoother gradients in skies, skin and shadows - the banding that 8-bit H.264
+paints into slow gradients simply is not there. Measured on one render encoded
+both ways, the 10-bit file was also the smaller one. Nothing about timing
+changes: the 24 frames per second that H3's baked-in audio is synced to stays
+pinned everywhere.
+
+**It also carries the known-good sampler settings**, which were built into
+1.1.4b's installer but missing from its notes. The sampler card offered
+"recipe / model / custom", and "model" - the settings a model's own page
+recommends - has never once been clickable on Krea 2 or MiniMax H3: three of
+the fifty-one models here publish such a line and all three are Z-Image. Krea
+2's sampler menu is 182 names long. So the card carries a row of known-good
+pairs, one click each, setting sampler, scheduler, steps and eta together.
+H3's three were measured here at a locked seed; Krea 2's three are RES4LYF's
+published figures for the Qwen-Image family and say "not measured here" on
+their face. Hover a pill for where its numbers came from. A pair the current
+sampler node cannot run is never offered.
+
+## 1.1.4b — 2026-08-31
 
 MiniMax H3 reference stills got a night of hard measurement, and almost every
 answer turned out to be something Pixal was *adding*. This release takes those
@@ -222,6 +284,22 @@ a decision baked into the source. Automatic is the big one and renders exactly
 what it rendered before. An option only appears when both its files are on
 disk, and a pick whose files go missing quietly runs Automatic. It sits with
 the two H3 model slots, under MiniMax H3 on the Image tab.
+
+**Known-good sampler settings, one click.** The sampler card offered
+"recipe / model / custom", and "model" - the settings a model's own page
+recommends - has never once been clickable on Krea 2 or MiniMax H3. Three of
+the fifty-one models here publish a recommendation line and all three are
+Z-Image. Krea 2's sampler menu is 182 names long, which is not a list anyone
+picks a good one out of. So the card carries a row of known-good pairs now, one
+click each, setting sampler, scheduler, steps and eta together. H3's three are
+what was measured here at a locked seed: Detail, about 74% more fine detail;
+Speed, about 35% quicker; and the top pair from a 3,504-vote community table,
+which carries a warning rather than a crown, because in both of our rounds it
+pushed the subject off a wall the caption had pinned her to. Krea 2's three are
+RES4LYF's published figures for the Qwen-Image family and say "not measured
+here" on their face, so nobody later reads them as ours. Hover a pill for where
+its numbers came from. A pair the current sampler node cannot run is never
+offered.
 
 **A busy model provider no longer lands in the chat as raw code.** When a
 hosted brain was at capacity, the chat printed the service's own error object,

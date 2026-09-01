@@ -386,6 +386,11 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   const [race, setRace] = useState("");
   const [sex, setSex] = useState("female");
   const [style, setStyle] = useState("");
+  // 9.95: the typed canon fields - build, hair, grooming - each composed as
+  // its own sentence, build skipped on lanes with a wired reference.
+  const [build, setBuild] = useState("");
+  const [hair, setHair] = useState("");
+  const [grooming, setGrooming] = useState("");
   const [notes, setNotes] = useState("");
   const [wardrobe, setWardrobe] = useState("");
   const [wardOpen, setWardOpen] = useState(false);
@@ -424,6 +429,9 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
         setRace(ch.race || "");
         setSex(ch.sex || "female");
         setStyle(ch.style || "");
+        setBuild(ch.build || "");
+        setHair(ch.hair || "");
+        setGrooming(ch.grooming || "");
         setNotes(ch.notes || "");
         setWardrobe(ch.wardrobe_lock || "");
         // A custom lock is the one thing worth un-hiding on open: they wrote
@@ -443,7 +451,8 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   // Debounced so typing a name does not fire a request per keystroke.
   useEffect(() => {
     const ch = { name: name.trim(), sex, style: style.trim(),
-                 wardrobe_lock: wardrobe.trim() };
+                 wardrobe_lock: wardrobe.trim(), build: build.trim(),
+                 hair: hair.trim(), grooming: grooming.trim() };
     if (age.trim()) ch.age = parseInt(age, 10) || age.trim();
     if (race.trim()) ch.race = race.trim();
     let live = true;
@@ -451,7 +460,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
       characterPreview(ch).then((p) => live && setPreview(p)).catch(() => {});
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [name, age, race, sex, style, wardrobe]);
+  }, [name, age, race, sex, style, wardrobe, build, hair, grooming]);
 
   const inputAll = useMemo(() => inputImages(options), [options]);
   const inputList = useMemo(() => {
@@ -570,6 +579,9 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
     if (age.trim()) ch.age = parseInt(age, 10) || age.trim();
     if (race.trim()) ch.race = race.trim();
     if (wardrobe.trim()) ch.wardrobe_lock = wardrobe.trim();
+    if (build.trim()) ch.build = build.trim();
+    if (hair.trim()) ch.hair = hair.trim();
+    if (grooming.trim()) ch.grooming = grooming.trim();
     if (accOut.length) ch.accessories = accOut;
     // The id is what makes this an EDIT rather than a second anchor: without it
     // the server re-slugs the name, and a renamed character forks in two.
@@ -629,8 +641,16 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                           background: "var(--bg2)", padding: SPACE[12],
                           display: "flex", flexDirection: "column", gap: SPACE[6] }}>
               <span style={sectionLabel}>every caption will carry</span>
-              <span style={{ fontSize: TYPE.body, lineHeight: 1.5, color: "var(--text)" }}>
+              <span title="what lanes without a reference photo send"
+                    style={{ fontSize: TYPE.body, lineHeight: 1.5, color: "var(--text)" }}>
                 {preview?.subject || "…"}
+              </span>
+              <span title={preview?.subject_ref || ""}
+                    style={{ fontSize: TYPE.label, lineHeight: 1.5, color: "var(--textTer)",
+                             overflow: "hidden", textOverflow: "ellipsis",
+                             whiteSpace: "nowrap" }}>
+                with the reference wired —{" "}
+                <span style={{ color: "var(--textSec)" }}>{preview?.subject_ref || "…"}</span>
               </span>
               <span style={{ fontSize: TYPE.label, lineHeight: 1.5, color: "var(--textTer)",
                              overflow: "hidden", textOverflow: "ellipsis",
@@ -691,7 +711,21 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                    sub="only what is true in every picture — what changes shot to shot belongs in the prompt">
               <Field label="look">
                 <input style={inputStyle} value={style} onChange={(e) => setStyle(e.target.value)}
-                       placeholder="long platinum hair to her lower back, manicured nails, always wears earrings" />
+                       placeholder="dresses down, one designer bag as the accent" />
+              </Field>
+              <Field hint="skipped when a reference photo is wired"
+                     label={<>build <InfoTip size={11} text={"The photo already carries the "
+                       + "build — prose here fights it."} /></>}>
+                <input style={inputStyle} value={build} onChange={(e) => setBuild(e.target.value)}
+                       placeholder="five foot seven, soft hourglass" />
+              </Field>
+              <Field label="hair" hint="always sent — state the colour">
+                <input style={inputStyle} value={hair} onChange={(e) => setHair(e.target.value)}
+                       placeholder="platinum, straight, to her lower back" />
+              </Field>
+              <Field label="grooming" hint="nails, jewellery, makeup">
+                <input style={inputStyle} value={grooming} onChange={(e) => setGrooming(e.target.value)}
+                       placeholder="manicured nails, small hoop earrings" />
               </Field>
             </Group>
             {/* 9.83: reference images wired beside the identity photo on the

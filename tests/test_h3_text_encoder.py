@@ -86,11 +86,22 @@ VIDEO_LANES = ("h3_i2v", "h3_multishot", "h3_ref2v")
 ALL_LANES = STILL_LANES + VIDEO_LANES
 
 # The swap the brief specifies: CLIPLoader's inputs plus the projection,
-# the node's own device/mode fixed (resident, never surfaced).
+# the node's own device/mode fixed and never surfaced.
+#
+# type is "auto", not "minimax". Shipped as "minimax" in 1.1.4b, which
+# refused every option the table offers - Jesse hit it on both the 8B and
+# the 4B: "is a 4B, but the type is set to minimax. Set it to auto, or to
+# krea2." auto reads the checkpoint header, which is what the node's own
+# tooltip says to do.
+#
+# mode is "streaming", not "resident". Same encode speed, but the encoder
+# folds back to RAM instead of holding 5-6 GB while the 20 GB DiT samples -
+# on a 32 GB card resident makes the DiT page its own weights, which is the
+# failure this whole encoder row exists to avoid.
 SWAP_4B = {"class_type": "ClipProjLoader",
-           "inputs": {"clip_name": ENC_4B, "type": "minimax",
+           "inputs": {"clip_name": ENC_4B, "type": "auto",
                       "projection": PROJ_4B, "device": "cuda:0",
-                      "mode": "resident"}}
+                      "mode": "streaming"}}
 
 
 def add(root, kind, rel, size=1):

@@ -209,7 +209,8 @@ export async function characterRecord(id) {
 // the render. Best-effort: a failed preview must never block editing.
 export async function characterPreview(character) {
   const data = await post("/api/characters/preview", { character });
-  return data?.ok ? { subject: data.subject, wardrobe: data.wardrobe } : null;
+  return data?.ok ? { subject: data.subject, subject_ref: data.subject_ref,
+                      wardrobe: data.wardrobe } : null;
 }
 
 export async function deleteCharacter(id) {

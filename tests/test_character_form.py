@@ -83,14 +83,18 @@ class ThePreviewTracksItsFields(unittest.TestCase):
 
     EFFECT = _block(SRC, "// Debounced so typing a name", "characterPreview(ch)")
 
-    def test_the_payload_carries_all_six_composed_fields(self):
+    def test_the_payload_carries_all_nine_composed_fields(self):
+        # 9.95: build, hair and grooming joined the composed sentence.
         for piece in ("name: name.trim()", "sex,", "style: style.trim()",
-                      "wardrobe_lock: wardrobe.trim()", "ch.age", "ch.race"):
+                      "wardrobe_lock: wardrobe.trim()", "ch.age", "ch.race",
+                      "build: build.trim()", "hair: hair.trim()",
+                      "grooming: grooming.trim()"):
             self.assertIn(piece, self.EFFECT,
                           "%s no longer feeds the preview" % piece)
 
-    def test_the_dep_array_lists_all_six(self):
-        self.assertIn("}, [name, age, race, sex, style, wardrobe]);", SRC,
+    def test_the_dep_array_lists_all_nine(self):
+        self.assertIn("}, [name, age, race, sex, style, wardrobe, build, hair, grooming]);",
+                      SRC,
                       "a field was dropped from the preview effect's deps")
 
 

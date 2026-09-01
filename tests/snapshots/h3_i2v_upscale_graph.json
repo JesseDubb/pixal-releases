@@ -66,24 +66,30 @@
    }
   },
   "14": {
-   "class_type": "VHS_VideoCombine",
+   "class_type": "CreateVideo",
    "inputs": {
     "audio": [
      "13",
      0
     ],
-    "crf": 14,
-    "filename_prefix": "pixal_dm/h3_she_turns_audio_generate",
-    "format": "video/h264-mp4",
-    "frame_rate": 24,
+    "bit_depth": 10,
+    "fps": 24,
     "images": [
      "h3:up:decode",
      0
-    ],
-    "loop_count": 0,
-    "pingpong": false,
-    "pix_fmt": "yuv420p",
-    "save_output": true
+    ]
+   }
+  },
+  "15": {
+   "class_type": "SaveVideo",
+   "inputs": {
+    "codec": "auto",
+    "filename_prefix": "pixal_dm/h3_she_turns_audio_generate",
+    "format": "auto",
+    "video": [
+     "14",
+     0
+    ]
    }
   },
   "2": {

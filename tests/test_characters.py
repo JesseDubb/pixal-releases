@@ -229,5 +229,150 @@ class NeutralWardrobeMigrationTests(unittest.TestCase):
         self.assertNotIn("identity_ref_original", card)
 
 
+class TypedCardFieldTests(unittest.TestCase):
+    """9.95: build, hair and grooming are typed card fields, each composed as
+    its own sentence after the legacy style sentence. The per-lane rule lives
+    inside the composition functions: build rides txt2img lanes only - a
+    wired reference photo carries it, and the prose fights the photo."""
+
+    def test_legacy_style_only_cards_compose_byte_identically(self):
+        # Accept 1: literals captured from the code at 0f224f2, before 9.95
+        # touched it - a card using only style must not move a byte.
+        ch = {"name": "Mia", "age": 24, "race": "Korean", "sex": "female",
+              "style": "short black bob"}
+        self.assertEqual(server.character_subject(ch),
+                         "She is a 24-year-old Korean woman. Short black bob.")
+        self.assertEqual(server.character_subject_nonfacial(ch),
+                         "She is a Korean woman. Short black bob.")
+        bare = {"name": "X", "sex": "other"}
+        self.assertEqual(server.character_subject(bare), "They is person.")
+        self.assertEqual(server.character_subject_nonfacial(bare),
+                         "They is a person.")
+
+    def test_typed_fields_follow_the_per_lane_rule(self):
+        # Accept 2: txt2img sends all three in card order; the photo-wired
+        # lane sends hair and grooming with no trace of build.
+        ch = {"name": "Zara", "age": 24, "race": "Korean", "sex": "female",
+              "build": "five foot seven, hourglass",
+              "hair": "platinum, to her waist",
+              "grooming": "manicured nails, always wears earrings"}
+        self.assertEqual(
+            server.character_subject(ch),
+            "She is a 24-year-old Korean woman. Five foot seven, hourglass. "
+            "Platinum, to her waist. Manicured nails, always wears earrings.")
+        ref = server.character_subject_nonfacial(ch)
+        self.assertEqual(
+            ref,
+            "She is a Korean woman. Platinum, to her waist. "
+            "Manicured nails, always wears earrings.")
+        self.assertNotIn("five foot seven", ref)
+        self.assertNotIn("build", ref.lower())
+
+    def test_typed_fields_compose_after_the_style_sentence(self):
+        # Composition order: race/noun sentence, legacy style, then build,
+        # hair, grooming - each its own sentence.
+        ch = {"sex": "female", "style": "short black bob",
+              "build": "tall", "hair": "platinum", "grooming": "red nails"}
+        self.assertEqual(server.character_subject(ch),
+                         "She is woman. Short black bob. Tall. Platinum. "
+                         "Red nails.")
+
+    def test_typed_fields_are_cleaned_like_style(self):
+        # Accept 3: ragged whitespace collapses, a lowercase first letter
+        # capitalizes, the trailing period is ensured, and an empty field
+        # leaves nothing behind - not even a double space.
+        ch = {"sex": "female",
+              "build": "  five   foot\nseven ",
+              "hair": "platinum..",
+              "grooming": ""}
+        out = server.character_subject(ch)
+        self.assertEqual(out, "She is woman. Five foot seven. Platinum.")
+        self.assertNotIn("  ", out)
+
+    def test_subject_block_still_outranks_composition(self):
+        # Accept 4: the author's own canon passes through verbatim in both
+        # functions; typed fields are ignored when it is set.
+        ch = {"sex": "female",
+              "subject_block": "The author's own sentence, verbatim.",
+              "style": "ignored", "build": "ignored", "hair": "ignored",
+              "grooming": "ignored"}
+        for fn in (server.character_subject, server.character_subject_nonfacial):
+            with self.subTest(fn=fn.__name__):
+                self.assertEqual(fn(ch),
+                                 "The author's own sentence, verbatim.")
+
+
+class TypedCardFieldRoundTripTests(unittest.TestCase):
+    """Accept 5: the three fields go in through the save endpoint normalized,
+    survive the file, load back, and compose per the lane rule - and the
+    preview exposes both lane variants."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "input").mkdir()
+        (root / "input" / "mia.png").write_bytes(b"png")
+        self.chars = root / "characters"
+        patches = [patch.object(server, "CDIR", root),
+                   patch.object(server, "CHAR_DIR", self.chars),
+                   patch.object(server, "CHARACTERS", {})]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def post(self, character):
+        request = SimpleNamespace(
+            json=AsyncMock(return_value={"character": character}))
+        return asyncio.run(server.characters_post(request))
+
+    def test_typed_fields_survive_persistence_and_preview_per_lane(self):
+        response = self.post({"name": "Mia", "age": 24, "race": "Korean",
+                              "sex": "female", "identity_ref": "mia.png",
+                              "build": "  five foot   seven ",
+                              "hair": "platinum",
+                              "grooming": "red nails"})
+        self.assertEqual(response.status, 200)
+
+        card = json.loads((self.chars / "mia.json").read_text(encoding="utf-8"))
+        # Normalized on the way in: composition never sees ragged whitespace.
+        self.assertEqual(card["build"], "five foot seven")
+        self.assertEqual(card["hair"], "platinum")
+        self.assertEqual(card["grooming"], "red nails")
+
+        # The load path carries them back untouched.
+        loaded = server.load_characters()
+        self.assertEqual(loaded["mia"]["build"], "five foot seven")
+        self.assertEqual(loaded["mia"]["hair"], "platinum")
+
+        # Composition off the persisted card obeys the lane rule.
+        self.assertIn("Five foot seven.", server.character_subject(card))
+        self.assertNotIn("Five foot seven",
+                         server.character_subject_nonfacial(card))
+
+        # The preview exposes both lane variants.
+        request = SimpleNamespace(
+            json=AsyncMock(return_value={"character": card}))
+        body = payload(asyncio.run(server.characters_preview(request)))
+        self.assertEqual(body["subject"], server.character_subject(card))
+        self.assertEqual(body["subject_ref"],
+                         server.character_subject_nonfacial(card))
+        self.assertIn("Five foot seven.", body["subject"])
+        self.assertNotIn("Five foot seven", body["subject_ref"])
+        self.assertIn("Platinum.", body["subject_ref"])
+        self.assertIn("Red nails.", body["subject_ref"])
+
+    def test_empty_typed_fields_are_not_persisted(self):
+        # Empty means absent - the same card rule as accessories.
+        response = self.post({"name": "Mia", "sex": "female",
+                              "identity_ref": "mia.png",
+                              "build": "", "hair": "   ", "grooming": None})
+        self.assertEqual(response.status, 200)
+        card = json.loads((self.chars / "mia.json").read_text(encoding="utf-8"))
+        self.assertNotIn("build", card)
+        self.assertNotIn("hair", card)
+        self.assertNotIn("grooming", card)
+
+
 if __name__ == "__main__":
     unittest.main()

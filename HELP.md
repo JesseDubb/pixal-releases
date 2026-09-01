@@ -240,6 +240,36 @@ later deleted, its row greys out with the reason instead of failing at render
 time. Changing the model, style, quality or LoRA stack after picking a saved
 style releases it, because the composer no longer matches what was saved.
 
+### The sampler card
+
+Under the LoRA chain sits **Sampler**. Closed, it states the schedule the next
+render runs at; open, it offers sampler, scheduler, steps, CFG and — on Krea 2's
+RES4LYF seats — eta, for this render only. The segmented row at the top says
+where those numbers come from: **recipe** (the lane's own, the default and
+almost always right), **model** (the settings the model's own page recommends),
+or **custom** (yours). **model** is greyed on most builds because most publish
+no such line — three of the models here do, and all three are Z-Image.
+
+Under it, **known good** — a row of pills that set sampler, scheduler, steps and
+eta together in one click. Which ones appear depends on the model you are on:
+
+- **MiniMax H3, reference stills** — **Detail** (`dpmpp_sde_gpu` / `beta`),
+  which measured about 74% more fine detail than the control across six frames
+  and is what the lane ships on; **Speed** (`res_multistep` / `simple`), about
+  35% quicker; and **Community #1** (`seeds_2` / `ddim_uniform`), the top pair
+  in a 3,504-vote community table. Its tip carries the catch: in both of the
+  A/B rounds run here it ignored a position the caption was explicit about.
+  H3's video lane gets its own pair, `er_sde` / `sgm_uniform`, which won on
+  detail and was the fastest of four arms by a third.
+- **Krea 2** — **Recommended**, **Fast** and **Max detail**, from RES4LYF's
+  published figures for the Qwen-Image family. Their tips say "not measured
+  here", because they are documentation rather than something rendered and
+  judged on this machine.
+
+Hover any pill for where its numbers came from. One lights up when the card
+already matches it, and a pill is only offered when the current sampler node can
+actually run it — H3's node has no eta, so no preset writes one there.
+
 ### Characters
 
 Pixal ships with no people in it; you invent them. A **character anchor** is
@@ -748,6 +778,17 @@ naming a model on any render wins over the slot. A pick whose file leaves
 the catalog shows as missing in the row and Automatic runs until the file
 returns. The tip explains the two lanes.
 
+**Text encoder** — H3 only, under the two model slots. H3's stock encoder
+weighs 14.6 GB, and on a 32 GB card it cannot sit beside the 20 GB diffusion
+model, so ComfyUI evicts one to load the other on every render — you can watch
+it happen in the ComfyUI window. The smaller Qwen3-VL 4B and 8B encoders stand
+in through a projection file at roughly 5 GB, which is several gigabytes back
+and faster to load, at some cost to how reliably a face comes back: three of
+four rather than four of four in the comparison that measured it.
+**Automatic** is the 14.6 GB one and renders exactly what it rendered before.
+An option appears only when both of its files are on disk, and a pick whose
+files later go missing quietly runs Automatic.
+
 **Edit speed** — there is no Settings control for this one; it lives only
 in `config.json` in the Pixal folder. `"edit": {"speed": "turbo"}` is the
 default; the other value is `"full"`. Turbo runs the edit model's own
@@ -1186,7 +1227,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.4b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.5b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

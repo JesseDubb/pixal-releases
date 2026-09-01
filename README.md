@@ -6,7 +6,7 @@ The point is repeatability. Model files remain interchangeable within their supp
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.1.4b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.1.5b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 
@@ -307,6 +307,19 @@ only. Each control shows the recipe's own value as the way back, the "model"
 preset applies the settings from the model's page when it carries any, and the
 job card and history record what actually ran. **Save current** carries the
 override into a style; picking another recipe or style starts clean.
+
+Under the segments sits a **known good** row: curated sampler/scheduler
+pairs published by `GET /api/styles/sampler` as `presets` and applied in one
+click. The table is `SAMPLER_PRESETS` in `server.py`, keyed by family;
+`sampler_presets(base_id, model)` filters every row against the seat's real
+option list and key set before offering it, so a pair naming a sampler this node
+does not have is dropped whole, and an `eta` never lands on a `KSamplerSelect`
+that has no such input. H3's rows are locked-seed measurements from this
+machine and carry a `lanes` filter, because stills and video were A/B'd
+separately and disagreed — which is why `H3_STILL_SAMPLER` and `H3_SAMPLER` are
+already separate constants. Krea 2's rows are RES4LYF's published figures for
+the Qwen-Image family and say "not measured here" in their own note; a test
+enforces that wording.
 
 Every recipe has a seat: Realism II tunes its first pass (the 2-step refine is
 the "refined" part and stays authored), Z-Image Turbo exposes sampler, steps
@@ -696,6 +709,16 @@ the interrupt between sampling steps, so Stop reports success and waits out a
 step that is minutes wide. Restarting ComfyUI is the way out. Pixal now says so
 in the lane after two consecutive steps over 120s, rather than leaving you to
 guess.
+
+Two of those three stages fitting is not the same as the render being
+healthy. Even with the chat brain on a hosted API — nothing of it on the card
+— a reference still swaps the full DiT out and back on every job: ComfyUI prints
+`Unloaded partially: 8412.04 MB freed` and then `loaded completely; 19996.14 MB
+loaded` for the same weights it had a minute earlier. That is the floor of this
+lane on a 32 GB card, not a leak. The lever that moves it is **Settings → Image
+→ MiniMax H3 → Text encoder**: the 4B encoder plus its projection weighs about
+4.9 GB against the stock encoder's 14.6 — close to ten gigabytes of headroom,
+and the difference between swapping the DiT every job and leaving it resident.
 
 The usual culprit is the local chat model — llama.cpp holding a 4B GGUF was
 measured at 7.2 GB once its KV cache had grown, and a warmed Qwen3-VL 4B

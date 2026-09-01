@@ -187,7 +187,16 @@ class MiniMaxH3Tests(unittest.TestCase):
             root = Path(td)
             (root / "input").mkdir()
             (root / "input" / "prepared.png").write_bytes(b"prepared")
+            # h3_text_encoder_choice reads the REAL config.json, so this
+            # test's answer changed the moment an encoder was picked in
+            # Settings - it failed on a live install with the 4B chosen.
+            # The assertion below is about the STOCK graph, so pin the
+            # stock answer instead of inheriting the operator's setting.
+            stock = {"id": "", "label": server.H3_CLIP_LABEL,
+                     "clip": server.H3_CLIP, "projection": None}
             with patch.object(server, "CDIR", root), \
+                 patch.object(server, "h3_text_encoder_choice",
+                              return_value=stock), \
                  patch.object(server, "_video_asset", side_effect=all_video_assets):
                 # sparse=False: this is the official FL2VA graph, node for
                 # node. The optional accelerator that rides on top of it has
@@ -209,9 +218,13 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(graph["8"]["inputs"], {
             "model": ["1", 0], "scheduler": "simple", "steps": 20, "denoise": 1.0})
         self.assertEqual(graph["9"]["class_type"], "BasicGuider")
-        self.assertEqual(graph["14"]["class_type"], "VHS_VideoCombine")
+        # 9.96: the tail is core CreateVideo + SaveVideo at 10-bit - the
+        # detailed contract lives in MiniMaxH3TenBitSaveTests.
+        self.assertEqual(graph["14"]["class_type"], "CreateVideo")
         self.assertEqual(graph["14"]["inputs"]["audio"], ["13", 0])
-        self.assertEqual(graph["14"]["inputs"]["crf"], 14)
+        self.assertEqual(graph["14"]["inputs"]["bit_depth"], 10)
+        self.assertEqual(graph["15"]["class_type"], "SaveVideo")
+        self.assertEqual(graph["15"]["inputs"]["video"], ["14", 0])
         self.assertIn("do not invent speech", brief)
         self.assertEqual(info["model_family"], "minimax_h3")
         self.assertEqual(info["model_variant"], "fl2va")
@@ -419,9 +432,11 @@ class MiniMaxH3Tests(unittest.TestCase):
         with patch.dict(server._COMFY_NODES, {"names": None}):
             self.assertTrue(server.h3_multishot_available())
 
-    def test_multishot_keeps_only_the_audio_bearing_video(self):
+    def test_multishot_keeps_its_single_core_save(self):
+        """9.96: multishot saves through core SaveVideo now - ONE file, no
+        -audio suffix, and the delivery filter keeps it."""
+        self.assertTrue(server.keep_video_output("h3_multishot", "take.mp4"))
         self.assertTrue(server.keep_video_output("h3_multishot", "take-audio.mp4"))
-        self.assertFalse(server.keep_video_output("h3_multishot", "take.mp4"))
 
     def test_both_h3_builders_validate_the_canvas_identically(self):
         """One shared helper, so the single-shot and multishot paths cannot drift
@@ -606,8 +621,6 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIsInstance(call.await_args.args[0][1]["content"], str)
 
     def test_vhs_silent_twin_is_not_published(self):
-        self.assertFalse(server.keep_video_output("h3_i2v", "clip_00001.mp4"))
-        self.assertTrue(server.keep_video_output("h3_i2v", "clip_00001-audio.mp4"))
         # ltx_i2v's VHS_VideoCombine has its audio input wired (node 140 <- 201
         # in templates/ltx_i2v.json), so it produces the same silent twin.
         self.assertFalse(server.keep_video_output("ltx_i2v", "clip_00001.mp4"))
@@ -616,6 +629,8 @@ class MiniMaxH3Tests(unittest.TestCase):
         # save, so it leaves the same silent twin behind.
         self.assertFalse(server.keep_video_output("upscale_video", "clip_00001.mp4"))
         self.assertTrue(server.keep_video_output("upscale_video", "clip_00001-audio.mp4"))
+        # The H3 lanes moved to core SaveVideo in 9.96: one file, no twin -
+        # covered by MiniMaxH3TenBitSaveTests.test_delivery_keeps_the_single_core_save.
 
     def test_animate_routes_h3_with_prepared_dimensions(self):
         plan = {"version": 1, "mode": "replace", "engine": "h3", "model": "fl2va",
@@ -719,6 +734,199 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("[Shot 2] At 00:05.000, the shot cuts to", args[3])
         self.assertIn("[Shot 3] At 00:10.000, the shot cuts to", args[3])
         self.assertNotIn(server.H3_SHOT_SEPARATOR, args[3])
+
+
+class MiniMaxH3TenBitSaveTests(unittest.TestCase):
+    """9.96: the three H3 video lanes save 10-bit through core CreateVideo +
+    SaveVideo (H.264 High 10 at codec auto), mirroring ltx25_i2v's wiring in
+    templates/ltx25_i2v.json. Measured on one render encoded both ways the
+    10-bit file is the SMALLER one (4.30 MB against 4.55 MB at 1664x2240) -
+    free quality, and yuv420p10le kills the gradient banding.
+
+    The audio bake is 24fps, so CreateVideo's fps is the literal 24 the
+    VHS_VideoCombine pinned - never a default, never derived. The
+    filename_prefix keeps today's value byte-for-byte: the ledger and the
+    delivery path match on it."""
+
+    STOCK = {"id": "", "label": server.H3_CLIP_LABEL, "clip": server.H3_CLIP,
+             "projection": None}
+    UNTOUCHED = json.loads(
+        (Path(__file__).resolve().parent / "fixtures"
+         / "pre_10bit_video_lanes.json").read_text(encoding="utf-8"))
+
+    def build_i2v(self, **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "h3_text_encoder_choice",
+                              return_value=self.STOCK), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets):
+                kw.setdefault("seconds", 10)
+                kw.setdefault("width", 768)
+                kw.setdefault("height", 1344)
+                kw.setdefault("model", "fl2va")
+                kw.setdefault("sparse", False)
+                return server.build_h3_i2v("She turns toward the window.",
+                                           987, "prepared.png", **kw)
+
+    def build_multishot(self, motion, **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets):
+                kw.setdefault("width", 768)
+                kw.setdefault("height", 1344)
+                kw.setdefault("model", "fl2va")
+                return server.build_h3_multishot(motion, 987, "prepared.png",
+                                                 **kw)
+
+    def build_ref2v(self, brief, refs=("ref0.png",), **kw):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            for name in refs:
+                (root / "input" / name).write_bytes(b"ref")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets):
+                kw.setdefault("seconds", 5)
+                kw.setdefault("width", 1344)
+                kw.setdefault("height", 768)
+                kw.setdefault("model", "ref2va")
+                return server.build_h3_ref2v(brief, 987, list(refs), **kw)
+
+    def assert_core_tail(self, graph, create_id, save_id, images, audio,
+                         prefix):
+        """One CreateVideo at 24fps/10-bit carrying exactly the links the
+        VHS_VideoCombine carried, one SaveVideo on today's prefix - and no
+        VHS left in the graph."""
+        create = graph[create_id]
+        self.assertEqual(create["class_type"], "CreateVideo")
+        self.assertEqual(create["inputs"], {
+            "images": images, "audio": audio, "fps": 24, "bit_depth": 10})
+        save = graph[save_id]
+        self.assertEqual(save["class_type"], "SaveVideo")
+        self.assertEqual(save["inputs"], {
+            "video": [create_id, 0], "filename_prefix": prefix,
+            "format": "auto", "codec": "auto"})
+        classes = [node["class_type"] for node in graph.values()]
+        self.assertNotIn("VHS_VideoCombine", classes)
+        self.assertEqual(classes.count("CreateVideo"), 1)
+        self.assertEqual(classes.count("SaveVideo"), 1)
+
+    def test_the_i2v_lane_saves_10_bit_through_core_video_nodes(self):
+        graph, _brief, _info = self.build_i2v()
+        self.assert_core_tail(graph, "14", "15", ["12", 0], ["13", 0],
+                              "pixal_dm/h3_she_turns_toward_the_win")
+        for node_id, node in graph.items():
+            for value in node.get("inputs", {}).values():
+                if isinstance(value, list) and len(value) == 2 \
+                        and isinstance(value[0], str):
+                    self.assertIn(value[0], graph, f"{node_id} has bad link {value}")
+
+    def test_the_multishot_lane_saves_10_bit_through_core_video_nodes(self):
+        graph, _brief, _info = self.build_multishot("Shot one.\n---\nShot two.")
+        self.assert_core_tail(graph, "7", "8", ["6", 0], ["6", 1],
+                              "pixal_dm/h3_multishot_shot_one")
+
+    def test_the_ref2v_lane_saves_10_bit_through_core_video_nodes(self):
+        graph, _brief, _info = self.build_ref2v("She browses the shelf.")
+        self.assert_core_tail(graph, "14", "15", ["12", 0], ["13", 0],
+                              "pixal_dm/h3_ref_she_browses_the_shelf")
+
+    def test_the_2x_upscale_keeps_one_core_save_of_the_refined_decode(self):
+        """The upscale branch re-points the save node's images at the 2x
+        decode; with node 14 now the CreateVideo that line is untouched, and
+        there is still exactly ONE video output."""
+        cfg = {"upscale": {"image_model": "4x\\4xPurePhoto-RealPLSKR.pth"}}
+        catalog = [{"kind": "upscale_models",
+                    "rel": "4x\\4xPurePhoto-RealPLSKR.pth", "mtime": 0}]
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            (root / "input" / "prepared.png").write_bytes(b"prepared")
+            with patch.object(server, "CDIR", root), \
+                 patch.object(server, "load_config", return_value=cfg), \
+                 patch.object(server, "model_catalog", return_value=catalog), \
+                 patch.object(server, "_video_asset",
+                              side_effect=all_video_assets), \
+                 patch.dict(server._COMFY_NODES,
+                            {"names": frozenset({server.H3_UPSCALE_NODE})}):
+                graph, _b, _i = server.build_h3_i2v(
+                    "She turns.", 987, "prepared.png", seconds=5,
+                    width=928, height=1120, model="fl2va", upscale=True)
+        self.assert_core_tail(graph, "14", "15", ["h3:up:decode", 0],
+                              ["13", 0], "pixal_dm/h3_she_turns_audio_generate")
+
+    def test_delivery_keeps_the_single_core_save(self):
+        """The trap: core SaveVideo writes ONE file and it does NOT carry the
+        -audio suffix. A filter still demanding the suffix drops every 10-bit
+        clip on arrival - which looks exactly like a render that produced
+        nothing. ltx25_i2v's exemption is the model."""
+        for template in ("h3_i2v", "h3_multishot", "h3_ref2v"):
+            with self.subTest(template=template):
+                self.assertTrue(server.keep_video_output(
+                    template, "h3_she_turns_00001_.mp4"))
+                # the suffix is no longer required, but nothing forbids it
+                self.assertTrue(server.keep_video_output(
+                    template, "h3_she_turns_00001_-audio.mp4"))
+
+    def test_ltx_i2v_still_saves_through_vhs(self):
+        with patch.object(server, "_video_asset", side_effect=all_video_assets):
+            graph, _m, _i = server.build_ltx_i2v("she turns", 1, "a.png",
+                                                 seconds=8)
+        classes = [node["class_type"] for node in graph.values()]
+        self.assertIn("VHS_VideoCombine", classes)
+        self.assertNotIn("CreateVideo", classes)
+        self.assertNotIn("SaveVideo", classes)
+
+    def test_the_untouched_lanes_build_byte_identically_to_before(self):
+        """ltx25_i2v and upscale_video, rebuilt under the capture harness and
+        compared against tests/fixtures/pre_10bit_video_lanes.json taken from
+        8360d1f (briefs/9.96-capture.py untouched)."""
+        from PIL import Image as _Image
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "input").mkdir()
+            _Image.new("RGB", (832, 1216)).save(root / "input" / "prepared.png")
+            with patch.object(server, "CDIR", root), \
+                 patch.dict(server._COMFY_NODES,
+                            {"names": frozenset({server.LTX25_VRAM_GATE_NODE})}):
+                graph, _m, _i = server.build_ltx25_i2v("she turns", 5,
+                                                       "prepared.png")
+        self.assertEqual(graph, self.UNTOUCHED["ltx25_i2v"])
+
+        with TemporaryDirectory() as td:
+            clip = Path(td) / "clip.mp4"
+            clip.write_bytes(b"x")
+            with patch.object(server, "load_config", return_value={
+                    "upscale": {"video_mode": "VSR High",
+                                "video_scale": 2.0}}), \
+                 patch.object(server, "_video_upscale_node",
+                              return_value="DenoRTXVFXEasyUpscale"), \
+                 patch.dict(server._COMFY_NODES, {"names": frozenset()}):
+                graph, _s, _i = server.build_upscale_video(
+                    "test clip", 7, video=str(clip), mode="VSR High",
+                    prompt="ignored")
+
+        def scrub(node):
+            for key, value in node.items():
+                if isinstance(value, dict):
+                    scrub(value)
+                elif isinstance(value, list):
+                    node[key] = ["__CLIP__" if v == str(clip) else v
+                                 for v in value]
+                elif value == str(clip):
+                    node[key] = "__CLIP__"
+
+        scrub(graph)
+        self.assertEqual(graph, self.UNTOUCHED["upscale_video"])
 
 
 class VideoDefaultModelTests(unittest.TestCase):
@@ -1348,14 +1556,18 @@ class MiniMaxH3UpscaleTests(unittest.TestCase):
 
     def test_node_14_muxes_the_2x_decode_with_the_render_audio(self):
         graph, _b, _i = self.build()
-        # One video output, the 2x - no second VHS_VideoCombine.
+        # One video output, the 2x - one CreateVideo/SaveVideo pair, no VHS.
         self.assertEqual([n for n in graph
-                          if graph[n]["class_type"] == "VHS_VideoCombine"],
+                          if graph[n]["class_type"] == "CreateVideo"],
                          ["14"])
+        self.assertNotIn("VHS_VideoCombine",
+                         {n["class_type"] for n in graph.values()})
         self.assertEqual(graph["14"]["inputs"]["images"], ["h3:up:decode", 0])
         # Audio stays the render's own decode: the pack carries the
         # 32-channel audio latent through untouched and never re-samples it.
         self.assertEqual(graph["14"]["inputs"]["audio"], ["13", 0])
+        self.assertEqual(graph["15"]["class_type"], "SaveVideo")
+        self.assertEqual(graph["15"]["inputs"]["video"], ["14", 0])
         self.assertEqual(graph["h3:up:decode"]["inputs"], {
             "samples": ["h3:up:sample", 0], "vae": ["3", 0]})
 

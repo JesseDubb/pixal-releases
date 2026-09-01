@@ -370,8 +370,23 @@ def validate_character_accessories(raw):
     return out
 
 
+def _typed_field_sentence(ch, key):
+    """One typed card field (9.95: build, hair, grooming) as a caption
+    fragment: whitespace-collapsed, first letter capitalized, trailing period
+    ensured, leading space included. An empty or missing field contributes
+    nothing - not even the space. Which fields a lane sends is the caller's
+    choice, never this function's."""
+    s = " ".join(str(ch.get(key) or "").split()).rstrip(". ")
+    if not s:
+        return ""
+    return " " + s[0].upper() + s[1:] + "."
+
+
 def character_subject(ch):
-    """The standing 'who is this person' block for txt2img captions."""
+    """The standing 'who is this person' block for txt2img captions. After
+    the legacy style sentence come the typed fields (9.95) in card order -
+    build, hair, grooming. A txt2img lane has no photo, so every canon field
+    rides."""
     if ch.get("subject_block"):
         return ch["subject_block"]
     subj, _obj = PRONOUNS.get(ch.get("sex", "female"), PRONOUNS["other"])
@@ -386,17 +401,24 @@ def character_subject(ch):
     if ch.get("style"):
         st = ch["style"].rstrip(".").strip()
         line += " " + st[0].upper() + st[1:] + "."
+    line += _typed_field_sentence(ch, "build")
+    line += _typed_field_sentence(ch, "hair")
+    line += _typed_field_sentence(ch, "grooming")
     return line
 
 def character_subject_nonfacial(ch):
     """character_subject minus what a reference photo already carries (brief
     9.67). On the h3_ref_still lane the wired photo DEFINES the person, so
     the composed clause drops the age - identity_edit's own rule, "NEVER
-    describe the face or age (the reference carries it)". Race, hair, build
-    and the style sentence stay: canon that does not fight the photo, and
-    eye colour is the one feature the identity lane states explicitly. A
-    hand-written subject_block passes through verbatim - the author's own
-    canon, the same trust every txt2img lane gives it."""
+    describe the face or age (the reference carries it)". Race and the style
+    sentence stay: canon that does not fight the photo, and eye colour is
+    the one feature the identity lane states explicitly. Of the typed fields
+    (9.95) build is dropped - the photo carries build completely, and the
+    2026-08-31 measurement showed forty words of build prose breaking the
+    framing the photo was holding - while hair (its colour drifts without a
+    stated defence) and grooming (the photo's crop may not carry it) still
+    ride. A hand-written subject_block passes through verbatim - the
+    author's own canon, the same trust every txt2img lane gives it."""
     if ch.get("subject_block"):
         return ch["subject_block"]
     subj, _obj = PRONOUNS.get(ch.get("sex", "female"), PRONOUNS["other"])
@@ -411,6 +433,8 @@ def character_subject_nonfacial(ch):
     if ch.get("style"):
         st = ch["style"].rstrip(".").strip()
         line += " " + st[0].upper() + st[1:] + "."
+    line += _typed_field_sentence(ch, "hair")
+    line += _typed_field_sentence(ch, "grooming")
     return line
 
 def wardrobe_lock_for(ch):
@@ -456,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.4b"
+PIXAL_VERSION = "1.1.5b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -8229,10 +8253,26 @@ def _h3_clip_node(assets):
     lane has always built."""
     projection = assets.get("clip_projection")
     if projection:
+        # type "auto" reads the checkpoint header, which is the node's own
+        # documented default: "Override only if that fails: krea2 = 4B,
+        # boogu = 8B, minimax = 32B." Pinning "minimax" here refused every
+        # option this table exists to offer - the 8B and both 4B rows all
+        # failed with "is a 4B, but the type is set to minimax".
+        #
+        # mode "streaming" folds the encoder back to RAM after it encodes
+        # instead of pinning it on the card. The node's tooltip prices the
+        # trade and it is not close on a 32 GB card: streaming is the SAME
+        # encoding speed as resident and returns the VRAM for sampling,
+        # costing one transfer when the encoder is next used - while
+        # resident "never leaves the card, so the diffusion model keeps 4-9
+        # GB less headroom at every sampling step ... the encoder runs
+        # once, the DiT runs at every step, and it will start paging its
+        # own weights instead." The whole point of a smaller encoder is
+        # headroom for the DiT; pinning it gives that back.
         return {"class_type": H3_CLIP_PROJ_NODE,
-                "inputs": {"clip_name": assets["clip"], "type": "minimax",
+                "inputs": {"clip_name": assets["clip"], "type": "auto",
                            "projection": projection,
-                           "device": "cuda:0", "mode": "resident"}}
+                           "device": "cuda:0", "mode": "streaming"}}
     return {"class_type": "CLIPLoader",
             "inputs": {"clip_name": assets["clip"], "type": "minimax",
                        "device": "default"}}
@@ -10330,11 +10370,12 @@ def validate_video_selection(engine=None, model=None, seconds=None, fps=None):
 def keep_video_output(template, filename):
     """VHS writes a silent mp4 twin beside its audio-bearing ``-audio`` file
     whenever the graph's VHS_VideoCombine has an audio input wired - which is
-    exactly the templates listed below. ltx25_i2v saves through core SaveVideo
-    and is genuinely exempt, and ltx25_upscale_video is a file built inside
-    build_upscale_video, so it arrives here as "upscale_video"."""
+    exactly the templates listed below. The H3 lanes (9.96) and ltx25_i2v
+    save through core CreateVideo + SaveVideo, which writes ONE file with no
+    suffix, and are genuinely exempt; ltx25_upscale_video is a file built
+    inside build_upscale_video, so it arrives here as "upscale_video"."""
     name = str(filename or "").lower()
-    if template in ("h3_i2v", "h3_multishot", "h3_ref2v", "ltx_i2v", "upscale_video") and \
+    if template in ("ltx_i2v", "upscale_video") and \
             name.endswith((".mp4", ".webm", ".mov")):
         return bool(re.search(r"-audio\.(mp4|webm|mov)$", name))
     return True
@@ -10610,15 +10651,18 @@ def build_h3_i2v(motion, seed, image, seconds=5, width=None, height=None,
             "samples": ["11", 0], "vae": ["3", 0]}},
         "13": {"class_type": "VAEDecodeAudio", "inputs": {
             "samples": ["11", 0], "vae": ["4", 0]}},
-        "14": {"class_type": "VHS_VideoCombine", "inputs": {
-            # CRF, never bitrate: quality-targeted, so size floats down on easy
-            # content. 14 is visually transparent for these canvases; 10 bought
-            # ~40% bigger files for nothing a viewer could see.
-            "images": ["12", 0], "audio": ["13", 0], "frame_rate": 24,
-            "loop_count": 0,
+        # 9.96: core CreateVideo + SaveVideo at 10-bit, mirroring ltx25_i2v's
+        # wiring. Measured on one render encoded both ways, the 10-bit file is
+        # the SMALLER one (4.30 MB against 4.55 MB at 1664x2240) - free
+        # quality, and yuv420p10le (H.264 High 10 at codec auto) smooths the
+        # gradients. fps stays the literal 24 the audio bake is synced to.
+        "14": {"class_type": "CreateVideo", "inputs": {
+            "images": ["12", 0], "audio": ["13", 0], "fps": 24,
+            "bit_depth": 10}},
+        "15": {"class_type": "SaveVideo", "inputs": {
+            "video": ["14", 0],
             "filename_prefix": f"pixal_dm/h3_{slug(h3_slug_source(brief))[:24]}",
-            "format": "video/h264-mp4", "crf": 14, "pix_fmt": "yuv420p",
-            "pingpong": False, "save_output": True}},
+            "format": "auto", "codec": "auto"}},
     }
     if last_image:
         last_name = input_ref_name(last_image)
@@ -10861,13 +10905,14 @@ def build_h3_multishot(motion, seed, image, seconds=5, shots=None, width=None,
             # Measured by the pack author: one seed for every shot drifts BOTH
             # the face and the voice. Identity lives in the conditioning.
             "seed_per_shot": True}},
-        "7": {"class_type": "VHS_VideoCombine", "inputs": {
-            "images": ["6", 0], "audio": ["6", 1], "frame_rate": 24,
-            "loop_count": 0,
-            # same encode policy as the single-shot graph: CRF 14, never bitrate
+        # same 10-bit core save as the single-shot graph (9.96), audio wired
+        "7": {"class_type": "CreateVideo", "inputs": {
+            "images": ["6", 0], "audio": ["6", 1], "fps": 24,
+            "bit_depth": 10}},
+        "8": {"class_type": "SaveVideo", "inputs": {
+            "video": ["7", 0],
             "filename_prefix": f"pixal_dm/h3_multishot_{slug(script[0])[:20]}",
-            "format": "video/h264-mp4", "crf": 14, "pix_fmt": "yuv420p",
-            "pingpong": False, "save_output": True}},
+            "format": "auto", "codec": "auto"}},
     }
     # Only the memory sampler declares these, and there they are REQUIRED. Set
     # before the override loop so a caller can still tune them by hand.
@@ -10939,7 +10984,8 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     The graph is the official R2V template ported into Pixal's API shape: the
     proven fl2va spine byte-for-byte (encoder, both VAEs, KSamplerSelect
     res_multistep, BasicScheduler simple/20/1.0, BasicGuider, RandomNoise,
-    SamplerCustomAdvanced, VAEDecode/VAEDecodeAudio, the VHS tail at CRF 14)
+    SamplerCustomAdvanced, VAEDecode/VAEDecodeAudio, the 9.96 core
+    CreateVideo/SaveVideo 10-bit tail)
     with exactly three deltas - the UNET points at the ref2va build, node 6 is
     MiniMaxH3ReferenceToVideo (which takes audio_vae, and whose reference
     slots are flat dotted keys: ref_images.ref_image_0, ...), and the prompt
@@ -11057,13 +11103,14 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
             "samples": ["11", 0], "vae": ["3", 0]}},
         "13": {"class_type": "VAEDecodeAudio", "inputs": {
             "samples": ["11", 0], "vae": ["4", 0]}},
-        "14": {"class_type": "VHS_VideoCombine", "inputs": {
-            # Same encode policy as the fl2va graph: CRF 14, never bitrate.
-            "images": ["12", 0], "audio": ["13", 0], "frame_rate": 24,
-            "loop_count": 0,
+        # Same 10-bit core save as the fl2va graph (9.96).
+        "14": {"class_type": "CreateVideo", "inputs": {
+            "images": ["12", 0], "audio": ["13", 0], "fps": 24,
+            "bit_depth": 10}},
+        "15": {"class_type": "SaveVideo", "inputs": {
+            "video": ["14", 0],
             "filename_prefix": f"pixal_dm/h3_ref_{slug(h3_slug_source(brief))[:24]}",
-            "format": "video/h264-mp4", "crf": 14, "pix_fmt": "yuv420p",
-            "pingpong": False, "save_output": True}},
+            "format": "auto", "codec": "auto"}},
     }
     for i, staged in enumerate(refs):
         graph[_H3_REF2V_REF_NODES[i]] = {
@@ -19942,6 +19989,15 @@ async def characters_post(req):
         ch["accessories"] = accessories
     else:
         ch.pop("accessories", None)
+    # 9.95: typed canon fields (build, hair, grooming) are free text like
+    # style - collapsed on the way in so composition never inherits ragged
+    # whitespace. Empty means absent, the same card rule as accessories.
+    for field in ("build", "hair", "grooming"):
+        value = " ".join(str(ch.get(field) or "").split())
+        if value:
+            ch[field] = value
+        else:
+            ch.pop(field, None)
     CHAR_DIR.mkdir(exist_ok=True)
     (CHAR_DIR / f"{ch['id']}.json").write_text(json.dumps(ch, ensure_ascii=False, indent=1),
                                               encoding="utf-8")
@@ -20140,11 +20196,17 @@ async def characters_preview(req):
     the render: character_subject() is prepended to every txt2img caption and
     wardrobe_lock_for() closes it. Someone filling this in was previously
     writing into a sentence they never saw.
+
+    Two subject variants (9.95): "subject" is what a txt2img lane sends
+    (composed WITH age, all typed fields); "subject_ref" is what a lane with
+    a wired reference photo sends (character_subject_nonfacial - no age, no
+    build). The form shows both so the per-lane rule is visible while typing.
     """
     body = await req.json()
     ch = body.get("character") or {}
     return web.json_response({"ok": True,
                               "subject": character_subject(ch),
+                              "subject_ref": character_subject_nonfacial(ch),
                               "wardrobe": wardrobe_lock_for(ch)})
 
 

@@ -1,6 +1,30 @@
 # Changelog
 
-## 1.1.6b — unreleased
+## 1.1.7b — 2026-09-01
+
+**Settings speaks one design language now.** The panel was six tabs of
+controls collected over twenty releases, each in whatever style the week it
+shipped had — stacked labels, tall switches, loose spacing that read more
+prototype than product. Every control now belongs to one small family: a
+wide, low pill toggle with a dark knob on the chartreuse track, pill
+selectors for short choices, compact value pills for pickers, and every
+setting on a single 34-pixel line — its name, one plain fact about it, and
+its control, nothing wrapping. Installed model families wear a quiet
+chartreuse badge; a family you could add shows an Install badge instead.
+There is a search field at the top (press `/` to jump to it) that filters
+the whole tab as you type. And the Brain tab is called Chat now, which is
+where you expected it to be all along. No setting moved, changed meaning,
+or changed its default — the panel just grew up.
+
+**The sampler suggestions are called Presets.** The tuning card's
+"KNOWN GOOD" header read like a warning label; it now says Presets, in
+words. The community table-topper pill is gone from the MiniMax H3 stills
+row — it measured lowest of the three here and twice pushed the subject
+off a position the caption had pinned, and a preset that loses every
+audition should not keep its seat. The measured Detail and Speed pairs
+remain.
+
+## 1.1.6b — 2026-09-01
 
 **Editing a character no longer resets your model pick.** Swapping a
 character's reference photo — or touching any field on their card — quietly

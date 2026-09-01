@@ -258,7 +258,7 @@ class BrainTabRowTests(unittest.TestCase):
 
     def test_the_subline_is_the_server_published_family_list(self):
         brain = self._brain_tab()
-        self.assertIn("gloss={officialGloss}", brain)
+        self.assertIn("hint={officialGloss}", brain)   # 10.0: the row's subline
         self.assertIn("officialFamilies.map(familyName)", JSX)
         self.assertIn("d.llm.official_families", JSX)
 

@@ -205,20 +205,28 @@ def _visible_strings():
     for props, block in _sections():
         if "gloss" in props:
             out += re.findall(r'"(?:[^"\\]|\\.)*"|`[^`]*`', props["gloss"])
-        for fp in _field_props(block):
+        # 10.0: hints file-wide - the singleton rows left their Sections,
+        # their sublines are still visible prose
+        for fp in _field_props(SRC):
             if "hint" in fp:
                 out += re.findall(r'"(?:[^"\\]|\\.)*"|`[^`]*`', fp["hint"])
-        for m in re.finditer(r"<Foot>(.*?)</Foot>", block, re.S):
-            out.append(m.group(1))
-        for m in re.finditer(r"<LockKey[^/]*/>(.*?)</div>", block, re.S):
-            out.append(m.group(1))
+    for m in re.finditer(r"<Foot>(.*?)</Foot>", SRC, re.S):
+        out.append(m.group(1))
+    for m in re.finditer(r"<LockKey[^/]*/>(.*?)</div>", SRC, re.S):
+        out.append(m.group(1))
     return out
 
 
 class SettingsCopy(unittest.TestCase):
 
     def test_total_visible_prose_is_under_150_words(self):
-        total = sum(g + b + c for _, g, b, c in _slots())
+        # 10.0: singleton rows live OUTSIDE Sections now, so the total is
+        # file-wide - every Section gloss plus every Field hint plus the
+        # trust notes, wherever they sit. The words moved seat (gloss ->
+        # subline), not out of the budget.
+        gloss = sum(g for _, g, _, _ in _slots())
+        hu, hc = _hints(SRC)
+        total = gloss + hu + hc + _foot_words(SRC) + _note_words(SRC)
         self.assertLess(total, 150,
                         "visible prose crept back up to %d words" % total)
 
@@ -268,8 +276,10 @@ class SettingsCopy(unittest.TestCase):
             for fp in _field_props(block):
                 self.assertLessEqual(fp.get("label", "").count("<InfoTip"), 1,
                                      "two tips on one field label")
-                self.assertFalse("<InfoTip" in fp.get("label", "") and "hint" in fp,
-                                 "a field has both a tip and a hint - pick one")
+                # 10.0: a row MAY pair a tip with its subline - the subline is the
+                # one FACT, the tip is the RULE; the 9.17b XOR died with the
+                # stacked layout the rule was written for
+
             self.assertNotIn("<InfoTip", props.get("gloss", ""),
                              "a tip is hiding inside the visible gloss")
     def test_edit_section_names_both_lanes(self):
@@ -280,8 +290,8 @@ class SettingsCopy(unittest.TestCase):
         for props, block in _sections():
             if "Edit model" in props.get("title", ""):
                 labels = [fp.get("label") for fp in _field_props(block)]
-                self.assertTrue(any(l and "whole frame" in l for l in labels))
-                self.assertTrue(any(l and "masked area" in l for l in labels))
+                self.assertTrue(any(l and "Whole frame" in l for l in labels))
+                self.assertTrue(any(l and "Masked area" in l for l in labels))
                 break
         else:
             self.fail("the Edit model section is gone")
@@ -428,7 +438,9 @@ class CleanUpSection(unittest.TestCase):
         props, _ = self._block()
         self.assertIn("Nothing hands memory back until asked. "
                       "Each button says what it freed.", props["title"])
-        self.assertEqual(props.get("gloss"), '"A full card is a slow render."')
+        # 10.0: the gloss moved into the tip - "A full card is a slow render."
+        # states a rule, and a rule rides the tip, not the subline
+        self.assertIn("A full card is a slow render.", props["title"])
 
     def test_the_five_actions_in_their_order(self):
         _, block = self._block()
@@ -538,15 +550,16 @@ class H3Upscale2xSection(unittest.TestCase):
     def test_the_section_sits_in_finishing_right_after_the_upscaler(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
         fin = video.index("<GroupLabel>finishing</GroupLabel>")
-        upscaler = video.index('<Section title="Upscaler"', fin)
-        nxt = video.index("<Section ", upscaler + 1)
+        upscaler = video.index('<Section title={<>Upscaler', fin)
+        # 10.0: the 2x default is a ROW now, immediately after the section
+        nxt = video.index("<Field ", video.index("</Section>", upscaler))
         self.assertIn("H3 2× upscale", video[nxt:nxt + 300],
-                      "the section right after Upscaler is not the H3 2× one")
+                      "the row right after Upscaler is not the H3 2× one")
 
     def test_the_infotip_names_both_undiscoverable_facts(self):
-        tips = [t for t in _tip_texts() if t and "finished clip" in t]
+        tips = [t for t in _tip_texts() if t and "inside the render" in t]
         self.assertTrue(tips, "no tip says why 2× can never be a clip action")
-        self.assertIn("inside the render", tips[0])
+        self.assertIn("finished clip", tips[0])
         self.assertIn("3×", tips[0])
 
     def test_the_row_disables_with_a_truthful_hint(self):
@@ -565,10 +578,10 @@ class H3ResolutionSection(unittest.TestCase):
 
     def test_the_section_sits_next_to_the_2x_one(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
-        two_x = video.index('<Section title={<>H3 2× upscale')
-        nxt = video.index("<Section ", two_x + 1)
+        two_x = video.index('label={<>H3 2× upscale')
+        nxt = video.index("<Field ", two_x + 1)
         self.assertIn("H3 resolution", video[nxt:nxt + 300],
-                      "the section right after H3 2× upscale is not the "
+                      "the row right after H3 2× upscale is not the "
                       "H3 resolution one")
 
     def test_the_wire_key_is_h3_resolution(self):
@@ -581,8 +594,9 @@ class H3ResolutionSection(unittest.TestCase):
         self.assertIn("~${Math.round(r.mp)}x the render time.", SRC)
 
     def test_the_gloss_is_the_per_clip_contract(self):
-        section = SRC[SRC.index('<Section title={<>H3 resolution'):]
-        section = section[:section.index("</Section>")]
+        section = SRC[SRC.index('label={<>H3 resolution'):]
+        # 10.0: the gloss is the row's inline subline now, same words
+        section = section[:section.index("</Field>")]
         self.assertIn("The popup still decides per clip — this sets the default.",
                       section)
         self.assertIn("<SegmentedControl", section)

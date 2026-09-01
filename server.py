@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.6b"
+PIXAL_VERSION = "1.1.7b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -3661,12 +3661,10 @@ SAMPLER_PRESETS = {
                  "the pair that produced the sets Jesse called amazing.",
          "tuning": {"sampler_name": "res_multistep", "scheduler": "simple",
                     "steps": 20}},
-        {"id": "community", "label": "Community #1", "lanes": H3_STILL_LANES,
-         "note": "Tops a 3,504-vote community table. Measured lowest of the "
-                 "three here, and in two runs it pushed the subject off a "
-                 "position the caption pinned her to.",
-         "tuning": {"sampler_name": "seeds_2", "scheduler": "ddim_uniform",
-                    "steps": 20}},
+        # The community table-topper (seeds_2 x ddim_uniform) was offered as a
+        # third pill and cut 2026-09-01: measured lowest of the three here, and
+        # in two runs it pushed the subject off a position the caption pinned
+        # her to. docs/2026-08-31-sampler-presets.md keeps the measurements.
         # Video was A/B'd separately (2026-08-28) and the answer differs from
         # stills, which is exactly why the constants are already split.
         {"id": "video_detail", "label": "Detail",

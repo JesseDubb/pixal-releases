@@ -128,7 +128,9 @@ class PayloadTests(unittest.TestCase):
                "components" / "Composer.jsx").read_text(encoding="utf-8")
         self.assertIn("const presets = seat.presets || []", jsx)
         self.assertIn("const applyPreset = (p) =>", jsx)
-        self.assertIn("known good", jsx)
+        self.assertIn("Presets", jsx)
+        self.assertNotIn("known good", jsx)
+        self.assertNotIn("Known Good", jsx)
 
 
 if __name__ == "__main__":

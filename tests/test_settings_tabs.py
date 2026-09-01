@@ -19,7 +19,7 @@ SRC = (ROOT / "web" / "src" / "components" / "SettingsMenu.jsx").read_text(encod
 HELP = (ROOT / "HELP.md").read_text(encoding="utf-8")
 
 EXPECTED_TABS = [("general", "General"), ("image", "Image"), ("video", "Video"),
-                 ("models", "Models"), ("brain", "Brain"), ("about", "About")]
+                 ("models", "Models"), ("brain", "Chat"), ("about", "About")]
 
 
 def _tab_blocks(src):
@@ -136,12 +136,14 @@ class SettingsTabs(unittest.TestCase):
 
     def test_at_most_two_segmented_rows_per_section(self):
         for tab, body in BLOCKS.items():
-            for chunk in body.split("<Section "):
+            for chunk in re.split(r"<Section |<Rows", body):
+                # 10.0: a run of 34px rows is the grouping unit a Section
+                # was; the cap reads per chunk either way
                 n = chunk.count("<SegmentedControl")
                 # 9.53's sanctioned exception (DESIGN.md): the clip finisher
                 # stacks engine + quality + frame rate, each sub row existing
                 # only because of the one above it.
-                assert n <= 2 or 'label="video clips"' in chunk, \
+                assert n <= 2 or 'label="Video clips"' in chunk, \
                     f"{tab} has a section stacking {n} segmented rows"
 
 
@@ -159,5 +161,5 @@ class SettingsTabs(unittest.TestCase):
     def test_help_settings_section_matches_the_new_tabs(self):
         s6 = HELP.split("## 6. Settings reference")[1].split("## 7.")[0]
         for heading in ["### General", "### Image", "### Video", "### Models",
-                        "### Brain", "### About"]:
+                        "### Chat", "### About"]:
             assert heading in s6, f"HELP.md §6 missing {heading}"

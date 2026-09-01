@@ -57,7 +57,7 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 # the Image-tab installed-count gloss); editCfg owns two (the picker and
 # its count gloss). h3Cfg owns ONE: 9.91's two model pickers and 9.94's text
 # encoder are all in the MiniMax H3 section now, so a single gate swaps three
-# 28px Bar ghosts for three Pickers. (The encoder briefly had a second gate of
+# PickerGhost value pills for three Pickers. (The encoder briefly had a second gate of
 # its own under VRAM profile; it moved on 2026-08-31 - Jesse, "I want the
 # option in settings under minimax" - and one gate covering the section is the
 # better shape anyway: the three rows land together or not at all.)
@@ -67,7 +67,8 @@ GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 2,
          # it is an image setting and it lands on the Image tab.
          "stillCfg": 1, "h3Cfg": 1}
 
-GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<LineGhost", "<ValueGhost", "<Bar")
+GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<SwitchGhost", "<LineGhost",
+                 "<ValueGhost", "<Bar")
 
 
 def _skip_string(src, i):
@@ -202,7 +203,9 @@ class SettingsLoading(unittest.TestCase):
         for slot in GATES:
             for inverted, _, _, then_span, else_span in _gates(slot):
                 real_spans.append(else_span if inverted else then_span)
-        for m in re.finditer(r"<(SegmentedControl|ScrollPicker|TabStrip)\b", SRC):
+        # 10.0: the pixal toggle joined the scan - a Switch shows the same
+        # selection lie an ungated segment row would
+        for m in re.finditer(r"<(SegmentedControl|ScrollPicker|TabStrip|Switch)\b", SRC):
             ctx = SRC[m.start():m.start() + 200]
             if "value={store.themePref}" in ctx or "value={tab}" in ctx:
                 continue  # synchronous: the theme store and the saved tab
@@ -217,22 +220,20 @@ class SettingsLoading(unittest.TestCase):
         # the collapsed partials are gone
         self.assertNotIn("loading…", SRC)
         self.assertNotIn("...((videoCfg && videoCfg.engines) || [])", SRC)
-        # PickerGhost IS the ScrollPicker trigger: same 38px box
+        # PickerGhost IS the value-pill trigger (10.0): same 24px box
         picker_ghost = re.search(r"export const PickerGhost = .*?\n\);", SKEL, re.S)
         self.assertIsNotNone(picker_ghost, "PickerGhost is gone from Skeleton.jsx")
-        self.assertIn("height: 38", picker_ghost.group(0))
-        trigger = re.search(r'width: "100%", height: (\d+), display: "flex"', SRC)
+        self.assertIn("height: 24", picker_ghost.group(0))
+        trigger = re.search(r'width: "fit-content", maxWidth: 260, height: (\d+), display: "flex"', SRC)
         self.assertIsNotNone(trigger, "the ScrollPicker trigger lost its fixed height")
-        self.assertEqual(trigger.group(1), "38")
-        # SegGhost IS the segmented control's capsule: 1px border + 3px
-        # padding around a 32px row; its buttons pad 8px vertically around a
-        # 16px line - 2×1 + 2×3 + 2×8 + 16 = 40 on both sides.
+        self.assertEqual(trigger.group(1), "24")
+        # SegGhost IS the pill selector's capsule: 1px border + 2px padding
+        # around a 22px option - 2×1 + 2×2 + 22 = 28 on both sides.
         seg_ghost = re.search(r"export const SegGhost = .*?\n\);", SKEL, re.S)
         self.assertIsNotNone(seg_ghost, "SegGhost is gone from Skeleton.jsx")
-        self.assertIn("h={32}", seg_ghost.group(0))
-        self.assertIn("padding: 3", seg_ghost.group(0))
-        # the control itself (lib/SegmentedControl.jsx, 9.23b) still renders
-        # that exact box: 3px capsule padding, 8px vertical segment padding
+        self.assertIn("h={22}", seg_ghost.group(0))
+        self.assertIn("padding: 2", seg_ghost.group(0))
+        # the flex variant (other surfaces) still renders its own box
         self.assertIn("padding: 3", SEG)
         self.assertIn('"8px 6px"', SEG)
         # and a ghost carries no margins of its own
@@ -263,7 +264,8 @@ class SettingsLoading(unittest.TestCase):
         rendered before the card had been asked - so the whole line ghosts
         until cfg lands; the counts keep their sentence and ghost only the
         number."""
-        self.assertRegex(SRC, r"(?s)gloss=\{!cfg \? \(.{0,300}?<LineGhost[^>]*/>\s*\) : \(")
+        # 10.0: the VRAM gloss is the row's inline subline (hint), same gate
+        self.assertRegex(SRC, r"(?s)hint=\{!cfg \? \(.{0,300}?<LineGhost[^>]*/>\s*\) : \(")
         self.assertIn("Card not read yet", SRC)  # reachable only past the gate now
         self.assertEqual(SRC.count("<ValueGhost"), 3)
         self.assertRegex(SRC, r"(?s)gloss=\{cfg \? \(.{0,400}?Found.{0,400}?<ValueGhost")

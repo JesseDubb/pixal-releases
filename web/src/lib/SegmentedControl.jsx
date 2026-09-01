@@ -9,6 +9,14 @@
 //   a segment shrink below its own label, so the clip pair is NOT optional
 //   (9.21: a shrink rule without a clip rule painted one label over the
 //   next), and the composed title keeps the full label in the tooltip.
+// variant="pill" (brief 10.0) — THE PILL SELECTOR of the settings control
+//   family: options that HUG their label (3px 11px) on a bg3 track, idle ink
+//   textSec, the active option full accent with accentInk text — the
+//   full-intensity register of the panel's one color story. It sits on a
+//   setting row's right rail at natural width, where flex's equal-segment
+//   fill would be the wrong shape; there is no sliding indicator because
+//   unequal option widths break the 1/n translate trick (the mockup's
+//   active state is the option's own background).
 // variant="grid" — equal columns that CANNOT shrink below their own label
 //   (grid items carry implicit min-width:auto — DESIGN.md's measured proof).
 //   Reach for it for a two- or three-option switch whose labels must never
@@ -36,12 +44,21 @@
 // group gets its accessible name from ariaLabel (DESIGN.md §6).
 
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "./design-tokens.js";
+// The pill selector's track (brief 10.0, the mockup's .seg): bg3 with a
+// hairline border, 2px padding and gap, pill radius. Module-level so the
+// spec has one name; options get theirs in the map below (pillStyle).
+const PILL_TRACK = {
+  display: "flex", background: "var(--bg3)",
+  border: "1px solid var(--border)", borderRadius: RADIUS.pill,
+  padding: 2, gap: 2,
+};
 
 export const SegmentedControl = ({
   options, value, onChange, ariaLabel,
   variant = "flex", size = "md", fill = false, className, style,
 }) => {
   const grid = variant === "grid";
+  const pill = variant === "pill";
   // The flex capsule's active state is ONE pill that slides between equal
   // segments (transitions.dev "tabs sliding" on MOTION.state; Jesse's
   // reference is Wealthsimple's notification toggle, 2026-08-25). Equal
@@ -56,6 +73,8 @@ export const SegmentedControl = ({
         gridTemplateColumns: `repeat(${options.length}, 1fr)`,
         gap: SPACE[4],
         ...style,
+      } : pill ? {
+        ...PILL_TRACK, ...style,
       } : {
         // The box is the segments' own: 1px border + 3px padding around a
         // row the 8px vertical segment padding makes 32 - 40 outside to
@@ -65,7 +84,7 @@ export const SegmentedControl = ({
         padding: 3,
         ...style,
       }}>
-      {!grid && options.length > 0 && (
+      {!grid && !pill && options.length > 0 && (
         <span aria-hidden="true" style={{
           position: "absolute", top: pad, bottom: pad, left: pad,
           width: `calc((100% - ${pad * 2}px) / ${options.length})`,
@@ -101,6 +120,22 @@ export const SegmentedControl = ({
         };
         // grid segment style — grid columns cannot shrink below their own
         // label, so this object declares NO shrink rule and NO clip rule:
+        // pill option style (brief 10.0, the mockup's .seg span): the label
+        // hug - 3px 11px at label type, idle ink textSec, the active option
+        // full accent with accentInk text. No slide: the active state is the
+        // option's own background, settling on MOTION.state.
+        const pillStyle = {
+          padding: "3px 11px",
+          fontSize: TYPE.label, fontWeight: W.nav, fontFamily: FONT,
+          background: active ? "var(--accent)" : "transparent",
+          color: active ? "var(--accentInk)" : "var(--textSec)",
+          opacity: off && !active ? 0.45 : 1,
+          border: "none", borderRadius: RADIUS.pill,
+          cursor: off ? "default" : "pointer",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          gap: SPACE[6], whiteSpace: "nowrap",
+          transition: `background ${MOTION.state}, color ${MOTION.state}`,
+        };
         // the label cannot clip, by construction. Do not add minWidth /
         // overflow / textOverflow here — they would be dead code hiding the
         // very contract that makes this variant safe.
@@ -128,12 +163,12 @@ export const SegmentedControl = ({
             aria-checked={active} disabled={off} title={title}
             onClick={() => { if (!off) onChange(opt.v); }}
             {...(opt.buttonProps || {})}
-            style={grid ? gridStyle : flexStyle}>
+            style={grid ? gridStyle : pill ? pillStyle : flexStyle}>
             {opt.Icon && (
-              <opt.Icon size={size === "sm" ? 13 : 14} weight="duotone"
+              <opt.Icon size={pill || size === "sm" ? 13 : 14} weight="duotone"
                 active={active} style={{ flexShrink: 0 }} />
             )}
-            {grid ? opt.label : (
+            {grid || pill ? opt.label : (
               <span style={{ minWidth: 0, overflow: "hidden",
                              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {opt.label}

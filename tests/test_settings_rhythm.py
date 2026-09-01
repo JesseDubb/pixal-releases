@@ -39,20 +39,19 @@ def _tab_blocks():
 class SettingsRhythm(unittest.TestCase):
 
     def test_the_ladder_is_the_one_in_the_comment(self):
-        """6 inside a control, 16 between controls, 32 between sections. The
-        ratios are the point: a control's own footnote must sit far closer to
-        it than the next control's label does, or the eye cannot tell where
-        one control ends."""
-        field = re.search(r'const Field = .*?gap: SPACE\[(\d+)\]', SRC, re.S)
+        """10.0's beat: every setting row is ONE 34px line, rows in a run
+        touch (the height IS the gap), 8 inside a section, 32 between
+        clusters. The ratio that matters survives: cluster air is multiples
+        of the within-section air, or nothing reads as grouped."""
+        field = re.search(r'const Field = .*?height: (\d+), gap: SPACE', SRC, re.S)
         section = re.search(r'const Section = .*?gap: SPACE\[(\d+)\]', SRC, re.S)
         scroll = re.search(r'className="px-scroll px-set".*?gap: SPACE\[(\d+)\]', SRC, re.S)
-        self.assertIsNotNone(field, "Field lost its gap")
+        self.assertIsNotNone(field, "Field lost its 34px row")
         self.assertIsNotNone(section, "Section lost its gap")
         self.assertIsNotNone(scroll, "the scroll container lost px-set or its gap")
-        inner, mid, outer = (int(m.group(1)) for m in (field, section, scroll))
-        self.assertEqual((inner, mid, outer), (6, 16, 32))
-        self.assertGreaterEqual(mid, inner * 2, "a control has no visible end")
-        self.assertGreaterEqual(outer, mid * 2, "sections do not read as separate")
+        row, mid, outer = (int(m.group(1)) for m in (field, section, scroll))
+        self.assertEqual((row, mid, outer), (34, 8, 32))
+        self.assertGreaterEqual(outer, mid * 2, "clusters do not read as separate")
 
     def test_a_cluster_heading_belongs_to_what_is_under_it(self):
         """48 above, 12 below. Equal air on both sides was the old bug: the
@@ -105,19 +104,20 @@ class SettingsRhythm(unittest.TestCase):
             self.assertLess(first_group, first_section,
                             "%s tab opens with an ungrouped section" % tab)
 
-    def test_a_closing_footnote_hugs_its_control(self):
-        """Foot exists so a section's last sentence sits 6 from the control it
-        describes rather than 16, which would attach it to whatever came next.
-        Every section-level footnote goes through it."""
-        foot = re.search(r'const Foot = .*?marginTop: -SPACE\[(\d+)\]', SRC, re.S)
-        self.assertIsNotNone(foot, "Foot is gone")
-        section_gap = int(re.search(r'const Section = .*?gap: SPACE\[(\d+)\]',
-                                    SRC, re.S).group(1))
-        self.assertEqual(section_gap - int(foot.group(1)), 6)
-        stray = re.findall(
-            r'<span style=\{\{ fontSize: TYPE\.label, color: "var\(--textTer\)", '
-            r'lineHeight: 1\.5 \}\}>', SRC)
-        self.assertEqual(stray, [], "a footnote is bypassing Foot")
+    def test_rows_touch_and_a_continuing_run_sits_16_under_its_section(self):
+        """10.0: Foot died with the stacked layout - a section's last fact is
+        a row's inline subline now, so the thing to pin is the run rule:
+        consecutive rows travel in one Rows run (they touch), and a run
+        continuing its cluster after a Section sits 16 under it, not a full
+        cluster gap away, or it would read as a new group."""
+        self.assertIn("const Rows = ", SRC)
+        self.assertNotIn("<Foot", SRC)
+        css = re.search(r'const CSS = `(.*?)`;', SRC, re.S).group(1)
+        self.assertIn(".px-set-rows--cont { margin-top: -16px; }", css)
+        gap = int(re.search(r'className="px-scroll px-set".*?gap: SPACE\[(\d+)\]',
+                            SRC, re.S).group(1))
+        self.assertEqual(gap - 16, 16,
+                         "the continuing run is not 16 under its section")
 
 
 if __name__ == "__main__":

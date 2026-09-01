@@ -21,6 +21,10 @@ export const DARK = {
   accent: "#D6F32F", accentHot: "#C1DD1E",
   accentMut: "rgba(214,243,47,0.09)", accentStr: "rgba(214,243,47,0.22)",
   accentInk: "#111401",              // text ON an accent-filled control
+  // The DIMMED chartreuse register (brief 10.0): state-satisfied badges
+  // ("Installed") — the one color story's quiet end, NOT --success. The
+  // action register is the existing accent/accentMut/accentStr outline.
+  accentDim: "rgba(214,243,47,0.58)", accentDimMut: "rgba(214,243,47,0.07)",
   surface: "rgba(16,19,22,0.72)",    // the floating content panel
   surfaceSolid: "rgba(16,19,22,0.93)", // history bento / opaque overlays
   photon: "238,241,235",             // background dot-field rgb triplet
@@ -42,6 +46,8 @@ export const LIGHT = {
   accent: "#6E8B00", accentHot: "#87A812",
   accentMut: "rgba(110,139,0,0.09)", accentStr: "rgba(110,139,0,0.20)",
   accentInk: "#FFFFFF",
+  // The dimmed register, derived from the olive accent the same way.
+  accentDim: "rgba(110,139,0,0.58)", accentDimMut: "rgba(110,139,0,0.07)",
   surface: "rgba(255,255,255,0.74)",
   surfaceSolid: "rgba(255,255,255,0.95)",
   photon: "44,52,38",

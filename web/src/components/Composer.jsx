@@ -1106,7 +1106,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                 title: reco ? `the model page recommends ${recoLine}`
                             : presets.length
                               ? "this model's page lists no settings - the "
-                                + "known-good pairs below are measured instead"
+                                + "presets below are measured instead"
                               : "no recommendation on the model page" },
               { v: "custom", label: "custom", disabled: !any || recoActive,
                 title: "your own settings" },
@@ -1114,9 +1114,8 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
           {!!presets.length && (
             <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
               <span style={{ fontSize: TYPE.micro, fontWeight: W.heading,
-                             letterSpacing: "0.08em", textTransform: "uppercase",
                              color: "var(--textTer)" }}>
-                known good
+                Presets
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE[4] }}>
                 {presets.map((p) => {

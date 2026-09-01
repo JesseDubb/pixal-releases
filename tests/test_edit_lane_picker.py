@@ -11,7 +11,7 @@ contract (the family folder stays `group`; the too-heavy advisory rides the
 description because Picker rows have no per-row tooltip and the filter
 searches label + description), the "recipe default" clear row as a real
 option with id "", the unchanged apply payloads and toasts, and the ghost
-that finally matches the trigger's own 28px box.
+that matches the trigger's own box (10.0: the 24px value pill).
 
 ScrollPicker is NOT deleted: four rows still use it (video default, VAE,
 upscale, reviewer), so the brief's no-ScrollPicker assertion holds inside
@@ -46,7 +46,7 @@ H3 = SRC.split("<Section title={<>MiniMax H3", 1)[1] \
 class SharedPickerTests(unittest.TestCase):
 
     def test_both_edit_fields_render_the_shared_picker(self):
-        self.assertEqual(EDIT.count("<Picker"), 2)
+        self.assertEqual(EDIT.count("<Picker hug"), 2)   # hug excludes the PickerGhost stand-ins
         self.assertIn('label="whole frame edit model"', EDIT)
         self.assertIn('label="masked area edit model"', EDIT)
         self.assertIn('value={editCfg.model || ""}', EDIT)
@@ -109,9 +109,9 @@ class GhostTests(unittest.TestCase):
     def test_the_ghost_is_the_triggers_own_box(self):
         # the shared trigger is a fixed 28px; the loading hold finally
         # matches it instead of PickerGhost's 38px ScrollPicker stand-in
-        self.assertIn("height: 28", PICKER)
-        self.assertEqual(EDIT.count("<Bar h={28} />"), 2)
-        self.assertNotIn("<PickerGhost", EDIT)
+        self.assertIn("height: 24", PICKER)
+        self.assertEqual(EDIT.count("<PickerGhost />"), 2)
+        self.assertNotIn("<Bar h={28}", EDIT)
 
 
 class H3PickerTests(unittest.TestCase):
@@ -120,7 +120,7 @@ class H3PickerTests(unittest.TestCase):
 
     def test_both_h3_fields_render_the_shared_picker(self):
         # three rows since the encoder joined them: two builds, one encoder
-        self.assertEqual(H3.count("<Picker"), 3)
+        self.assertEqual(H3.count("<Picker hug"), 3)
         self.assertIn('label="Reference model"', H3)
         self.assertIn('label="First/last-frame model"', H3)
         self.assertIn('value={h3Cfg.ref_model || ""}', H3)
@@ -149,14 +149,16 @@ class H3PickerTests(unittest.TestCase):
         self.assertIn("missing, running Automatic", SRC)
 
     def test_the_h3_ghost_is_the_triggers_own_box(self):
-        self.assertEqual(H3.count("<Bar h={28} />"), 3)
-        self.assertNotIn("<PickerGhost", H3)
+        self.assertEqual(H3.count("<PickerGhost />"), 3)
+        self.assertNotIn("<Bar h={28}", H3)
 
 
 # The VRAM profile section: from its heading to Model folders. The encoder
 # row USED to live here and no longer does - the assertion below is what
 # keeps it from drifting back.
-VRAM = SRC.split("<Section title={<>VRAM profile", 1)[1] \
+# 10.0: the VRAM profile is a 34px row now, not a Section - same slice,
+# row label to Model folders
+VRAM = SRC.split("label={<>VRAM profile", 1)[1] \
           .split('<Section title="Model folders"', 1)[0]
 
 
@@ -192,8 +194,8 @@ class H3TextEncoderTests(unittest.TestCase):
         self.assertIn("missing, running Automatic", SRC)
 
     def test_the_ghost_is_the_triggers_own_box(self):
-        self.assertEqual(VRAM.count("<Bar h={28} />"), 0)
-        self.assertNotIn("<PickerGhost", H3)
+        self.assertEqual(VRAM.count("<PickerGhost"), 0)
+        self.assertEqual(H3.count("<PickerGhost />"), 3)
 
 
 class RetentionTests(unittest.TestCase):
@@ -211,13 +213,16 @@ class RetentionTests(unittest.TestCase):
         self.assertIn("choose a reviewer model…", SRC)
 
     def test_pickerghost_survives_for_the_same_four_gates(self):
-        self.assertEqual(SRC.count("<PickerGhost />"), 4)
+        self.assertGreaterEqual(SRC.count("<PickerGhost />"), 4)
+        # 10.0: it became every picker gate's ghost - the four ScrollPicker
+        # rows plus the edit lanes, the H3 slots and the local brain
 
-    def test_picker_jsx_is_untouched(self):
-        # the brief forbids touching Picker.jsx; its documented contract
-        # and its 28px trigger still read as they did for 9.70
+
+    def test_picker_jsx_keeps_its_contract(self):
+        # the options contract is unchanged; 10.0 restyled the trigger to
+        # the control family's value pill (24px, bg3, pill radius)
         self.assertIn("[{ id, label, description?, group? }]", PICKER)
-        self.assertIn("height: 28", PICKER)
+        self.assertIn("height: 24", PICKER)   # 10.0's value pill
 
 
 if __name__ == "__main__":

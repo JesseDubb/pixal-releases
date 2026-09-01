@@ -2,6 +2,11 @@
 // box once the list is long. Lifted out of MotionDirector (its model picker)
 // on 2026-08-26 so the composer's tuning card could stop using a native
 // <select> - Jesse: "make the dropdown work like our other ones".
+// The trigger is the control family's VALUE PILL (brief 10.0): 24px, bg3,
+// pill radius, the picked value in --text and the chevron in --textTer.
+// `hug` shrinks the box to its value (the settings row's right rail) and
+// hangs the popover off the trigger's right edge; default keeps the old
+// fill-the-row width the composer and MotionDirector are built on.
 // options: [{ id, label, description?, group? }] - consecutive options sharing
 // a `group` sit under one small inline label (Jesse, 2026-08-26: "little
 // inline label break for which sampler its under").
@@ -17,13 +22,13 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaretDown } from "@phosphor-icons/react";
-import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, Z } from "./design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, Z } from "./design-tokens.js";
 // Trigger-to-popover gap, and the most the box can stand: the 236px list
 // cap plus the filter row (28 + the flex gap), padding and border.
 const GAP = 6;
 const POP_MAX = 236 + 28 + SPACE[4] + SPACE[4] * 2 + 2;
 
-export const Picker = ({ label, options, value, onChange, placeholder }) => {
+export const Picker = ({ label, options, value, onChange, placeholder, hug = false }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [pop, setPop] = useState(null);
@@ -40,7 +45,12 @@ export const Picker = ({ label, options, value, onChange, placeholder }) => {
       const below = window.innerHeight - r.bottom - GAP;
       const above = r.top - GAP;
       const up = below < POP_MAX && above > below;
-      setPop({ left: r.left, width: r.width, up,
+      // A hugging trigger (settings' value pill) is only as wide as its
+      // value, so the list would open comically narrow under it - floor it
+      // at 240 and hang its RIGHT edge off the trigger's, since the pill
+      // lives on the row's right rail, hard against the panel's edge.
+      const w = hug ? Math.min(340, Math.max(r.width, 240)) : r.width;
+      setPop({ left: hug ? r.right - w : r.left, width: w, up,
                top: up ? null : r.bottom + GAP,
                bottom: up ? window.innerHeight - r.top + GAP : null });
     };
@@ -79,16 +89,17 @@ export const Picker = ({ label, options, value, onChange, placeholder }) => {
     `${opt.label} ${opt.description || ""}`.toLowerCase().includes(needle));
   const choose = (opt) => { onChange(opt.id); setOpen(false); setQ(""); };
   return (
-    <div ref={boxRef} onKeyDown={onEsc}>
+    <div ref={boxRef} onKeyDown={onEsc} style={hug ? { width: "fit-content", maxWidth: 260 } : undefined}>
       <button type="button" aria-haspopup="listbox" aria-expanded={open}
         aria-label={label} title={current ? current.label : label}
         onClick={() => setOpen((o) => !o)}
-        style={{ width: "100%", height: 28, display: "flex", alignItems: "center",
-                 gap: SPACE[8], padding: `0 ${SPACE[10]}px`, cursor: "pointer",
-                 background: "var(--bg2)",
+        style={{ width: "100%", height: 24, display: "flex", alignItems: "center",
+                 gap: SPACE[8], padding: `0 ${SPACE[12]}px`, cursor: "pointer",
+                 background: "var(--bg3)",
                  border: `1px solid ${open ? "var(--borderStr)" : "var(--border)"}`,
-                 borderRadius: RADIUS.input, fontFamily: FONT, fontSize: TYPE.ui,
-                 color: "var(--text)", textAlign: "left",
+                 borderRadius: RADIUS.pill, fontFamily: FONT, fontSize: TYPE.label,
+                 fontWeight: W.nav,
+                 color: current ? "var(--text)" : "var(--textTer)", textAlign: "left",
                  transition: `border-color ${MOTION.hover}` }}>
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
                        textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

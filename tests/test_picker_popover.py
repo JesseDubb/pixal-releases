@@ -36,8 +36,11 @@ class PortalEscape(unittest.TestCase):
     def test_position_comes_from_the_trigger_rect(self):
         self.assertIn("getBoundingClientRect()", PICKER)
         # left/width are the trigger's: the caller's layout must not change.
-        self.assertRegex(PICKER, r"left:\s*r\.left")
-        self.assertRegex(PICKER, r"width:\s*r\.width")
+        # 10.0's hug mode (the settings value pill) right-aligns instead,
+        # floored at 240 so the list never opens comically narrow.
+        self.assertRegex(PICKER, r"left:\s*hug \? r\.right - w : r\.left")
+        self.assertRegex(PICKER,
+                         r"const w = hug \? Math\.min\(340, Math\.max\(r\.width, 240\)\) : r\.width")
         self.assertRegex(PICKER, r"top:\s*up \? null : r\.bottom \+ GAP")
 
     def test_the_flip_is_gated_on_room_below_and_above(self):

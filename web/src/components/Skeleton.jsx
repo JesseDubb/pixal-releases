@@ -40,27 +40,34 @@ export const Bar = ({ w = "100%", h = 14, style }) => (
   }} />
 );
 
-// Segmented-control ghost: the same 40px capsule SegmentedControl renders
-// (3px padding, 1px border, 32px segments) - height-identical, so the real
-// options land without pushing anything down.
+// Pill-selector ghost (brief 10.0): the variant="pill" box SegmentedControl
+// renders - 1px border + 2px padding around 22px options, 28 outside to
+// outside. The options hug their labels now, so the bars are fixed-width
+// approximations on the row's right rail; HEIGHT identity is the contract
+// (the swap is opacity-only), the widths were never knowable anyway.
 export const SegGhost = ({ segments = 3 }) => (
   <div aria-hidden="true" style={{
-    display: "flex", gap: 3, background: "var(--bg2)",
-    border: "1px solid var(--border)", borderRadius: RADIUS.pill, padding: 3,
+    display: "flex", gap: 2, background: "var(--bg3)",
+    border: "1px solid var(--border)", borderRadius: RADIUS.pill, padding: 2,
   }}>
     {Array.from({ length: segments }).map((_, i) => (
-      <Bar key={i} h={32} style={{ flex: 1, borderRadius: RADIUS.pill }} />
+      <Bar key={i} w={36} h={22} style={{ borderRadius: RADIUS.pill }} />
     ))}
   </div>
 );
 
-// Picker ghost: the 38px bordered trigger with a shimmer bar where the
+// Pixal-toggle ghost: the 42x16 track, nothing else.
+export const SwitchGhost = () => (
+  <Bar w={42} h={16} style={{ borderRadius: RADIUS.pill }} />
+);
+
+// Picker ghost: the 24px value-pill trigger with a shimmer bar where the
 // value text will sit.
 export const PickerGhost = () => (
   <div aria-hidden="true" style={{
-    height: 38, boxSizing: "border-box", display: "flex", alignItems: "center",
-    padding: `0 ${SPACE[12]}px`, background: "var(--bg2)",
-    border: "1px solid var(--border)", borderRadius: RADIUS.input,
+    height: 24, width: 180, boxSizing: "border-box", display: "flex",
+    alignItems: "center", padding: `0 ${SPACE[12]}px`, background: "var(--bg3)",
+    border: "1px solid var(--border)", borderRadius: RADIUS.pill,
   }}>
     <Bar w="45%" h={11} />
   </div>

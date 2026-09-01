@@ -621,7 +621,7 @@ Video**:
 ## 5. Finishing
 
 **upscale** on a card runs whatever the Settings upscaler has
-configured — still frames under Settings → Image, video clips under
+configured — Still frames under Settings → Image, Video clips under
 Settings → Video. The result lands in the chat as a new card, in Past
 generations
 (marked with a "4×" chip), and on disk under `ComfyUI\output\pixal_dm\…`
@@ -645,7 +645,7 @@ Two modes, named exactly as Settings names them:
 
 ### Video clips
 
-The "video clips" control lists the clip upscalers:
+The "Video clips" control lists the clip upscalers:
 
 - **VSR Low / Medium / High / Ultra** — RTX Video Super Resolution, a
   Windows driver feature. The hint states the deal: "Doubled at 2× with
@@ -669,7 +669,7 @@ returns 4×."
 ## 6. Settings reference
 
 Open Settings from the rail's gear. Six tabs — **General**, **Image**,
-**Video**, **Models**, **Brain**, **About** — and every control saves the moment you
+**Video**, **Models**, **Chat**, **About** — and every control saves the moment you
 change it; the strip at the bottom confirms ("saved", "upscaler applied", …).
 The tab you used last is remembered.
 
@@ -707,7 +707,7 @@ fast. **Brain idles after** sets when the local brain unloads itself
 (5 min, 10 min, 30 min, Never) — a warmed brain holds ~8 GB; idle, it
 unloads, and the next message wakes it in seconds.
 
-**when ComfyUI boots** — "Quiet" or "Open the graph editor". The tip:
+**When ComfyUI boots** — "Quiet" or "Open the graph editor". The tip:
 ComfyUI likes to pop its node editor in a browser tab when it starts; quiet
 keeps that from interrupting, and the editor is always at the compute
 address above.
@@ -753,8 +753,8 @@ share a VAE, so sharper drop-ins exist; it applies to Z-Image renders only,
 and the clear-anime profile keeps its own matched VAE either way.
 
 **Edit model** — two lanes, two pickers. "Runs instruction edits." plus both
-counts ("3 whole-frame, 2 masked compatible installed."). **whole frame**
-runs when there is no mask; **masked area** runs when a mask is painted.
+counts ("3 whole-frame, 2 masked compatible installed."). **Whole frame**
+runs when there is no mask; **Masked area** runs when a mask is painted.
 Each option names the build and what it weighs on disk ("Qwen Image Edit
 2511 · 10.4 GB"); a build heavier than your card says so under its name —
 it will offload and run slowly, nothing is blocked. Both default to the
@@ -852,7 +852,7 @@ tooltip — it will offload and run slowly; nothing is blocked. A model
 nothing here can run says why ("a Flux model — no lane here runs it yet"),
 and video models point at the Animate lanes.
 
-### Brain
+### Chat
 
 **Chat brain** — two tabs: **API** and **Local**. The tip: the AI you talk
 to — it writes the prompts and drives ComfyUI; local runs entirely on this
@@ -870,7 +870,7 @@ In short:
   entirely on this PC — nothing leaves the machine." "Keep in memory" vs
   "Unload after reply" — the tip holds the trade-off (loaded: instant
   replies, but a few GB of VRAM held next to your renders; unloaded: the
-  card is free, but the next reply waits for a reload). **brain runs on** —
+  card is free, but the next reply waits for a reload). **Brain runs on** —
   GPU or CPU; the tip: GPU replies fast but holds VRAM next to the render,
   CPU chat is slow but frees the card.
 
@@ -921,7 +921,7 @@ Three local behaviors to know:
   is free for rendering, but the first message after a render waits for the
   model to load again ("waking the local brain - …"). The "Free brain"
   button in Settings → General → Compute unloads it on demand.
-- **brain runs on** — GPU or CPU. The hint is the whole trade: "GPU replies
+- **Brain runs on** — GPU or CPU. The hint is the whole trade: "GPU replies
   fast but holds VRAM next to the render; CPU chat is slow but frees the
   card for rendering."
 - On a 16 GB card the local brain is the component that crowds VRAM — the
@@ -1045,7 +1045,7 @@ brain to API — a vision-capable API model reads attachments directly.
 Three honest causes, in the order to check:
 1. "Unload after reply" is on — every first reply pays the model-load time.
    "Keep in memory" trades a few GB of VRAM for instant replies.
-2. **brain runs on** is set to CPU. The setting's own words: "CPU chat is
+2. **Brain runs on** is set to CPU. The setting's own words: "CPU chat is
    slow but frees the card for rendering."
 3. Neither, and it is still slow: the local brain may have silently fallen
    back to running on the CPU because its CUDA pieces failed to load. That
@@ -1186,7 +1186,7 @@ your models and writes only to its own corner: `output\pixal_dm` for renders,
 
 **Why is chat suddenly slow?**
 Usually the local brain is unloading after each reply (Settings → Brain →
-"keep in memory" fixes it) or running on CPU on purpose ("brain runs on").
+"keep in memory" fixes it) or running on CPU on purpose ("Brain runs on").
 If neither is set, its CUDA backend may have failed to load and silently
 dropped it to the CPU — `llama_server.log` says which. Section 9 walks all
 three.
@@ -1227,7 +1227,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.6b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.7b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

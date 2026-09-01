@@ -8,16 +8,17 @@
 // so the theme toggle previews against the live chat; the fallback is the old
 // bottom-left floating panel budding off the rail's settings button.
 // Local-first: everything persists to pixal_dm/config.json via /api/settings.
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, Children, createContext, useContext, useEffect, useRef, useState } from "react";
 import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 import { Lockup } from "../lib/Lockup.jsx";
 import { ModalShell, OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { Picker } from "../lib/Picker.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { Switch } from "../lib/Switch.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
 import { InfoTip } from "./InfoTip.jsx";
-import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, ValueGhost } from "./Skeleton.jsx";
+import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, SwitchGhost, ValueGhost } from "./Skeleton.jsx";
 import { familyName, prettyModel, prettyTemplate } from "../lib/names.js";
 import { useStore } from "../store.js";
 
@@ -35,38 +36,41 @@ const NvidiaAccent = ({ size }) => <NvidiaMark size={size} active />;
 const LTX25_VIDEO_MODE = "LTX 2.5 2x";
 const VSR_DEFAULT_MODE = "VSR High";
 
-// ── vertical rhythm ───────────────────────────────────────────────────────
-// One scale for the whole panel, each step ~3x the last, so a control reads as
-// having a start and an end:
+// ── the 34px beat (brief 10.0) ────────────────────────────────────────────
+// The stacked wall is gone: every setting row is ONE line, 34px exactly -
+// label and its one-fact subline inline on the left, the control on the
+// right rail (Field below IS the row). Jesse on the old panel: "really
+// loose on the vertical spacing rhythm ... doesnt feel like a professional
+// app." The beat is what makes it feel measured:
 //
-//     6   inside one control  label -> control -> its footnote
-//     8   a section title block -> the first control under it
-//    16   between sibling controls in a section
-//    32   between sections (the flex gap below)
-//    48   above a cluster heading, 12 below it
+//     0   between consecutive rows in a run - the 34px height IS the gap
+//     8   inside a Section: title -> content, block -> block
+//    16   above a row run that CONTINUES its cluster after a Section
+//         (px-set-rows--cont: the run is a peer of the Section's rows, not
+//         a new cluster)
+//    12   under a cluster heading (GroupLabel)
+//    32   between clusters (the scroll container's own gap)
+//    48   above a cluster heading
 //
-// 6 against 16 is the ratio that gives a control a start and an end: its own
-// footnote sits nearly three times closer than the next control's label, so
-// the eye stops reading at the right place.
-//
-// That last asymmetry is the whole point. The old panel gave a heading the
-// same air above and below, so it floated between two sections instead of
-// opening the one under it - and where there was no heading it used an
-// anonymous hairline, which announced a boundary without naming it. One
-// mechanism now: every cluster has a name, and the name belongs to what
-// follows. The offsets are relative to the container's own 24px gap.
+// Rows always travel in a named run (Rows / px-set-rows): the scroll
+// container gaps every direct child 32, so unwrapped rows would read as
+// clusters of one. The asymmetry that mattered survives: 12 under a
+// heading against 48 above it means the heading still opens what follows
+// instead of floating between two groups. The offsets are relative to the
+// container's own 32px gap.
 const CSS = `
 .px-set-group { margin-top: 16px; }
 .px-set > .px-set-group:first-child { margin-top: 0; }
 .px-set > .px-set-group + * { margin-top: -20px; }
+.px-set > .px-set-rows--cont { margin-top: -16px; }
 `;
 
 // ── loading: ghosts, not guesses ─────────────────────────────────────────
 // Twelve slots below start empty and land together from /api/settings (the
 // twelfth, `upd`, is About's update check). A control whose options or
 // stored value are still in flight renders a ghost of its FINAL size -
-// SegGhost is the 40px segmented-control capsule, PickerGhost the 38px ScrollPicker
-// trigger - so the panel's scrollHeight is identical before and after the
+// SegGhost is the 28px pill-selector capsule, PickerGhost the 24px value
+// pill, SwitchGhost the 42x16 toggle track - so the panel's scrollHeight is identical before and after the
 // fetches land and nothing below a ghost ever moves. The swap is
 // px-ghost-in: opacity only, never a height animation (DESIGN.md §5). And a
 // segment row never shows a DEFAULTED selection while its stored value is
@@ -118,11 +122,11 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
           with a rotation instead of jammed against the label (Jesse, 2026-08-18). */}
       <button type="button" onClick={() => { setOpen(!open); setFilter(""); }}
         style={{
-          width: "100%", height: 38, display: "flex", alignItems: "center",
+          width: "fit-content", maxWidth: 260, height: 24, display: "flex", alignItems: "center",
           gap: SPACE[8], padding: `0 ${SPACE[12]}px`, cursor: "pointer",
-          background: "var(--bg2)", border: `1px solid ${open ? "var(--accentStr)" : "var(--border)"}`,
-          borderRadius: RADIUS.input, color: current ? "var(--text)" : "var(--textTer)",
-          fontFamily: FONT, fontSize: TYPE.ui, textAlign: "left",
+          background: "var(--bg3)", border: `1px solid ${open ? "var(--accentStr)" : "var(--border)"}`,
+          borderRadius: RADIUS.pill, color: current ? "var(--text)" : "var(--textTer)",
+          fontFamily: FONT, fontSize: TYPE.label, fontWeight: W.nav, textAlign: "left",
           transition: `border-color ${MOTION.hover}`,
         }}
         onMouseEnter={(e) => { if (!open) e.currentTarget.style.borderColor = "var(--borderHov)"; }}
@@ -141,8 +145,12 @@ const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none"
 
       {open && (
         <div style={{
-          position: "absolute", zIndex: 20, top: "calc(100% + 4px)", left: 0, right: 0,
-          transformOrigin: "top center",
+          // The pill hugs its value on the row's right rail, so the list hangs
+          // off the pill's RIGHT edge (the panel edge is right there) and
+          // opens as wide as its rows need, capped.
+          position: "absolute", zIndex: 20, top: "calc(100% + 4px)", right: 0,
+          minWidth: "100%", width: "max-content", maxWidth: 340,
+          transformOrigin: "top right",
           maxHeight: 320, overflowY: "auto", padding: SPACE[6],
           background: "var(--bg1)", border: "1px solid var(--borderHov)",
           borderRadius: RADIUS.card, boxShadow: SHADOW.xl,
@@ -288,43 +296,112 @@ const Chip = ({ children }) => (
   }}>{children}</span>
 );
 
-// ── field furniture, ported from an earlier settings system of mine (2026-08-18) ──
-// One skeleton for every setting: micro-caps label, the control, a footnote.
-// The rhythm IS the component - the ad-hoc marginTops and per-control pill
-// styles were what made these panels read as a wall.
-const Field = ({ label, hint, children, sub, className }) => (
-  // `sub` is for a control that only exists because of the one above it - the
-  // RTX quality tiers, the model list under "Upscale". Left at the section's
-  // 16 the two segment rows read as unrelated peers, which is the exact
-  // confusion the old five-option row had. 12 is the whole usable band: it
-  // has to beat a field's internal 6 (or the sub-label looks like it belongs
-  // to the control ABOVE it) while staying under a peer's 16.
-  <div className={className} style={{ display: "flex", flexDirection: "column", gap: SPACE[6],
-                marginTop: sub ? -SPACE[4] : undefined }}>
-    {label && (
-      <span style={{ fontSize: 10, color: "var(--textTer)", fontFamily: FONT,
-                     textTransform: "uppercase", letterSpacing: "0.08em" }}>
-        {label}
-      </span>
-    )}
-    {children}
-    {hint && (
-      <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
-                     lineHeight: 1.5 }}>{hint}</span>
-    )}
-  </div>
+// ── the search (brief 10.0) ───────────────────────────────────────────────
+// The header field filters THIS tab: a case-insensitive match on section
+// titles and row labels; non-matching rows and empty sections hide while
+// typing, an empty query restores everything. Client-side only - a query
+// never touches config.json. The context carries the lowered needle so the
+// components below filter themselves.
+const SettingsQuery = createContext("");
+
+// The visible TEXT of a label/title prop: strings pass through, fragments
+// give up their children, and an InfoTip contributes nothing - its prose is
+// help, not the row's name (the filter is titles + labels, not the manual).
+const textOf = (node) => {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join(" ");
+  if (typeof node === "object" && node.props) {
+    if (node.type === InfoTip) return "";
+    return textOf(node.props.children);
+  }
+  return "";
+};
+
+// Every Field label under a node - a section hides only when neither its
+// title nor one of its rows matches.
+const collectLabels = (kids) => {
+  const out = [];
+  Children.forEach(kids, (c) => {
+    if (!c || typeof c !== "object") return;
+    if (c.type === Field) out.push(textOf(c.props.label));
+    else if (c.props && c.props.children) out.push(...collectLabels(c.props.children));
+  });
+  return out;
+};
+
+// ── the 34px row (brief 10.0) ─────────────────────────────────────────────
+// ONE line, 34px exactly: the label (TYPE.body at body weight) with its
+// one-fact subline INLINE (TYPE.label 300, textTer, nowrap + ellipsis -
+// never wraps, [[vertical-rhythm]]), the control on a right-hand rail.
+// `hint` keeps its name from the stacked layout, but it is the subline now:
+// same words, same copy-budget surface, new seat.
+const Field = ({ label, hint, children, className }) => {
+  const q = useContext(SettingsQuery);
+  if (q && !textOf(label).toLowerCase().includes(q)) return null;
+  return (
+    <div className={className} style={{ display: "flex", alignItems: "center",
+                  height: 34, gap: SPACE[10] }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: SPACE[8],
+                    minWidth: 0, flex: "1 1 auto" }}>
+        {label && (
+          <span style={{ fontSize: TYPE.body, fontWeight: W.body, fontFamily: FONT,
+                         color: "var(--text)", whiteSpace: "nowrap" }}>{label}</span>
+        )}
+        {hint && (
+          <span style={{ fontSize: TYPE.label, fontWeight: W.label, fontFamily: FONT,
+                         color: "var(--textTer)", whiteSpace: "nowrap", minWidth: 0,
+                         overflow: "hidden", textOverflow: "ellipsis" }}>{hint}</span>
+        )}
+      </div>
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center",
+                    flex: "0 0 auto" }}>{children}</div>
+    </div>
+  );
+};
+
+// A run of consecutive rows: they touch (the 34px beat IS the spacing), so
+// they travel as one child of the 32-gap container. `cont` marks a run that
+// continues its cluster after a Section - 16 above it, not a full cluster
+// gap, or it would read as a new group.
+const Rows = ({ cont, children }) => (
+  <div className={cont ? "px-set-rows px-set-rows--cont" : "px-set-rows"}
+       style={{ display: "flex", flexDirection: "column" }}>{children}</div>
 );
 
 // Cluster heading inside a tab - the information architecture the flat wall
-// of Sections was missing. A hairline carries the eye across.
-const GroupLabel = ({ children }) => (
-  <div className="px-set-group"
-       style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-    <span style={{ fontSize: 10, fontWeight: W.heading, color: "var(--textMut)",
-                   textTransform: "uppercase", letterSpacing: "0.12em",
-                   fontFamily: FONT, whiteSpace: "nowrap" }}>{children}</span>
-    <span aria-hidden="true" style={{ flex: 1, borderTop: "1px solid var(--border)" }} />
-  </div>
+// of Sections was missing. 10.0 gave it the mockup's card-title register
+// (13/600, no hairline - the Section titles carry the rule now); `badge`
+// slots at the right edge (the Models tab's family state).
+const GroupLabel = ({ children, badge }) => {
+  const q = useContext(SettingsQuery);
+  // Searching flattens the panel to matching rows; a heading whose group
+  // hid would float, so headings sit the search out entirely.
+  if (q) return null;
+  return (
+    <div className="px-set-group"
+         style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
+      <span style={{ fontSize: TYPE.body, fontWeight: W.heading, fontFamily: FONT,
+                     color: "var(--text)", whiteSpace: "nowrap" }}>{children}</span>
+      {badge}
+    </div>
+  );
+};
+
+// One badge, two registers of the panel's one color story (brief 10.0):
+// state-satisfied ("Installed") is the DIMMED chartreuse - accentDim on
+// accentDimMut, never the success green; action ("Install") is the outlined-mid
+// register. VISUAL STATE ONLY: no handler, not even a pointer - the install
+// flow is an open product decision.
+const Badge = ({ action, children }) => (
+  <span style={{ flexShrink: 0, marginLeft: "auto", fontFamily: FONT,
+                 fontSize: TYPE.micro, fontWeight: W.nav, letterSpacing: "0.04em",
+                 padding: "2px 7px", borderRadius: RADIUS.pill,
+                 ...(action
+                   ? { color: "var(--accent)", background: "var(--accentMut)",
+                       border: "1px solid var(--accentStr)" }
+                   : { color: "var(--accentDim)", background: "var(--accentDimMut)" }),
+                 }}>{children}</span>
 );
 
 // ── the library (9.30) ────────────────────────────────────────────────────
@@ -369,13 +446,13 @@ const LibraryRow = ({ rel, name, meta, detectedGb }) => {
                  ? `\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
                  : "")}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ display: "flex", alignItems: "center", gap: SPACE[10], height: 30,
+      style={{ display: "flex", alignItems: "center", gap: SPACE[10], height: 34,
                padding: `0 ${SPACE[8]}px`, borderRadius: RADIUS.input,
                background: hov ? "var(--bg2)" : "transparent",
                transition: `background ${MOTION.hover}` }}>
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
                      textOverflow: "ellipsis", whiteSpace: "nowrap",
-                     fontFamily: FONT, fontSize: TYPE.ui,
+                     fontFamily: FONT, fontSize: TYPE.body,
                      color: dead ? "var(--textTer)" : "var(--textSec)" }}>
         {meta.civitai_url ? (
           <a href={meta.civitai_url} target="_blank" rel="noreferrer"
@@ -422,15 +499,16 @@ const SETTINGS_TAB_KEY = "pixal.settings.tab";
 // General is the machine (appearance, the ComfyUI box, VRAM, folders), Image
 // and Video each hold their medium's model choices and finishers, Models is
 // the read-only library — browsed, not tuned, so it sits after Video rather
-// than pushing a most-touched tab down — Brain is the chat brain and the
-// reviewer, About the credits. A stale saved id fails the TABS check where
+// than pushing a most-touched tab down — Chat is the chat brain and the
+// reviewer (10.0 renamed the LABEL, Jesse: "brain should be chat"; the id
+// stays "brain" so a saved tab still restores), About the credits. A stale saved id fails the TABS check where
 // `tab` is initialised and lands on "general".
 const TABS = [
   { id: "general", label: "General" },
   { id: "image", label: "Image" },
   { id: "video", label: "Video" },
   { id: "models", label: "Models" },
-  { id: "brain", label: "Brain" },
+  { id: "brain", label: "Chat" },
   { id: "about", label: "About" },
 ];
 
@@ -492,35 +570,40 @@ const TabStrip = ({ tabs, value, onChange, className, ariaLabel }) => (
   </div>
 );
 
-// One section = a human title + one plain sentence about what it does, then
-// its controls 16 apart. The title block and any closing footnote carry a
-// negative margin back against that gap: they belong to the control they
-// touch, not to the ladder of controls.
-const Section = ({ title, gloss, children }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: SPACE[16] }}>
-    <div style={{ marginBottom: -SPACE[8] }}>
-      <div style={{ fontSize: TYPE.body, fontWeight: W.heading, color: "var(--text)" }}>
-        {title}
+// One section (brief 10.0): the title in the cluster register - TYPE.micro,
+// W.nav, uppercase, .09em, textTer, the hairline running right - with any
+// live-value gloss INLINE after it (the mockup's card-head title + sub
+// pattern: a live value may not hide in a tip, so it rides the title line),
+// then its rows and blocks 8 apart. The rows inside travel in a Rows run so
+// they touch. Searching hides the section when neither its title nor one of
+// its row labels matches.
+const Section = ({ title, gloss, children }) => {
+  const q = useContext(SettingsQuery);
+  if (q) {
+    const hay = [textOf(title), ...collectLabels(children)]
+      .join("\n").toLowerCase();
+    if (!hay.includes(q)) return null;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[8] }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
+        <span style={{ fontSize: TYPE.micro, fontWeight: W.nav, fontFamily: FONT,
+                       color: "var(--textTer)", textTransform: "uppercase",
+                       letterSpacing: "0.09em", whiteSpace: "nowrap" }}>{title}</span>
+        {gloss && (
+          <span style={{ fontSize: TYPE.label, fontWeight: W.label, fontFamily: FONT,
+                         color: "var(--textTer)", whiteSpace: "nowrap", minWidth: 0,
+                         overflow: "hidden", textOverflow: "ellipsis" }}>{gloss}</span>
+        )}
+        <span aria-hidden="true" style={{ flex: 1, borderTop: "1px solid var(--border)" }} />
       </div>
-      {gloss && (
-        <div style={{ fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
-          {gloss}
-        </div>
-      )}
+      {children}
     </div>
-    {children}
-  </div>
-);
-
-// A section's closing sentence. It reads as belonging to the control above it
-// only if it sits closer to that control than the next one does - 6, not 16.
-const Foot = ({ children }) => (
-  <span style={{ marginTop: -SPACE[10], fontSize: TYPE.label,
-                 color: "var(--textTer)", lineHeight: 1.5 }}>{children}</span>
-);
+  );
+};
 
 const inputStyle = {
-  height: 38, background: "var(--bg2)", border: "1px solid var(--border)",
+  height: 38, background: "var(--bg3)", border: "1px solid var(--border)",
   borderRadius: RADIUS.pill, padding: `0 ${SPACE[16]}px`, fontSize: TYPE.ui,
   color: "var(--text)", fontFamily: FONT, outline: "none", width: "100%",
 };
@@ -606,6 +689,24 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     try { window.localStorage.setItem(SETTINGS_TAB_KEY, id); }
     catch { /* private mode / storage disabled */ }
   };
+  // The header search (brief 10.0): filters this tab's rows and sections,
+  // client-side only - a keystroke never writes config. "/" focuses the
+  // field from anywhere but another text field; Escape in the field clears.
+  const [query, setQuery] = useState("");
+  const searchRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
+                t.isContentEditable)) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const q = query.trim().toLowerCase();
 
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json()).then((d) => {
@@ -849,15 +950,49 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       g.names[a].toLowerCase().localeCompare(g.names[b].toLowerCase()) ||
       a.toLowerCase().localeCompare(b.toLowerCase()));
   }
+  // 10.0's family badges: the inventory knows which LIBRARY_ORDER families
+  // have builds on disk (Installed) and which have none (Install - visual
+  // state only; the install flow is an open product decision). It does NOT
+  // know a size or a missing-file count, so the action badge carries no
+  // "· N GB" the data cannot back. Absent families interleave in the same
+  // LIBRARY_ORDER so the list reads as the full roster, not just the
+  // present part of it.
+  const familyGroups = [];
+  for (const key of [...LIBRARY_ORDER, "other"]) {
+    const g = libGroups.find((x) => x.key === key);
+    if (g) familyGroups.push(g);
+    else if (key !== "other") familyGroups.push({ key, rows: null, names: {} });
+  }
 
   // `panel` is the whole content, shared by both presentations below.
   const panel = (
-    <>
+    <SettingsQuery.Provider value={q}>
       {/* Header + tabs stay put; only the tab's content scrolls. */}
       <div style={{ padding: `${SPACE[16]}px ${SPACE[20]}px 0`, display: "flex",
                     flexDirection: "column", gap: SPACE[10] }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
           <span style={{ fontSize: TYPE.h3, fontWeight: W.heading }}>Settings</span>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center",
+                        gap: 6, height: 26, width: 180, padding: "0 10px",
+                        background: "var(--bg2)", border: "1px solid var(--border)",
+                        borderRadius: RADIUS.input }}>
+            <input ref={searchRef} value={query} aria-label="Search settings"
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search settings" spellCheck={false}
+              autoComplete="off" autoCorrect="off" autoCapitalize="off"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); }
+              }}
+              style={{ flex: 1, minWidth: 0, padding: 0, background: "transparent",
+                       border: "none", outline: "none", color: "var(--text)",
+                       fontFamily: FONT, fontSize: TYPE.label }} />
+            {!query && (
+              <kbd aria-hidden="true" style={{ fontFamily: MONO, fontSize: 10,
+                       fontWeight: W.label, color: "var(--textMut)",
+                       border: "1px solid var(--border)", borderRadius: 4,
+                       padding: "0 4px" }}>/</kbd>
+            )}
+          </div>
           <button type="button" onClick={onClose} title="close"
             style={{ display: "inline-flex", alignItems: "center", justifyContent: "center",
                      width: 30, height: 30, background: "var(--bg2)", border: "1px solid var(--border)",
@@ -873,37 +1008,36 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       }}>
         {tab === "general" && (<>
         <GroupLabel>the app</GroupLabel>
-        <Section title="Appearance" gloss="System follows Windows.">
-          <SegmentedControl ariaLabel="Appearance" value={store.themePref}
-            onChange={(v) => store.setTheme(v)}
-            options={[
-              { v: "light", label: "Light", Icon: Sun },
-              { v: "dark", label: "Dark", Icon: Moon },
-              { v: "system", label: "System", Icon: DesktopTower },
-            ]} />
-        </Section>
-
-        <Section title={<>Explicit content <InfoTip text="Uncensored writing needs a local abliterated model — most APIs refuse NSFW." /></>}>
-          {cfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="Explicit content" value={explicit}
-              onChange={(id) => {
-                setExplicit(id);
-                apply({ explicit: id },
-                      id === "auto" ? "reading it from your words"
-                        : id === "on" ? "explicit allowed" : "explicit off");
-              }}
-              options={[{ v: "auto", label: "Auto" },
-                        { v: "on", label: "Allow" },
-                        { v: "off", label: "Never" }]} />
-          ) : (
-            /* the stored value is still in flight - a ghost, never a guess
-               (this row lit on "auto" with "on" stored was the defect) */
-            <SegGhost segments={3} />
-          )}
-          <Foot>
-            Auto reads your prompt · Never keeps everyone clothed.
-          </Foot>
-        </Section>
+        <Rows>
+          <Field label="Appearance" hint="System follows Windows.">
+            <SegmentedControl variant="pill" ariaLabel="Appearance" value={store.themePref}
+              onChange={(v) => store.setTheme(v)}
+              options={[
+                { v: "light", label: "Light", Icon: Sun },
+                { v: "dark", label: "Dark", Icon: Moon },
+                { v: "system", label: "System", Icon: DesktopTower },
+              ]} />
+          </Field>
+          <Field label={<>Explicit content <InfoTip text="Uncensored writing needs a local abliterated model — most APIs refuse NSFW." /></>}
+                 hint="Auto reads your prompt · Never keeps everyone clothed.">
+            {cfg ? (
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Explicit content" value={explicit}
+                onChange={(id) => {
+                  setExplicit(id);
+                  apply({ explicit: id },
+                        id === "auto" ? "reading it from your words"
+                          : id === "on" ? "explicit allowed" : "explicit off");
+                }}
+                options={[{ v: "auto", label: "Auto" },
+                          { v: "on", label: "Allow" },
+                          { v: "off", label: "Never" }]} />
+            ) : (
+              /* the stored value is still in flight - a ghost, never a guess
+                 (this row lit on "auto" with "on" stored was the defect) */
+              <SegGhost segments={3} />
+            )}
+          </Field>
+        </Rows>
 
         <GroupLabel>this machine</GroupLabel>
         <Section title={<>Compute <InfoTip text="The ComfyUI box that renders. Another rig's address borrows its GPU. Restart is for the state no endpoint can fix." /></>}>
@@ -925,9 +1059,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               Restart
             </Btn>
           </div>
-          <Field label={<>when ComfyUI boots <InfoTip text="ComfyUI likes to pop its node editor in a browser tab when it starts. quiet keeps that from interrupting; the editor is always at the compute address above." /></>}>
+          <Rows>
+          <Field label={<>When ComfyUI boots <InfoTip text="ComfyUI likes to pop its node editor in a browser tab when it starts. quiet keeps that from interrupting; the editor is always at the compute address above." /></>}>
             {cfg ? (
-              <SegmentedControl className="px-ghost-in" ariaLabel="When ComfyUI boots" value={comfyEditor}
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="When ComfyUI boots" value={comfyEditor}
                 onChange={(on) => {
                   setComfyEditor(on);
                   apply({ comfy_editor: on },
@@ -942,7 +1077,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Field>
           <Field label={<>ComfyUI’s console window <InfoTip text="meters wrap the launcher in a boot dashboard and keep an errors-only log at logs\comfy-errors.log. plain console is the raw ComfyUI output. Either way, closing that window stops ComfyUI." /></>}>
             {cfg ? (
-              <SegmentedControl className="px-ghost-in" ariaLabel="ComfyUI console window" value={comfyConsole}
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="ComfyUI console window" value={comfyConsole}
                 onChange={(id) => {
                   setComfyConsole(id);
                   apply({ comfy_console: id },
@@ -955,10 +1090,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <SegGhost segments={2} />
             )}
           </Field>
+          </Rows>
         </Section>
 
-        <Section title={<>Clean up <InfoTip text="Nothing hands memory back until asked. Each button says what it freed." /></>}
-                 gloss="A full card is a slow render.">
+        <Section title={<>Clean up <InfoTip text="Nothing hands memory back until asked. Each button says what it freed. A full card is a slow render." /></>}>
           {/* Freeing is deliberately manual: ComfyUI caches models on purpose,
               and the 21GB video stack staying resident is exactly why a second
               render is fast. These are for when the card needs the room back. */}
@@ -995,9 +1130,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               Free all
             </Btn>
           </div>
+          <Rows>
           <Field label={<>Brain idles after <InfoTip text="A warmed brain holds ~8 GB. Idle, it unloads; the next message wakes it in seconds." /></>}>
             {cfg ? (
-              <SegmentedControl className="px-ghost-in" ariaLabel="Brain idles after" value={idleMin}
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Brain idles after" value={idleMin}
                 onChange={(v) => {
                   setIdleMin(v);
                   apply({ llm: { local_idle_minutes: v } },
@@ -1012,10 +1148,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <SegGhost segments={4} />
             )}
           </Field>
+          </Rows>
         </Section>
 
-        <Section title={<>VRAM profile <InfoTip text="What this machine can hold resident. Advisory: pickers flag what a tier holds poorly — the VRAM butler still manages the card at render time." /></>}
-                 gloss={!cfg ? (
+        <Rows cont>
+          <Field label={<>VRAM profile <InfoTip text="What this machine can hold resident. Advisory: pickers flag what a tier holds poorly — the VRAM butler still manages the card at render time." /></>}
+                 hint={!cfg ? (
                    /* saying the card is unread before the fetch landed was
                       the second lie in the screenshot - the label stays,
                       the line ghosts */
@@ -1025,23 +1163,24 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                      ? `The card reads as ${Math.round(cfg.vram.detected_gb)} GB.`
                      : "Card not read yet — auto follows it."}</span>
                  )}>
-          {cfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="VRAM profile" value={vramProfile}
-              onChange={(t) => {
-                setVramProfile(t);
-                apply({ vram_profile: t },
-                      t === "auto" ? "following the card" : `pinned the ${t} GB profile`);
-              }}
-              options={[
-                { v: "auto", label: `Auto${cfg.vram && cfg.vram.detected
-                    ? ` · ${cfg.vram.detected === "low" ? "under 16" : cfg.vram.detected} GB`
-                    : ""}` },
-                ...["32", "24", "16"].map((t) => ({ v: t, label: `${t} GB` })),
-              ]} />
-          ) : (
-            <SegGhost segments={4} />
-          )}
-        </Section>
+            {cfg ? (
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="VRAM profile" value={vramProfile}
+                onChange={(t) => {
+                  setVramProfile(t);
+                  apply({ vram_profile: t },
+                        t === "auto" ? "following the card" : `pinned the ${t} GB profile`);
+                }}
+                options={[
+                  { v: "auto", label: `Auto${cfg.vram && cfg.vram.detected
+                      ? ` · ${cfg.vram.detected === "low" ? "under 16" : cfg.vram.detected} GB`
+                      : ""}` },
+                  ...["32", "24", "16"].map((t) => ({ v: t, label: `${t} GB` })),
+                ]} />
+            ) : (
+              <SegGhost segments={4} />
+            )}
+          </Field>
+        </Rows>
 
         <Section title="Model folders"
                  gloss={cfg ? (
@@ -1116,10 +1255,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
 
         {tab === "video" && (<>
         <GroupLabel>defaults</GroupLabel>
-        <Section title={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}
-                 gloss="Which engine the popup opens on.">
+                <Rows>
+<Field label={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}
+                 hint="Which engine the popup opens on.">
           {videoCfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="Default video engine"
+            <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Default video engine"
               value={videoCfg.default_engine || ""}
               onChange={(id) => {
                 setVideoCfg((v) => ({ ...(v || {}), default_engine: id }));
@@ -1143,9 +1283,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                40px capsule whatever the engine count turns out to be */
             <SegGhost segments={3} />
           )}
-        </Section>
-        <Section title={<>Video model <InfoTip text="The popup still switches models freely per clip — this only sets the default." /></>}
-                 gloss="Which model the popup opens on.">
+        </Field>
+        <Field label={<>Video model <InfoTip text="The popup still switches models freely per clip — this only sets the default." /></>}
+                 hint="Which model the popup opens on.">
           {videoCfg ? (
             <ScrollPicker className="px-ghost-in"
               value={videoCfg.default_model || ""}
@@ -1166,11 +1306,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           ) : (
             <PickerGhost />
           )}
-        </Section>
-        <Section title={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}
-                 gloss="How H3 briefs write speech.">
+        </Field>
+        <Field label={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}
+                 hint="How H3 briefs write speech.">
           {videoCfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="Dialogue format"
+            <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Dialogue format"
               value={videoCfg.h3_dialogue_tags || "quotes"}
               onChange={(id) => {
                 setVideoCfg((v) => ({ ...(v || {}), h3_dialogue_tags: id }));
@@ -1186,10 +1326,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           ) : (
             <SegGhost segments={2} />
           )}
-        </Section>
+        </Field>
+        </Rows>
         <GroupLabel>finishing</GroupLabel>
-        <Section title="Upscaler"
-                 gloss="The upscale button on finished clips.">
+        <Section title={<>Upscaler <InfoTip text="The upscale button on finished clips." /></>}>
           {/* Two different things, not one five-step ladder. RTX Super
               Resolution is NVIDIA's image-space filter and its Low..Ultra are
               ITS quality tiers; LTX 2.5 re-renders the clip through the latent
@@ -1198,14 +1338,15 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               are neighbours - and five segments is over DESIGN.md's
               four-option cap either way. Engine first, then only what that
               engine actually has to set. */}
-          {upscale ? (<>
-            <Field className="px-ghost-in" label="video clips"
+          {upscale ? (
+            <Rows>
+            <Field className="px-ghost-in" label="Video clips"
                    hint={vidLtx
                      ? "2× re-render: real new detail, heavier VRAM."
                      : upscale.video_available
                        ? undefined
                        : "Install the Deno RTX VFX node pack."}>
-              <SegmentedControl ariaLabel="Video upscale engine"
+              <SegmentedControl variant="pill" ariaLabel="Video upscale engine"
                 value={vidLtx ? "ltx" : "vsr"}
                 onChange={(id) => {
                   const m = id === "ltx" ? LTX25_VIDEO_MODE : lastVsr.current;
@@ -1226,11 +1367,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 ]} />
             </Field>
             {!vidLtx && upscale.video_available && (
-              <Field className="px-ghost-in" sub label="quality"
+              <Field className="px-ghost-in" label="Quality"
                      hint={upscale.video_scale > 1
                        ? `Upscaled ${upscale.video_scale}× with audio kept.`
                        : "Same size, cleaned up. Audio kept."}>
-                <SegmentedControl ariaLabel="RTX Super Resolution quality"
+                <SegmentedControl variant="pill" ariaLabel="RTX Super Resolution quality"
                   value={upscale.video_mode || lastVsr.current}
                   onChange={(m) => {
                     lastVsr.current = m;
@@ -1246,9 +1387,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 fps + 2x land in one graph. The tip carries the whole story;
                 the control itself states the rate (tip XOR hint). */}
             {!vidLtx && upscale.video_available && (
-              <Field className="px-ghost-in" sub
-                     label={<>frame rate <InfoTip size={12} text="RIFE interpolation, in the same pass as the upscale. Doubles or more the frames, audio kept. Lips can ghost above 2×. LTX 2.5 ignores it — that mode re-renders at the clip's own rate." /></>}>
-                <SegmentedControl ariaLabel="Clip frame rate"
+              <Field className="px-ghost-in" label={<>Frame rate <InfoTip size={12} text="RIFE interpolation, in the same pass as the upscale. Doubles or more the frames, audio kept. Lips can ghost above 2×. LTX 2.5 ignores it — that mode re-renders at the clip's own rate." /></>}>
+                <SegmentedControl variant="pill" ariaLabel="Clip frame rate"
                   value={String(upscale.video_fps || 0)}
                   onChange={(id) => {
                     const f = Number(id);
@@ -1261,95 +1401,89 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                                    label: f ? String(f) : "Native" }))} />
               </Field>
             )}
-          </>) : (<>
+          </Rows>
+          ) : (
+            <Rows>
             {/* the ghost is the default shape: engine row + quality row +
                 frame rate row (a stored LTX clip drops the two sub rows -
                 that one-time shrink is the stored setting correcting itself,
                 not a load reflow) */}
-            <Field label="video clips">
+            <Field label="Video clips">
               <SegGhost segments={2} />
             </Field>
-            <Field sub label="quality">
+            <Field label="Quality">
               <SegGhost segments={4} />
             </Field>
-            <Field sub label="frame rate">
+            <Field label="Frame rate">
               <SegGhost segments={4} />
             </Field>
-          </>)}
+            </Rows>
+          )}
         </Section>
-        <Section title={<>H3 2× upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
-                 gloss="The popup still decides per clip — this sets the default.">
-          {/* The MiniMax upscaler re-samples the render's own latent, so it
-              can only live on the render itself (9.31) - the per-clip row in
-              the Animate popup's fine-tune fold. This is the standing default
-              that row opens on, the same contract as Video model above. No
-              quality sub-row: 2× is the only size this upscaler does. */}
-          {videoCfg ? (
-            <Field className="px-ghost-in"
-                   hint={videoCfg.upscale_2x_available
-                     ? undefined
-                     : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."}>
-              <SegmentedControl ariaLabel="H3 2× upscale"
-                value={videoCfg.upscale_2x ? "2x" : "off"}
-                onChange={(id) => {
-                  const on = id === "2x";
+        <Rows cont>
+          <Field label={<>H3 2× upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
+                 hint={videoCfg && !videoCfg.upscale_2x_available
+                   ? "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."
+                   : "The popup still decides per clip — this sets the default."}>
+            {/* The MiniMax upscaler re-samples the render's own latent, so it
+                can only live on the render itself (9.31) - the per-clip row in
+                the Animate popup's fine-tune fold. This is the standing default
+                that row opens on, the same contract as Video model above. 10.0:
+                an on/off default is a pixal toggle, not a two-option pill. */}
+            {videoCfg ? (
+              <Switch className="px-ghost-in" label="H3 2× upscale"
+                on={videoCfg.upscale_2x}
+                disabled={!videoCfg.upscale_2x_available}
+                title={videoCfg.upscale_2x_available
+                  ? "Twice the size, inside the render — roughly 3× the render time."
+                  : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."}
+                onChange={(on) => {
                   setVideoCfg((v) => ({ ...(v || {}), upscale_2x: on }));
                   apply({ video: { upscale_2x: on } },
                         on ? "2× default applied" : "2× default off");
+                }} />
+            ) : (
+              <SwitchGhost />
+            )}
+          </Field>
+          <Field label={<>H3 resolution <InfoTip text="The canvas H3 renders at natively — detail comes from the model, not an upscaler. A bigger canvas re-frames the shot (composition can shift) and multiplies the render time: a 10 s Max clip is ~20 min on a 5090 and fills the card. The 2× row stays the budget option — render small, then upscale." /></>}
+                 hint="The popup still decides per clip — this sets the default.">
+            {/* 9.55: same contract as Video model above - the standing default
+                the Animate popup's Resolution row opens on. The tier list rides
+                the settings payload (h3_resolutions); the inline fallback only
+                covers an out-of-date server. */}
+            {videoCfg ? (
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="H3 resolution"
+                value={videoCfg.h3_resolution || "standard"}
+                onChange={(id) => {
+                  setVideoCfg((v) => ({ ...(v || {}), h3_resolution: id }));
+                  const label = ((videoCfg.h3_resolutions || [])
+                    .find((r) => r.id === id) || {}).label || id;
+                  apply({ video: { h3_resolution: id } },
+                        `${label} default applied`);
                 }}
-                options={[
-                  { v: "off", label: "Off",
-                    disabled: !videoCfg.upscale_2x_available,
-                    title: videoCfg.upscale_2x_available
-                      ? "The render's native canvas — the fast path."
-                      : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights." },
-                  { v: "2x", label: "2×",
-                    disabled: !videoCfg.upscale_2x_available,
-                    title: videoCfg.upscale_2x_available
-                      ? "Twice the size, inside the render — roughly 3× the render time."
-                      : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights." },
-                ]} />
-            </Field>
-          ) : (
-            <SegGhost segments={2} />
-          )}
-        </Section>
-        <Section title={<>H3 resolution <InfoTip text="The canvas H3 renders at natively — detail comes from the model, not an upscaler. A bigger canvas re-frames the shot (composition can shift) and multiplies the render time: a 10 s Max clip is ~20 min on a 5090 and fills the card. The 2× row stays the budget option — render small, then upscale." /></>}
-                 gloss="The popup still decides per clip — this sets the default.">
-          {/* 9.55: same contract as Video model above - the standing default
-              the Animate popup's Resolution row opens on. The tier list rides
-              the settings payload (h3_resolutions); the inline fallback only
-              covers an out-of-date server. */}
-          {videoCfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="H3 resolution"
-              value={videoCfg.h3_resolution || "standard"}
-              onChange={(id) => {
-                setVideoCfg((v) => ({ ...(v || {}), h3_resolution: id }));
-                const label = ((videoCfg.h3_resolutions || [])
-                  .find((r) => r.id === id) || {}).label || id;
-                apply({ video: { h3_resolution: id } },
-                      `${label} default applied`);
-              }}
-              options={(videoCfg.h3_resolutions || [
-                { id: "standard", label: "Standard", mp: 1.0 },
-                { id: "high", label: "High", mp: 1.8 },
-                { id: "max", label: "Max", mp: 3.1 },
-              ]).map((r) => ({
-                v: r.id, label: r.label,
-                title: r.id === "standard"
-                  ? `${r.mp} MP — the fast default.`
-                  : `${r.mp} MP — ~${Math.round(r.mp)}x the render time.`,
-              }))} />
-          ) : (
-            <SegGhost segments={3} />
-          )}
-        </Section>
+                options={(videoCfg.h3_resolutions || [
+                  { id: "standard", label: "Standard", mp: 1.0 },
+                  { id: "high", label: "High", mp: 1.8 },
+                  { id: "max", label: "Max", mp: 3.1 },
+                ]).map((r) => ({
+                  v: r.id, label: r.label,
+                  title: r.id === "standard"
+                    ? `${r.mp} MP — the fast default.`
+                    : `${r.mp} MP — ~${Math.round(r.mp)}x the render time.`,
+                }))} />
+            ) : (
+              <SegGhost segments={3} />
+            )}
+          </Field>
+        </Rows>
         </>)}
 
         {tab === "image" && (<>
         <GroupLabel>model choices</GroupLabel>
-        <Section title={<>Z-Image decoder <InfoTip text="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Applies to Z-Image renders only — the clear-anime profile keeps its own matched VAE either way." /></>}
-                 gloss="Sharper drop-in; can over-sharpen on one pass.">
+        <Rows>
+          <Field label={<>Z-Image decoder <InfoTip text="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Applies to Z-Image renders only — the clear-anime profile keeps its own matched VAE either way." /></>}
+                 hint="Sharper drop-in; can over-sharpen on one pass.">
           {vae ? (
             <ScrollPicker className="px-ghost-in"
               value={vae.zimage || ""}
@@ -1364,7 +1498,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           ) : (
             <PickerGhost />
           )}
-        </Section>
+        </Field>
+        </Rows>
         <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}
                  gloss={editCfg ? (
                    <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
@@ -1384,9 +1519,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               and the trigger reads "recipe default", the same meaning as
               before. onChange keeps onPick's body: same state write, same
               apply payload, same toast. */}
-          {editCfg ? (<>
-            <Field className="px-ghost-in" label={<>whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
-              <Picker label="whole frame edit model"
+          {editCfg ? (
+            <Rows>
+            <Field className="px-ghost-in" label={<>Whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
+              <Picker hug label="whole frame edit model"
                 value={editCfg.model || ""}
                 placeholder="recipe default"
                 options={[
@@ -1400,8 +1536,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         name ? "edit model applied" : "recipe default restored");
                 }} />
             </Field>
-            <Field className="px-ghost-in" label={<>masked area <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
-              <Picker label="masked area edit model"
+            <Field className="px-ghost-in" label={<>Masked area <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
+              <Picker hug label="masked area edit model"
                 value={editCfg.inpaint_model || ""}
                 placeholder="recipe default"
                 options={[
@@ -1414,18 +1550,19 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         name ? "masked edit model applied" : "recipe default restored");
                 }} />
             </Field>
-          </>) : (<>
-            {/* the shared trigger is a fixed 28px, so the ghost finally IS
-                the control's own box - 9.70's call for the chat brain, here
-                for both lanes (PickerGhost's 38px was the ScrollPicker
-                trigger's height) */}
-            <Field label="whole frame">
-              <Bar h={28} />
+          </Rows>
+          ) : (
+            <Rows>
+            {/* the ghost IS the control's own box: the 24px value pill
+                (PickerGhost), one per lane */}
+            <Field label="Whole frame">
+              <PickerGhost />
             </Field>
-            <Field label="masked area">
-              <Bar h={28} />
+            <Field label="Masked area">
+              <PickerGhost />
             </Field>
-          </>)}
+            </Rows>
+          )}
         </Section>
         <Section title={<>MiniMax H3 <InfoTip text="H3 has two lanes and they take different builds. Reference renders carry a character's photo into the scene; first/last-frame renders start from a frame. Automatic is the lane's only build, or the preferred one when several are on disk. A hybrid build appears in both rows because it carries both — and a pick whose file leaves the catalog runs Automatic until the file returns. The Animate popup's own chip still wins per clip; these rows answer every render that names no build." /></>}>
           {/* 9.91: Settings owns which H3 build a lane renders with when
@@ -1439,9 +1576,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               149/150, so the lane facts live in the tip and the state
               lives in the control values - a stale pick shows itself as
               "missing, running Automatic" in its own row. */}
-          {h3Cfg ? (<>
+          {h3Cfg ? (
+            <Rows>
             <Field className="px-ghost-in" label="Reference model">
-              <Picker label="Reference model"
+              <Picker hug label="Reference model"
                 value={h3Cfg.ref_model || ""}
                 placeholder="Automatic"
                 options={h3LaneOptions(h3Cfg, "ref")}
@@ -1452,7 +1590,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 }} />
             </Field>
             <Field className="px-ghost-in" label="First/last-frame model">
-              <Picker label="First/last-frame model"
+              <Picker hug label="First/last-frame model"
                 value={h3Cfg.fl_model || ""}
                 placeholder="Automatic"
                 options={h3LaneOptions(h3Cfg, "fl")}
@@ -1472,7 +1610,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 tests/test_settings_tabs.py does not apply; the move is
                 word-neutral against the panel's 150-word budget. */}
             <Field className="px-ghost-in" label={<>Text encoder <InfoTip size={12} text="The 32B encoder is the one MiniMax H3 was measured with. A 4B or 8B encoder with a ClipProj projection stands in for it: several GB freed and a faster render, and likeness is slightly less reliable with it. Automatic is the 32B. An option appears only when its encoder and its projection are both on disk; a pick whose files leave runs Automatic until they return." /></>}>
-              <Picker label="Text encoder"
+              <Picker hug label="Text encoder"
                 value={h3Cfg.text_encoder || ""}
                 placeholder="Automatic"
                 options={h3EncoderOptions(h3Cfg)}
@@ -1482,19 +1620,22 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         id ? "text encoder applied" : "back to automatic");
                 }} />
             </Field>
-          </>) : (<>
-            {/* the edit pickers' ghost shape: two 28px bars, the shared
-                trigger's own height, so nothing below moves on land */}
+          </Rows>
+          ) : (
+            <Rows>
+            {/* the edit pickers' ghost shape: the 24px value pill
+                (PickerGhost), one per lane, so nothing below moves on land */}
             <Field label="Reference model">
-              <Bar h={28} />
+              <PickerGhost />
             </Field>
             <Field label="First/last-frame model">
-              <Bar h={28} />
+              <PickerGhost />
             </Field>
             <Field label="Text encoder">
-              <Bar h={28} />
+              <PickerGhost />
             </Field>
-          </>)}
+            </Rows>
+          )}
         </Section>
         <GroupLabel>finishing</GroupLabel>
         {/* 1.1.4b. Unlike the Upscaler below it this is not a button on a
@@ -1503,33 +1644,25 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             default when the file is there: it measured +80% to +220% fine
             detail across a whole session, costs a couple of seconds, needs
             no VRAM headroom and changes no dimension. */}
-        <Section title={<>Skin finish <InfoTip text="A 1× detail model run over MiniMax H3 stills on their way out of the render. It adds skin, hair and fabric texture at the same size — nothing is enlarged or repainted. Measured +80% to +220% fine detail, and costs a couple of seconds. Greyed out until 1x-ITF-SkinDiffDetail-Lite-v1.pth is in ComfyUI/models/upscale_models." /></>}>
-          {/* No gloss and no hint: the whole screen has a 150-word visible-
-              prose budget, so the tip carries what it needs to say and the
-              two option titles carry the disabled reason on hover. */}
+        <Rows>
           {stillCfg ? (
             <>
-            <Field className="px-ghost-in">
-              <SegmentedControl ariaLabel="Skin finish"
-                value={stillCfg.skin_finish ? "on" : "off"}
-                onChange={(id) => {
-                  const on = id === "on";
+            <Field className="px-ghost-in" label={<>Skin finish <InfoTip text="A 1× detail model run over MiniMax H3 stills on their way out of the render. It adds skin, hair and fabric texture at the same size — nothing is enlarged or repainted. Measured +80% to +220% fine detail, and costs a couple of seconds. Greyed out until 1x-ITF-SkinDiffDetail-Lite-v1.pth is in ComfyUI/models/upscale_models." /></>}>
+              {/* No hint: the whole screen has a 150-word visible-prose
+                  budget, so the tip carries what it needs to say and the
+                  toggle's title carries the disabled reason on hover. 10.0:
+                  an on/off finish is a pixal toggle, not a two-option pill. */}
+              <Switch label="Skin finish"
+                on={stillCfg.skin_finish}
+                disabled={!stillCfg.skin_finish_available}
+                title={stillCfg.skin_finish_available
+                  ? "Texture added at the same size, inside the render."
+                  : `Needs ${stillCfg.skin_finish_model} in upscale_models.`}
+                onChange={(on) => {
                   setStillCfg((s) => ({ ...(s || {}), skin_finish: on }));
                   apply({ still: { skin_finish: on } },
                         on ? "skin finish on" : "skin finish off");
-                }}
-                options={[
-                  { v: "off", label: "Off",
-                    disabled: !stillCfg.skin_finish_available,
-                    title: stillCfg.skin_finish_available
-                      ? "The decode as the model rendered it."
-                      : `Needs ${stillCfg.skin_finish_model} in upscale_models.` },
-                  { v: "on", label: "On",
-                    disabled: !stillCfg.skin_finish_available,
-                    title: stillCfg.skin_finish_available
-                      ? "Texture added at the same size, inside the render."
-                      : `Needs ${stillCfg.skin_finish_model} in upscale_models.` },
-                ]} />
+                }} />
             </Field>
             {/* 9.93: "AI Skin Shine Removal". The brief asked for beside
                 the upscale-model selection; DESIGN.md's two-segmented-rows
@@ -1539,30 +1672,28 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 on the delivered frame, nothing to install. Label + tip,
                 no gloss and no hint - the budget sat at 149/150
                 (tests/test_settings_copy.py). */}
-            <Field className="px-ghost-in" label={<>shine removal <InfoTip size={12} text="Lowers specular highlights on skin toward the tone around them — the shiny hotspots on foreheads, cheeks and chests. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
-              <SegmentedControl ariaLabel="Shine removal"
-                value={stillCfg.de_shine ? "on" : "off"}
-                onChange={(id) => {
-                  const on = id === "on";
+            <Field className="px-ghost-in" label={<>Shine removal <InfoTip size={12} text="Lowers specular highlights on skin toward the tone around them — the shiny hotspots on foreheads, cheeks and chests. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
+              <Switch label="Shine removal"
+                on={stillCfg.de_shine}
+                title="Specular highlights pulled toward local skin tone."
+                onChange={(on) => {
                   setStillCfg((s) => ({ ...(s || {}), de_shine: on }));
                   apply({ still: { de_shine: on } },
                         on ? "shine removal on" : "shine removal off");
-                }}
-                options={[
-                  { v: "off", label: "Off",
-                    title: "The frame as the render delivered it." },
-                  { v: "on", label: "On",
-                    title: "Specular highlights pulled toward local skin tone." },
-                ]} />
+                }} />
             </Field>
             </>
           ) : (
             <>
-              <SegGhost segments={2} />
-              <SegGhost segments={2} />
+              <Field label="Skin finish">
+                <SwitchGhost />
+              </Field>
+              <Field label="Shine removal">
+                <SwitchGhost />
+              </Field>
             </>
           )}
-        </Section>
+        </Rows>
         <Section title={<>Upscaler <InfoTip text="Used by the upscale button on a finished render. Model is faithful and invents nothing. PiD repaints tile by tile and invents texture. VSR reconstructs detail in about five seconds. The model's own factor decides the size — a 4× model on a 1024-wide frame gives 4096." /></>}
                  gloss={upscale ? (
                    <span className="px-ghost-in">{`Model upscales; PiD repaints. ${(upscale.installed || []).length} installed.`}</span>
@@ -1570,8 +1701,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                    <>Model upscales; PiD repaints. <ValueGhost w={56} /></>
                  )}>
           {upscale ? (
-            <>
-              <Field className="px-ghost-in" label="still frames"
+            <Rows>
+              <Field className="px-ghost-in" label="Still frames"
                      hint={(upscale.image_mode || "model") === "pid"
                        ? "Invents texture; first use downloads it. " +
                          "Non-commercial license."
@@ -1582,7 +1713,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                            : upscale.vsr_available === false
                              ? "Install the Deno RTX VFX node pack."
                              : undefined}>
-                <SegmentedControl ariaLabel="Image upscale mode"
+                <SegmentedControl variant="pill" ariaLabel="Image upscale mode"
                   value={upscale.image_mode || "model"}
                   onChange={(m) => {
                     setUpscale({ ...upscale, image_mode: m });
@@ -1607,7 +1738,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   returns before it does - so offering an ESRGAN pick in
                   those modes is a control that does nothing. */}
               {(upscale.image_mode || "model") === "model" && (
-              <Field className="px-ghost-in" sub label="upscale model">
+              <Field className="px-ghost-in" label="Upscale model">
               <ScrollPicker
                 value={upscale.image_model || ""}
                 placeholder="choose local upscale model…"
@@ -1628,8 +1759,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   stored under its own key so a still preference never drags
                   the clip setting around. */}
               {(upscale.image_mode || "model") === "vsr" && (
-              <Field className="px-ghost-in" sub label="quality">
-                <SegmentedControl ariaLabel="VSR quality"
+              <Field className="px-ghost-in" label="Quality">
+                <SegmentedControl variant="pill" ariaLabel="VSR quality"
                   value={upscale.image_vsr_mode || "VSR Ultra"}
                   onChange={(m) => {
                     setUpscale({ ...upscale, image_vsr_mode: m });
@@ -1639,20 +1770,20 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   options={(upscale.vsr_tiers || []).map((m) => ({ v: m, label: m.replace("VSR ", "") }))} />
               </Field>
               )}
-            </>
+            </Rows>
           ) : (
-            <>
+            <Rows>
               {/* the ghost is the default shape: mode row + the model list
                   under it (a stored PiD mode drops the picker - that
                   one-time shrink is the stored setting correcting itself,
                   not a load reflow) */}
-              <Field label="still frames">
+              <Field label="Still frames">
                 <SegGhost segments={3} />
               </Field>
-              <Field sub label="upscale model">
+              <Field label="Upscale model">
                 <PickerGhost />
               </Field>
-            </>
+            </Rows>
           )}
         </Section>
 
@@ -1664,12 +1795,13 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             terms"). The hint had the mirror fault: it described the 4x snap
             whichever way the control was set, so the state that needed
             explaining and the state that did not got the same sentence. */}
-        <Section title={<>VAE decode <InfoTip maxWidth={300} text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}>
-          <Field hint={pidCfg?.identity_finish
-            ? "Experimental: canvas snaps to 1024-class presets, returns 4×."
-            : "Wan VAE decode at your canvas."}>
+        <Rows cont>
+          <Field label={<>VAE decode <InfoTip maxWidth={300} text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}
+                 hint={pidCfg?.identity_finish
+                   ? "Experimental: canvas snaps to 1024-class presets, returns 4×."
+                   : "Wan VAE decode at your canvas."}>
             {pidCfg ? (
-              <SegmentedControl className="px-ghost-in" ariaLabel="VAE decode"
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="VAE decode"
                 value={!!pidCfg.identity_finish}
                 onChange={(on) => {
                   setPidCfg({ ...pidCfg, identity_finish: on });
@@ -1687,7 +1819,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <SegGhost segments={2} />
             )}
           </Field>
-        </Section>
+        </Rows>
         </>)}
 
         {tab === "models" && (<>
@@ -1705,7 +1837,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                  )}>
           {store.options && (
             <span className="px-ghost-in" style={{ fontSize: TYPE.label,
-                         color: "var(--textTer)", lineHeight: 1.5 }}>
+                         fontWeight: W.label, color: "var(--textTer)",
+                         lineHeight: 1.5 }}>
               {detectedGb > 0
                 ? `The card reads as ${Math.round(detectedGb)} GB. `
                 : "Card not read yet — weights are disk size. "}
@@ -1720,15 +1853,21 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                keep the headings as direct children. */
             <div className="px-set px-ghost-in" style={{ display: "flex",
                           flexDirection: "column", gap: SPACE[32] }}>
-              {libGroups.map((g) => (
+              {familyGroups.map((g) => (
                 <Fragment key={g.key}>
-                  <GroupLabel>{g.key === "other" ? "Other" : familyName(g.key)}</GroupLabel>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    {g.rows.map((rel) => (
-                      <LibraryRow key={rel} rel={rel} name={g.names[rel]}
-                        meta={libMeta[rel] || {}} detectedGb={detectedGb} />
-                    ))}
-                  </div>
+                  <GroupLabel badge={g.rows
+                    ? <Badge>Installed</Badge>
+                    : <Badge action>Install</Badge>}>
+                    {g.key === "other" ? "Other" : familyName(g.key)}
+                  </GroupLabel>
+                  {g.rows && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      {g.rows.map((rel) => (
+                        <LibraryRow key={rel} rel={rel} name={g.names[rel]}
+                          meta={libMeta[rel] || {}} detectedGb={detectedGb} />
+                      ))}
+                    </div>
+                  )}
                 </Fragment>
               ))}
               {libGroups.length === 0 && (
@@ -1786,13 +1925,17 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 defect. id = the gguf path the row posted; the VISION / NSFW
                 chips ride the description so the filter still finds them. */}
             {!cfg ? (
-              /* the shared trigger is a fixed 28px, so the ghost finally IS
-                 the control's own box - the list's 36px row ghost was the
-                 smallest honest hold for a variable-height list */
-              <Bar h={28} />
+              /* the ghost IS the control's own box: the 24px value
+                 pill (PickerGhost), labelled so the search still finds it */
+              <Rows>
+                <Field label="Model">
+                  <PickerGhost />
+                </Field>
+              </Rows>
             ) : (localList.length ? (
-              <div className="px-ghost-in">
-                <Picker label="Local brain model" value={localModel}
+              <Rows>
+                <Field className="px-ghost-in" label="Model">
+                  <Picker hug label="Local brain model" value={localModel}
                   placeholder="pick a model…"
                   options={localList.map((m) => ({
                     id: m.path,
@@ -1806,7 +1949,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                                    local_model: id } },
                           "model applied - loads on your next message");
                   }} />
-              </div>
+              </Field>
+              </Rows>
             ) : (
               <div className="px-ghost-in" style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>
                 no .gguf chat models found in your model folders
@@ -1815,9 +1959,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             {/* A stored value, not navigation — stays a segmented control. With
                 "brain runs on" below that is two segment rows in this panel,
                 the cap; a third would mean the grouping is wrong. */}
-                          <Field label={<>between replies <InfoTip text="Keeping the model loaded means instant replies, but it holds a few GB of VRAM next to your renders. It steps aside when a render needs the room. Unloading frees the card; the next reply waits for a reload." /></>}>
+                          <Rows>
+            <Field label={<>Between replies <InfoTip text="Keeping the model loaded means instant replies, but it holds a few GB of VRAM next to your renders. It steps aside when a render needs the room. Unloading frees the card; the next reply waits for a reload." /></>}>
               {cfg ? (
-                <SegmentedControl className="px-ghost-in" ariaLabel="memory policy" value={localKeep}
+                <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="memory policy" value={localKeep}
                   onChange={(keep) => {
                     setLocalKeep(keep);
                     apply({ llm: { local_keep: keep } },
@@ -1830,9 +1975,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 <SegGhost segments={2} />
               )}
             </Field>
-            <Field label={<>brain runs on <InfoTip text="GPU replies fast but holds VRAM next to the render; CPU chat is slow but frees the card for rendering." /></>}>
+            <Field label={<>Brain runs on <InfoTip text="GPU replies fast but holds VRAM next to the render; CPU chat is slow but frees the card for rendering." /></>}>
               {cfg ? (
-                <SegmentedControl className="px-ghost-in" ariaLabel="brain runs on" value={localGpu}
+                <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="brain runs on" value={localGpu}
                   onChange={(v) => {
                     setLocalGpu(v);
                     apply({ llm: { local_gpu_layers: v } },
@@ -1847,6 +1992,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 <SegGhost segments={2} />
               )}
             </Field>
+            </Rows>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 5,
                           fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
               <LockKey size={11} weight="duotone" style={{ flexShrink: 0, marginTop: 4 }} />
@@ -1916,26 +2062,28 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </div>
         </Section>
 
-        {/* 9.60: whose rulebook the writer runs. Own section, not a row inside
-            Chat brain - a Field cannot carry both a tip and a hint (the copy
-            contract), so the families subline is the section gloss, and the
-            Chat brain section is already at the two-segmented-row cap. */}
-        <Section title={<>Official prompting <InfoTip text="Writes scenes the way the model's makers recommend — Krea 2's own expansion prompt on Krea 2 recipes. A family with no official file is unchanged either way. Off uses Pixal's photo-craft rules." /></>}
-                 gloss={officialGloss}>
-          {cfg ? (
-            <SegmentedControl className="px-ghost-in" ariaLabel="Official prompting" value={officialPrompting}
-              onChange={(on) => {
-                setOfficialPrompting(on);
-                apply({ llm: { official_prompting: on } },
-                      on ? "writes with the model makers' own prompt"
-                         : "writes with Pixal's photo-craft rules");
-              }}
-              options={[{ v: true, label: "On" },
-                        { v: false, label: "Off" }]} />
-          ) : (
-            <SegGhost segments={2} />
-          )}
-        </Section>
+        {/* 9.60: whose rulebook the writer runs. Its own row, not one inside
+            Chat brain - the families subline is live data (the families
+            carrying an official file), so it rides the row's hint slot,
+            ghosted until cfg lands. 10.0: an on/off default is a pixal
+            toggle, not a two-option pill. */}
+        <Rows cont>
+          <Field label={<>Official prompting <InfoTip text="Writes scenes the way the model's makers recommend — Krea 2's own expansion prompt on Krea 2 recipes. A family with no official file is unchanged either way. Off uses Pixal's photo-craft rules." /></>}
+                 hint={officialGloss}>
+            {cfg ? (
+              <Switch className="px-ghost-in" label="Official prompting"
+                on={officialPrompting}
+                onChange={(on) => {
+                  setOfficialPrompting(on);
+                  apply({ llm: { official_prompting: on } },
+                        on ? "writes with the model makers' own prompt"
+                           : "writes with Pixal's photo-craft rules");
+                }} />
+            ) : (
+              <SwitchGhost />
+            )}
+          </Field>
+        </Rows>
 
         <GroupLabel>vision</GroupLabel>
         {/* This section used to read "Image reviewer" over the ComfyUI picker
@@ -1949,8 +2097,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             title and gloss have to carry the fact instead. They read from
             critic.brain, which is the projector-on-disk-and-not-demoted
             truth, NOT the filename-regex VISION chip in the brain picker. */}
-        <Section title={<>{criticBrain?.sighted ? "Fallback reviewer" : "Image reviewer"} <InfoTip text="The chat brain reviews directly whenever it has working eyes; this ComfyUI model only runs when it does not. Bigger models read hands and text better; first use takes ~30s to warm up." /></>}
-                 gloss={!criticBrain?.local
+        <Rows>
+          <Field label={<>{criticBrain?.sighted ? "Fallback reviewer" : "Image reviewer"} <InfoTip text="The chat brain reviews directly whenever it has working eyes; this ComfyUI model only runs when it does not. Bigger models read hands and text better; first use takes ~30s to warm up." /></>}
+                 hint={!criticBrain?.local
                    ? "Suggests fixes for what you made."
                    : criticBrain.sighted
                      ? "Only when the chat brain can’t see."
@@ -1971,7 +2120,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           ) : (
             <PickerGhost />
           )}
-        </Section>
+        </Field>
+        </Rows>
         </>)}
 
         {tab === "about" && (
@@ -2170,7 +2320,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </span>
         </div>
       )}
-    </>
+    </SettingsQuery.Provider>
   );
 
   return (

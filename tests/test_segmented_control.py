@@ -144,7 +144,7 @@ class DisabledInBothVariants(unittest.TestCase):
         # {...opt.buttonProps} is how Lumen's version disables an option;
         # it spreads after the built-ins, so it wins.
         i = LIB.index("{...(opt.buttonProps || {})}")
-        j = LIB.index("style={grid ? gridStyle : flexStyle}")
+        j = LIB.index("style={grid ? gridStyle : pill ? pillStyle : flexStyle}")
         self.assertLess(i, j, "buttonProps must spread before style")
 
 
@@ -183,8 +183,11 @@ class OneOptionKey(unittest.TestCase):
                     for text in CALLSITES.values())
         total = sum(text.count("<SegmentedControl")
                     for text in CALLSITES.values())
-        self.assertEqual(total, 31,
-                         "call sites drifted from the 9.23b census")
+        self.assertEqual(total, 27,
+                         "call sites drifted from the 9.23b census" +
+                         " (10.0: minus the four binary rows that became " +
+                         "pixal toggles - skin finish, shine removal, " +
+                         "H3 2× upscale, official prompting)")
 
 
 if __name__ == "__main__":

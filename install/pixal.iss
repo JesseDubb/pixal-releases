@@ -13,7 +13,7 @@
 ; and NO install-mode dialog. "Never asks for admin" means never asking.
 
 #ifndef MyVersion
-  #define MyVersion "1.1.6b"
+  #define MyVersion "1.1.7b"
 #endif
 #ifndef MyStage
   #define MyStage "_build\stage"

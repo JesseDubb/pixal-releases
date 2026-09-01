@@ -339,6 +339,190 @@ class GemmaMessageShimTests(unittest.TestCase):
             json.loads(calls[0]["function"]["arguments"])["template"], "realism")
 
 
+class SceneFromProseFurnitureTests(unittest.TestCase):
+    """9.99: the chat a brain speaks is not the scene it queues.
+
+    A prose reply carries conversational furniture - lead-ins, trailing
+    offers, meta fragments - and the text encoder conditioned on every word
+    of it. _scene_from_prose now trims that furniture from the two ends
+    inward; the scene is the contiguous descriptive body that remains. The
+    fixtures are the real polluted scenes out of history.jsonl (READ-ONLY),
+    quoted verbatim in briefs/9.99-evidence.md."""
+
+    # history.jsonl id 725335a7 (2026-08-31, h3_ref_still) - the documented
+    # incident of docs/2026-08-30-h3-ref-realism.md part five: a 166-word
+    # reply whose meta tail ("The mood? Unapologetically alive and free...")
+    # reached the sampler verbatim and the renders were rejected over it.
+    TAXI = (
+        "Zara sits in the back of a taxi at night, laughing out loud as she "
+        "leans toward the window \u2014 one arm thrown over her knee, the "
+        "other gripping the edge of the seat. Her long blonde hair falls in "
+        "voluminous waves past her waist, catching the glow from streetlights "
+        "and neon signs outside \u2014 a soft halo around her shoulders. She "
+        "wears a cropped black crop top with high-waisted denim shorts "
+        "\u2014 both bold but casual \u2014 paired with ankle boots.\n\n"
+        "Her nails are manicured, long and glossy; earrings glint faintly as "
+        "she laughs \u2014 not at anything specific, but at something silly "
+        "happening on the street below. The taxi is moving slowly through "
+        "traffic \u2014 no other passengers, no dashboard or rearview mirror "
+        "visible \u2014 just her, laughing, hair flowing, body leaning back "
+        "into the seat.\n\n"
+        "The mood? Unapologetically alive and free \u2014 she\u2019s not "
+        "thinking about anything else; she\u2019s just here, laughing, in "
+        "the moment.")
+    TAXI_CLEAN = TAXI[:TAXI.index("\n\nThe mood?")]
+
+    # history.jsonl id 5a9947b0 (h3_ref_still) - a clean scene paragraph and
+    # then the writer offering to run its own draft.
+    MIA = (
+        "Mia, the blonde bombshell, is posed for Hustler magazine in 2026. "
+        "She stands centered, looking directly at the camera with a confident "
+        "gaze, her long layered hair cascading over one shoulder, catching "
+        "soft light from the front-left. Her attire is a sleek navy blue top "
+        "with a subtle textured weave, visible only by its edge as she leans "
+        "slightly into the frame. Gold hoop earrings glint in the ambient "
+        "glow, and her lips are parted just enough to hint at a playful "
+        "smirk. The background fades into deep indigo velvet, emphasizing her "
+        "presence without distraction \u2014 a studio setting that feels both "
+        "modern and timeless.\n\n"
+        "Render it and I'll fire it.")
+    MIA_CLEAN = MIA[:MIA.index("\n\nRender it")]
+
+    # history.jsonl id 4cee9c4f - ALL furniture, no scene at all. Stripping
+    # would leave nothing, so rule 5 returns the pre-strip text unchanged.
+    ALL_CHAT = (
+        "Got it \u2014 the LoRA stack just updated. Let me refresh and "
+        "render with the new settings. Say \u201crender it\u201d or \u201cgo "
+        "ahead\u201d when you\u2019re ready, and I\u2019ll fire off the shot "
+        "with the latest config.")
+
+    def test_ledger_meta_fragment_tail_is_stripped(self):
+        out = server._scene_from_prose(self.TAXI)
+        self.assertEqual(out, self.TAXI_CLEAN)
+        self.assertNotIn("The mood", out)
+        self.assertNotIn("Unapologetically", out)
+        self.assertTrue(out.endswith("leaning back into the seat."))
+
+    def test_ledger_trailing_offer_is_stripped(self):
+        out = server._scene_from_prose(self.MIA)
+        self.assertEqual(out, self.MIA_CLEAN)
+        self.assertNotIn("fire it", out)
+        self.assertTrue(out.endswith("modern and timeless."))
+
+    def test_ledger_all_furniture_reply_returns_unchanged(self):
+        self.assertEqual(server._scene_from_prose(self.ALL_CHAT), self.ALL_CHAT)
+
+    def test_fence_and_config_handling_is_byte_identical(self):
+        """The guard: fence extraction and config-line stripping are the
+        pre-9.99 behavior and must not drift. history.jsonl id b2cafaef."""
+        text = ("Okay, let's build that.\n\n```\nrealism / realism_ii\n"
+                "standing=false\nseed=12345\n\nA silver-haired woman reads "
+                "by a rain-streaked window, soft morning light on the knit "
+                "of her sweater.\n```")
+        self.assertEqual(
+            server._scene_from_prose(text),
+            "A silver-haired woman reads by a rain-streaked window, soft "
+            "morning light on the knit of her sweater.")
+
+    def test_a_pure_scene_passes_byte_identical(self):
+        """A scene with no furniture is stable - and stripping is idempotent,
+        since the cleaned ledger fixtures ARE pure scenes."""
+        self.assertEqual(server._scene_from_prose(self.TAXI_CLEAN),
+                         self.TAXI_CLEAN)
+        self.assertEqual(server._scene_from_prose(self.MIA_CLEAN),
+                         self.MIA_CLEAN)
+
+    def test_a_scene_closing_on_quoted_dialogue_keeps_its_last_line(self):
+        """A caption may legitimately close on dialogue; quoted "I" is a
+        character speaking, not the assistant offering something (rule 4)."""
+        text = ("She waves from the porch, coat half-buttoned against the "
+                "cold, one boot on the top step.\n\n\"I'll be right back.\"")
+        self.assertEqual(server._scene_from_prose(text), text)
+        quoted_question = ("She grins at him from the doorway, keys already "
+                           "in hand. \"Coming?\"")
+        self.assertEqual(server._scene_from_prose(quoted_question),
+                         quoted_question)
+
+    def test_an_all_furniture_reply_returns_unchanged(self):
+        """Rule 5: a wrongly emptied scene is worse than a chatty one."""
+        text = ("Sure! Want me to run it? Say \u201cgo\u201d and I\u2019ll "
+                "fire it.")
+        self.assertEqual(server._scene_from_prose(text), text)
+
+    def test_interjection_openers_are_dropped(self):
+        scene = "A fox in snow, tail curled over its nose."
+        for lead in ("Got it \u2014 here's the shot:",
+                     "Sure!",
+                     "Okay, picture this:",
+                     "Alright!",
+                     "Absolutely!",
+                     "Perfect!",
+                     "Love it \u2014 here's the shot:",
+                     "Here's the shot:",
+                     "Here is the shot:",
+                     "Let's build that:",
+                     "Let us begin:"):
+            with self.subTest(lead=lead):
+                self.assertEqual(
+                    server._scene_from_prose(f"{lead} {scene}"), scene)
+
+    def test_opener_lookalikes_inside_words_are_not_dropped(self):
+        """'sure' the interjection is not the 'sure' in 'sure-footed'."""
+        for text in ("Sure-footed, she crosses the creek ahead of the dog.",
+                     "Perfectly still, she waits for the shutter."):
+            with self.subTest(text=text):
+                self.assertEqual(server._scene_from_prose(text), text)
+
+    def test_a_second_person_leadin_is_dropped(self):
+        text = ("You wanted her somewhere quiet, so here it is. She sits on "
+                "the floor of the darkroom, red safelight pooling on the "
+                "trays, a print held up to the glow.")
+        self.assertEqual(
+            server._scene_from_prose(text),
+            "She sits on the floor of the darkroom, red safelight pooling "
+            "on the trays, a print held up to the glow.")
+
+    def test_a_trailing_question_is_dropped(self):
+        text = ("She leans on the gate at dusk, forearms folded over the top "
+                "rail, watching the road. Want me to tweak anything?")
+        self.assertEqual(
+            server._scene_from_prose(text),
+            "She leans on the gate at dusk, forearms folded over the top "
+            "rail, watching the road.")
+
+    def test_trailing_assistant_offers_are_dropped(self):
+        scene = "A fox in snow, tail curled over its nose."
+        for tail in ("Say go and I'll fire it.",
+                     "Say \u201cgo\u201d and I'll fire it.",
+                     "Let me know if you want it darker.",
+                     "Tell me what to change.",
+                     "Your call.",
+                     "I can make it colder if you like."):
+            with self.subTest(tail=tail):
+                self.assertEqual(
+                    server._scene_from_prose(f"{scene} {tail}"), scene)
+
+    def test_interior_sentences_are_never_dropped(self):
+        """Rule 3: a mid-scene sentence is scene, whatever it looks like -
+        an interior question and an interior 'I can' both stay."""
+        text = ("Rain hammers the bus shelter, one flickering tube light "
+                "overhead. Was anyone watching? She pulls her collar higher "
+                "and does not look back. I can almost hear her counting the "
+                "seconds, the way she stands says enough. The road behind "
+                "her stays empty.")
+        self.assertEqual(server._scene_from_prose(text), text)
+
+    def test_machinery_and_json_colons_are_not_leadin_labels(self):
+        """[SYSTEM: ...] receipts and printed tool calls also contain
+        colon+space; scene_gate's _MACHINERY_RE refusal depends on seeing
+        them whole, so the colon rule applies to prose-shaped labels only."""
+        for text in ("[SYSTEM: the server queued that scene as job 8bbda870 "
+                     "(realism) - no reply needed.]",
+                     '{"name": "generate", "arguments": {"scene": "a fox"}}'):
+            with self.subTest(text=text):
+                self.assertEqual(server._scene_from_prose(text), text)
+
+
 class ConversationIntentTests(unittest.IsolatedAsyncioTestCase):
     def test_greetings_and_product_questions_are_not_render_intent(self):
         for text in ("Hey?", "hey", "Thanks!", "nice", "How are you?",

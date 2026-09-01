@@ -1023,6 +1023,7 @@ export const Chat = () => {
             ) : (
               <HistoryGrid docked width={dockW - 12}
                 history={store.history}
+                rendering={rendering}
                 onClose={() => store.setRailOpen(false)}
                 onOpen={(e) => store.setLb({ images: e.images, idx: 0, meta: metaFor(e) })}
                 onAnimate={(e) => setAnimFor(e.id)}
@@ -1498,6 +1499,7 @@ export const Chat = () => {
         <HistoryGrid
           phone={narrow}
           history={store.history}
+          rendering={rendering}
           onClose={() => store.setRailOpen(false)}
           onOpen={(e) => store.setLb({ images: e.images, idx: 0, meta: metaFor(e) })}
           onAnimate={(e) => setAnimFor(e.id)}
@@ -1550,7 +1552,10 @@ export const Chat = () => {
             store.editInput(name, instruction, extra)}
           onSaved={async (id) => {
             await store.loadOptions();
-            if (!store.selectCharacter(id))
+            // Saving the anchor that is ALREADY active is an edit, not a new
+            // selection: re-running selectCharacter would wipe a MiniMax H3
+            // model pick (9.97). Only a different character gets selected.
+            if (store.opts.character !== id && !store.selectCharacter(id))
               setCharacterNotice("That anchor could not be selected for Identity Edit.");
           }} />
       )}

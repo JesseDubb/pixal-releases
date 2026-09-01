@@ -299,7 +299,8 @@ const Tile = ({ e, dims, onProbed, onOpen, onAnimate, onReroll, onReview, onEdit
 };
 
 export const HistoryGrid = ({ history, onClose, onOpen, onAnimate, onReroll, onReview,
-                              onEdit, onUpscale, onDelete, docked, width, phone }) => {
+                              onEdit, onUpscale, onDelete, docked, width, phone,
+                              rendering }) => {
   const [sort, setSort] = useState("new");
   const [dims, setDims] = useState({});
 
@@ -360,7 +361,10 @@ export const HistoryGrid = ({ history, onClose, onOpen, onAnimate, onReroll, onR
               boxShadow: SHADOW.xl }),
       background: "var(--surfaceSolid)",
       border: "1px solid var(--border)", borderRadius: RADIUS.surface,
-      backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
+      // Render-quiet, Chat.jsx's surface discipline: an 18px backdrop blur
+      // left running while ComfyUI samples fights the job for the card.
+      backdropFilter: rendering ? "none" : "blur(18px)",
+      WebkitBackdropFilter: rendering ? "none" : "blur(18px)",
       display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
       <style>{CSS}</style>

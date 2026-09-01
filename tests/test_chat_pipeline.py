@@ -460,3 +460,78 @@ class OneReplyPerTurn(unittest.TestCase):
         self.assertIn("here", joined)
         self.assertEqual(joined.count("single hard spotlight"), 1)
         self.assertIn("Want me to run it?", joined)
+
+
+class ProseRescueOnlyWithEnhance(unittest.TestCase):
+    """9.99: _scene_from_prose is reached ONLY with prompt_enhance on.
+
+    The prose rescue at server.py:18605 reads
+    `_scene_from_prose(scene_text) if prompt_enhance else _direct_prompt_scene(...)`
+    and that must remain true: with enhance off the verbatim contract ("the
+    user's words ARE the prompt") is sacred and the furniture trimmer has no
+    business anywhere near it. With enhance on, the queued scene is the
+    trimmed one."""
+
+    PROSE = ("Sure! Here's the shot: A silver-haired woman reads by a "
+             "rain-streaked window, soft morning light on the knit of her "
+             "sweater, an open paperback held loosely in both hands, the rest "
+             "of the room falling away into quiet shadow behind her. "
+             "Say go and I'll fire it.")
+    CLEAN = ("A silver-haired woman reads by a rain-streaked window, soft "
+             "morning light on the knit of her sweater, an open paperback "
+             "held loosely in both hands, the rest of the room falling away "
+             "into quiet shadow behind her.")
+
+    def _replay(self, user_text, convo, enhance, brain_says):
+        submitted = []
+
+        async def fake_submit(cid, src, template, scene, spec, count=1,
+                              parent=None, flags=None, verbatim=False):
+            submitted.append(scene)
+            return {"id": "test1234", "error": None}
+
+        async def fake_llm(messages, tools=None, cid=None):
+            return 200, {"choices": [{"message": {"role": "assistant",
+                                                  "content": brain_says}}]}
+
+        # The rescue's local-brain gate reads the live config; pin it local.
+        cfg = json.loads(json.dumps(server.load_config()))
+        cfg["llm"]["base_url"] = f"http://127.0.0.1:{server.LOCAL_LLM_PORT}/v1"
+        real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
+        server.HUB.submit, server.llm_call = fake_submit, fake_llm
+        server.HUB.broadcast = lambda **kw: None
+        try:
+            with patch.object(server, "load_config", return_value=cfg):
+                asyncio.run(server._kimi_reply(
+                    "testcid", {"role": "user", "content": user_text}, convo,
+                    {"prompt_enhance": enhance}))
+        finally:
+            server.HUB.submit, server.llm_call, server.HUB.broadcast = real
+        return submitted
+
+    def test_enhance_on_queues_the_trimmed_scene(self):
+        convo = [{"role": "user", "content": TURN6 + COMPOSER},
+                 {"role": "assistant", "content": "generate"}]
+        with patch.object(server, "_scene_from_prose",
+                          wraps=server._scene_from_prose) as spy, \
+                patch.object(server, "_direct_prompt_scene",
+                             side_effect=AssertionError(
+                                 "_direct_prompt_scene with enhance ON")):
+            submitted = self._replay("generate" + COMPOSER, convo, True,
+                                     self.PROSE)
+        self.assertTrue(spy.called)
+        self.assertEqual(submitted, [self.CLEAN])
+
+    def test_enhance_off_never_reaches_scene_from_prose(self):
+        # An iteration turn, so the enhance-off fast path holds back and the
+        # 18605 branch is the one exercised.
+        convo = [{"role": "user", "content": TURN6 + COMPOSER}]
+        with patch.object(server, "_scene_from_prose",
+                          side_effect=AssertionError(
+                              "_scene_from_prose reached with enhance OFF")), \
+                patch.object(server, "_direct_prompt_scene",
+                             return_value="the user's own words") as dps:
+            submitted = self._replay("make her jacket red" + COMPOSER, convo,
+                                     False, self.PROSE)
+        self.assertTrue(dps.called)
+        self.assertEqual(submitted, ["the user's own words"])

@@ -12,6 +12,9 @@
 // field entirely while a render is in flight. An unchanged canvas costs the
 // compositor nothing, so calm means the app stops touching the GPU exactly
 // when ComfyUI needs all of it.
+// 9.98: the loop now also sleeps whenever the field is unwatched — calm, a
+// hidden tab, or an unfocused window CANCELS the rAF outright (BlockLogo's
+// wanted()/sync()); the frozen last frame stays up as the static backdrop.
 import { useEffect, useRef } from "react";
 
 const DOT_SPACING = 32;
@@ -36,7 +39,10 @@ export const PhotonField = ({ rgb = "238,241,235", calm = false }) => {
   const ref = useRef(null);
   const mouse = useRef({ x: -1000, y: -1000 });
   const calmRef = useRef(calm);
+  const syncRef = useRef(null);
   calmRef.current = calm;
+  // A cancelled loop can't notice calm lift on its own — resync on the prop.
+  useEffect(() => { syncRef.current && syncRef.current(); }, [calm]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -44,8 +50,9 @@ export const PhotonField = ({ rgb = "238,241,235", calm = false }) => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const ctx = canvas.getContext("2d");
     const sprite = makeSprite(rgb);
-    let raf;
-    let last = 0;
+    let raf = 0;
+    let running = false;
+    let last = -FRAME_MS;   // nothing painted yet: the first draw always paints
     let wasCalm = false;
     let dots = [];      // { homeX, homeY, x, y, activation }
 
@@ -77,15 +84,12 @@ export const PhotonField = ({ rgb = "238,241,235", calm = false }) => {
     const onMouse = (e) => { mouse.current.x = e.clientX; mouse.current.y = e.clientY; };
     window.addEventListener("mousemove", onMouse);
 
+    // BlockLogo's wanted()/sync() discipline: the loop exists only while the
+    // field is watched — not calm, tab visible, window focused. Anything else
+    // cancels the rAF outright instead of scheduling a no-op wakeup per frame.
+    const wanted = () => !calmRef.current && !document.hidden && document.hasFocus();
+
     const draw = (now) => {
-      raf = requestAnimationFrame(draw);
-      if (calmRef.current) {
-        // Freeze, don't clear: the last frame stays as a static backdrop and
-        // the untouched canvas drops out of the compositor's work entirely.
-        // Fading the whole field out here would itself be an animation.
-        wasCalm = true;
-        return;
-      }
       if (now - last < FRAME_MS) return;
       last = now;
       if (wasCalm) {
@@ -134,9 +138,42 @@ export const PhotonField = ({ rgb = "238,241,235", calm = false }) => {
       ctx.globalAlpha = 1;
     };
 
-    raf = requestAnimationFrame(draw);
+    const frame = (now) => {
+      if (!wanted()) { wasCalm = true; running = false; raf = 0; return; }
+      raf = requestAnimationFrame(frame);
+      draw(now);
+    };
+
+    const sync = () => {
+      if (wanted()) {
+        if (!running) { running = true; last = 0; raf = requestAnimationFrame(frame); }
+      } else if (running) {
+        // Freeze, don't clear: the last frame stays as a static backdrop and
+        // the untouched canvas drops out of the compositor's work entirely.
+        // Fading the whole field out here would itself be an animation.
+        wasCalm = true;
+        cancelAnimationFrame(raf); running = false; raf = 0;
+      }
+    };
+    syncRef.current = sync;
+
+    // One static frame up front: if the loop stays cancelled (window
+    // unfocused at mount) this is the backdrop, exactly as a frozen last
+    // frame is once the loop has run. Mount-calm keeps its blank-until-wake.
+    if (!calmRef.current) draw(performance.now());
+    sync();
+
+    const onVis = () => sync();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    window.addEventListener("blur", onVis);
+
     return () => {
       cancelAnimationFrame(raf);
+      syncRef.current = null;
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+      window.removeEventListener("blur", onVis);
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onMouse);
     };

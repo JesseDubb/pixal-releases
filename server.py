@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.5b"
+PIXAL_VERSION = "1.1.6b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -15660,6 +15660,164 @@ def _strip_history_directives(content):
 _SCENE_FENCE_RE = re.compile(r"```[a-zA-Z]*\s*\n(.*?)```", re.S)
 _SCENE_CONFIG_LINE_RE = None  # built lazily: PUBLIC_RECIPE_IDS lives below
 
+# ---- conversational furniture -------------------------------------------
+# A brain that answers a render ask in prose wraps the scene in chat: an
+# opener ("Sure! Here's the shot:"), a closer ("Want me to tweak anything?",
+# "say go and I'll fire it"), or a rhetorical aside about the scene it just
+# wrote ("The mood? Unapologetically alive and free" - the 2026-08-31 taxi
+# render, rejected over exactly those words). The scene is the contiguous
+# descriptive body; the furniture is whatever lies past either end of it,
+# and the text encoder was conditioning on all of it.
+
+# The throat-clearing a reply opens with. The lookahead keeps "sure" the
+# interjection distinct from the "sure" in "sure-footed".
+_PROSE_INTERJECTION_RE = re.compile(
+    r"^\s*(?:got\s+it|sure|ok(?:ay)?|alright|absolutely|perfect|love\s+it|"
+    r"here(?:['’]s|\s+is)|let(?:['’]s|\s+us))(?![-\w'’])", re.I)
+# Second-person address to the user, anchored at the fragment's start: "You
+# wanted her somewhere quiet" is the writer talking to Jesse, but the
+# impersonal "you" of "you can see her breath" mid-sentence is description.
+# A quoted "you" is a character speaking and never reaches these tests -
+# dialogue is masked out first.
+_PROSE_SECOND_PERSON_RE = re.compile(
+    r"^\s*(?:you(?:['’](?:re|d|ll|ve))?|your(?:s|self)?)\b", re.I)
+# The assistant speaking for itself: offers, follow-ups, invitations.
+_PROSE_ASSISTANT_RE = re.compile(
+    r"\b(?:i(?:['’](?:ll|d|ve)\b|\s+can\b|\s+could\b)|let\s+me\b"
+    r"|want\s+me\b|tell\s+me\b|your\s+call\b|what\s+do\s+you\s+think\b)", re.I)
+# "say go" / 'say "go"' - the one marker tested on the ORIGINAL text with the
+# dialogue spans known, because the quoted form is how brains write it; a
+# match that starts inside dialogue is a character's line and stays.
+_PROSE_SAY_GO_RE = re.compile(r"\bsay\s+[\"“‘']?\s*go(?:[\"”’']\s*|\b)", re.I)
+# What a lead-in label up to a colon is made of ("Got it - here's the shot:",
+# "Picture this:"). Brackets, braces, quotes, angles and '=' are NOT prose:
+# [SYSTEM: ...] receipts and printed JSON tool calls contain colon+space too,
+# and scene_gate's _MACHINERY_RE refusal depends on seeing those whole. And a
+# label is SHORT - "Picture this:", "Here's the shot:", _SCENE_LABEL_RE's
+# EDIT/SCENE/PROMPT family: anything longer with a colon is the caption's own
+# house style ("A still life photograph at dusk: ...", "Give her a smoky
+# eye: ...", "...a blonde woman in a cozy loft, mood: ..."), the scene
+# specifying itself rather than announcing itself. Longer real lead-ins
+# ("Got it - here's the shot:") are caught by the interjection rule anyway.
+_PROSE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ,;'’—–()-]*$")
+_PROSE_LABEL_WORDS = 3
+# Fragment boundaries: terminal punctuation, a lead-in colon, a newline run.
+_PROSE_BOUNDARY_RE = re.compile(r"[.!?](?=\s|$)|:(?=\s)|\n+")
+_DIALOGUE_TAG_RE = re.compile(r"<d>.*?</d>", re.I | re.S)
+_CURLY_QUOTE_RE = re.compile(r"“[^”]*”")
+_STRAIGHT_QUOTE_RE = re.compile(r'"[^"\n]*"')
+_BLANK_LINE_RE = re.compile(r"\n\s*\n")
+
+
+def _dialogue_spans(text):
+    """Quoted regions: <d>...</d>, curly quotes, and straight double quotes
+    paired WITHIN a line, so one stray inch mark cannot swallow the rest of
+    the scene as 'dialogue'."""
+    spans = [(m.start(), m.end()) for m in _DIALOGUE_TAG_RE.finditer(text)]
+    spans += [(m.start(), m.end()) for m in _CURLY_QUOTE_RE.finditer(text)]
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        spans += [(pos + m.start(), pos + m.end())
+                  for m in _STRAIGHT_QUOTE_RE.finditer(line)]
+        pos += len(line)
+    return spans
+
+
+def _prose_fragments(text, masked):
+    """(start, end, terminator) for each fragment, split at terminal
+    punctuation, lead-in colons and newline runs. Offsets index both strings,
+    so a fragment's original and dialogue-masked forms always agree; a
+    fragment that is only whitespace is a separator, not a sentence."""
+    out, start = [], 0
+    for m in _PROSE_BOUNDARY_RE.finditer(masked):
+        tok = m.group(0)
+        end, term = (m.start(), "\n") if tok[0] == "\n" else (m.end(), tok[0])
+        if text[start:end].strip():
+            out.append((start, end, term))
+        start = m.end()
+        # Original text here, not the mask: a blanked quote is spaces in the
+        # mask but a real sentence (dialogue) in the scene.
+        while start < len(text) and text[start] in " \t\r\n":
+            start += 1
+    if text[start:].strip():
+        out.append((start, len(text), ""))
+    return out
+
+
+def _strip_conversational_furniture(text):
+    """Trim chat furniture from the two ends of a prose reply, inward,
+    stopping at the first sentence that is not furniture - a mid-scene
+    sentence is scene, whatever it looks like. Returns "" when nothing is
+    scene; the caller keeps the pre-strip text in that case, because a
+    wrongly emptied scene is worse than a chatty one."""
+    spans = _dialogue_spans(text)
+    chars = list(text)
+    for a, b in spans:
+        for i in range(a, min(b, len(chars))):
+            if chars[i] not in "\r\n":
+                chars[i] = " "
+    masked = "".join(chars)
+    frags = _prose_fragments(text, masked)
+    lo, hi = 0, len(frags)
+
+    def leading(a, b, term):
+        body = masked[a:b].strip()
+        if not body:
+            return False     # a reply that opens on dialogue opens on scene
+        # A lead-in label is short ("Picture this:"); a longer colon-
+        # terminated fragment is the scene specifying itself ("A still life
+        # photograph at dusk: ...", "...overhead lamp, composition: ...").
+        if term == ":" and len(body[:-1].split()) <= _PROSE_LABEL_WORDS \
+                and _PROSE_LABEL_RE.match(body[:-1].strip()):
+            return True
+        return bool(_PROSE_INTERJECTION_RE.match(body)
+                    or _PROSE_SECOND_PERSON_RE.search(body)
+                    or _PROSE_ASSISTANT_RE.search(body))
+
+    def trailing(a, b):
+        body = masked[a:b]
+        if not body.strip():
+            return False     # a trailing quoted line stays: a caption may
+                             # legitimately close on dialogue
+        if body.rstrip().endswith("?"):
+            return True
+        if _PROSE_ASSISTANT_RE.search(body):
+            return True
+        for m in _PROSE_SAY_GO_RE.finditer(text[a:b]):
+            if not any(s <= a + m.start() < e for s, e in spans):
+                return True
+        return False
+
+    changed = True
+    while changed and lo < hi:
+        changed = False
+        while lo < hi and leading(*frags[lo]):
+            lo += 1
+            changed = True
+        while hi > lo:
+            a, b, _ = frags[hi - 1]
+            if trailing(a, b):
+                hi -= 1
+                changed = True
+                continue
+            # A closing paragraph that OPENS on an unquoted question is the
+            # writer posing and answering its own question about the scene
+            # ("The mood? Unapologetically alive and free - ...") - one meta
+            # aside, dropped as a unit.
+            first = hi - 1
+            while first > lo and not _BLANK_LINE_RE.search(
+                    text[frags[first - 1][1]:frags[first][0]]):
+                first -= 1
+            fa, fb, _ = frags[first]
+            if first < hi - 1 and masked[fa:fb].rstrip().endswith("?"):
+                hi = first
+                changed = True
+                continue
+            break
+    if lo >= hi:
+        return ""
+    return text[frags[lo][0]:frags[hi - 1][1]].strip()
+
 
 def _scene_from_prose(text):
     """A prose brain that failed to call generate sometimes roleplays the tool
@@ -15667,7 +15825,14 @@ def _scene_from_prose(text):
     header ('realism / realism_ii', 'standing=false', 'seed=12345') and the
     scene - and all of it shipped to the sampler verbatim (job b2cafaef,
     Gemma swap-in). The fenced block IS the scene; config-shaped lines are
-    the settings it should have passed as tool arguments."""
+    the settings it should have passed as tool arguments.
+
+    An unfenced chatty reply is the same failure without the fence: lead-ins,
+    trailing offers and meta fragments are trimmed from the two ends inward
+    (_strip_conversational_furniture) and the contiguous descriptive body is
+    what remains. If trimming would leave nothing, the pre-strip text stands
+    - a wrongly emptied scene is worse than a chatty one, and the
+    scene_is_command("") machinery downstream reads the two differently."""
     global _SCENE_CONFIG_LINE_RE
     if _SCENE_CONFIG_LINE_RE is None:
         ids = "|".join(re.escape(i) for i in PUBLIC_RECIPE_IDS)
@@ -15678,7 +15843,9 @@ def _scene_from_prose(text):
     if fences:
         text = max(fences, key=len)
     text = _SCENE_CONFIG_LINE_RE.sub("", text or "")
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    stripped = _strip_conversational_furniture(text)
+    return stripped if stripped.strip() else text
 
 
 REALISM_CAPTION = "Rich saturated colour."

@@ -55,12 +55,17 @@ const Row = ({ chat, active, onSelect, onDelete }) => (
   </div>
 );
 
-export const ChatsPanel = ({ store, onClose }) => (
+export const ChatsPanel = ({ store, onClose }) => {
+  // Render-quiet, Chat.jsx's surface discipline: an 18px backdrop blur left
+  // running while ComfyUI samples fights the job for the card.
+  const rendering = !!store.liveJobs[0];
+  return (
   <div style={{
     height: "100%", display: "flex", flexDirection: "column",
     background: "var(--surface)", border: "1px solid var(--border)",
     borderRadius: RADIUS.surface, overflow: "hidden",
-    backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
+    backdropFilter: rendering ? "none" : "blur(18px)",
+    WebkitBackdropFilter: rendering ? "none" : "blur(18px)",
   }}>
     <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
                   padding: `${SPACE[12]}px ${SPACE[12]}px ${SPACE[6]}px` }}>
@@ -102,4 +107,5 @@ export const ChatsPanel = ({ store, onClose }) => (
       )}
     </div>
   </div>
-);
+  );
+};

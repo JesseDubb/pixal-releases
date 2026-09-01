@@ -2188,7 +2188,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           width: "100%", height: "100%",
           background: "var(--surface)", border: "1px solid var(--border)",
           borderRadius: RADIUS.surface,
-          backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)",
+          // Render-quiet, Chat.jsx's surface discipline — reuses the 9.46
+          // renderBusy signal; an 18px blur mid-render fights the job.
+          backdropFilter: renderBusy ? "none" : "blur(18px)",
+          WebkitBackdropFilter: renderBusy ? "none" : "blur(18px)",
           display: "flex", flexDirection: "column", overflow: "hidden",
         }}>{panel}</div>
       ) : (

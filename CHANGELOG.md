@@ -1,6 +1,38 @@
 # Changelog
 
-## 1.1.5b — unreleased
+## 1.1.6b — unreleased
+
+**Editing a character no longer resets your model pick.** Swapping a
+character's reference photo — or touching any field on their card — quietly
+threw away the model you had selected and flipped the render lane, because
+saving the card was treated as picking the character all over again, by a
+code path that predated MiniMax H3 carrying characters at all. An edit of
+the active character now just saves; and selecting a character keeps an H3
+model exactly where you put it, since the character's photo rides that
+model's own reference input.
+
+**The app now costs your GPU nothing when you are not looking at it.** The
+ambient dot field behind the chat kept redrawing itself thirty times a
+second even while Pixal sat unfocused behind a game or another tool, and
+the gallery, chats and settings panels kept an expensive glass blur running
+while a render was sampling. All of it now stands down — the field freezes
+in place the moment the window loses focus and wakes when you return, and
+every glass surface drops its blur while ComfyUI is working, the same way
+the chat surfaces always have. Nothing about the look changes while you are
+actually using it; your VRAM-starved render just stops sharing the card
+with decoration.
+
+**When the writer talks instead of rendering, its chatter no longer leaks
+into the picture.** Occasionally the prompt writer answers a render request
+conversationally — "Got it, here's the shot: …" — and Pixal already
+rescued those by rendering the scene it described. But the rescue sent the
+whole reply to the model, greeting and "want me to tweak it?" included, and
+the image conditioned on every one of those words. The scene is now cut
+cleanly out of the chatter before it renders: lead-ins and sign-offs are
+dropped, the description itself is kept word for word, and a closing line
+of spoken dialogue survives because that is part of the shot.
+
+## 1.1.5b — 2026-09-01
 
 **Every text encoder option refused the render it was for.** 1.1.4b put the
 MiniMax H3 text encoder in Settings and offered three smaller encoders in place

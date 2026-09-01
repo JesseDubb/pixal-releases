@@ -1183,7 +1183,15 @@ export const api = {
 
     const options = state.options;
     const character = ((options && options.characters) || []).find((c) => c.id === id);
-    const compatible = identityCompatibleSelections(options);
+    // 9.67, taught to selection (9.97): a picked MiniMax H3 build is itself
+    // an identity carrier - the anchor's photo rides H3's own reference
+    // input, never identity_edit. The pick survives the anchor and the
+    // identity_edit availability gate does not apply; every other model
+    // keeps the heal.
+    const h3Meta = ((options && options.model_meta) || {})[state.opts.model];
+    const compatible = h3Meta?.family === "minimax_h3"
+      ? { model: state.opts.model }
+      : identityCompatibleSelections(options);
     if (!character?.has_ref || !compatible) return false;
 
     // A selected saved style survives the character when its model can carry
@@ -1194,7 +1202,6 @@ export const api = {
       modelSupportsRecipe(style.model, "identity_edit", options);
     this.setOpts({
       character: id,
-      engine: "identity_edit",
       ...compatible,
       ...(styleOk ? { saved_style: state.opts.saved_style,
                       model: style.model } : {}),

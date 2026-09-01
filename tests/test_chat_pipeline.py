@@ -535,3 +535,247 @@ class ProseRescueOnlyWithEnhance(unittest.TestCase):
                                      False, self.PROSE)
         self.assertTrue(dps.called)
         self.assertEqual(submitted, ["the user's own words"])
+
+
+class ACritiqueIsNotACaption(unittest.TestCase):
+    """10.3, chat 4bf386fc: with Prompt enhance OFF, a substantive redirect
+    of a pending draft - "Yeah just not sexy enough and the environment
+    sucks" - sailed down the verbatim path and job 7e717049 rendered the
+    critique as the caption. The direct path fires only on the turn's OWN
+    prompt or a bare accept; a redirect takes the brain path (with the
+    generate tool still offered) so the brain can merge it into the draft."""
+
+    CRITIQUE = "Yeah just not sexy enough and the environment sucks"
+    DRAFT = ("She squats low on her haunches in front of a lime-green "
+             "supercar with a low wedge nose and black wheels, camera at eye "
+             "level, late sun raking the car's flank, an empty rooftop car "
+             "park behind her, high ponytail, a small challenging half-smile. "
+             "Say go and I'll fire it.")
+    PROMPT = ("A young woman with copper hair sits on the floor of a sunlit "
+              "artist studio surrounded by canvases and jars of brushes, "
+              "laughing as she ties her hair back, golden afternoon light "
+              "through tall windows, wearing a paint-flecked denim apron "
+              "over a white tee")
+
+    def _replay(self, user_text, convo, enhance, brain_says="Toned down."):
+        submitted, tool_lists = [], []
+
+        async def fake_submit(cid, src, template, scene, spec, count=1,
+                              parent=None, flags=None, verbatim=False):
+            submitted.append(scene)
+            return {"id": "test1234", "error": None}
+
+        async def fake_llm(messages, tools=None, cid=None):
+            tool_lists.append([t.get("function", {}).get("name")
+                               for t in (tools or [])])
+            return 200, {"choices": [{"message": {"role": "assistant",
+                                                  "content": brain_says}}]}
+
+        # Pin the cloud lane: the incident was kimi-k3, and the local lane
+        # has its own rescue arm out of this brief's scope.
+        cfg = json.loads(json.dumps(server.load_config()))
+        cfg["llm"]["base_url"] = "https://api.moonshot.example/v1"
+        real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
+        server.HUB.submit, server.llm_call = fake_submit, fake_llm
+        server.HUB.broadcast = lambda **kw: None
+        try:
+            with patch.object(server, "load_config", return_value=cfg):
+                asyncio.run(server._kimi_reply(
+                    "testcid", {"role": "user", "content": user_text}, convo,
+                    {"prompt_enhance": enhance}))
+        finally:
+            server.HUB.submit, server.llm_call, server.HUB.broadcast = real
+        return submitted, tool_lists
+
+    def test_the_incident_replay_a_redirect_never_queues_verbatim(self):
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        submitted, tool_lists = self._replay(
+            self.CRITIQUE + COMPOSER, convo, enhance=False)
+        self.assertEqual(submitted, [],
+                         "the critique was queued as a caption")
+        self.assertTrue(tool_lists, "the redirect never reached the brain")
+        self.assertIn("generate", tool_lists[0],
+                      "the redirect must still OFFER the tool")
+
+    def test_a_real_typed_prompt_still_goes_verbatim(self):
+        submitted, tool_lists = self._replay(
+            self.PROMPT + COMPOSER, [], enhance=False)
+        self.assertEqual(submitted, [self.PROMPT])
+        self.assertEqual(tool_lists, [], "a typed prompt never pays a brain call")
+
+    def test_an_accept_of_a_pending_draft_is_unchanged(self):
+        """'go' renders the user's own last prompt (captured_prompt's reach-
+        back), exactly as before this brief - on the direct path, no brain."""
+        convo = [{"role": "user", "content": self.PROMPT + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        submitted, tool_lists = self._replay("go" + COMPOSER, convo,
+                                             enhance=False)
+        self.assertEqual(submitted, [self.PROMPT])
+        self.assertEqual(tool_lists, [])
+
+    def test_a_pending_question_answer_is_not_backstopped(self):
+        """An answer may legitimately need another shaping round - only a
+        pending DRAFT accept gets the 10.4 backstop, never a question."""
+        convo = [{"role": "user", "content": "zara somewhere fun" + COMPOSER},
+                 {"role": "assistant",
+                  "content": "What kind of fun is she having?"}]
+        submitted, tool_lists = self._replay("surfing at sunset" + COMPOSER,
+                                             convo, enhance=True)
+        self.assertEqual(submitted, [])
+        self.assertTrue(tool_lists and "generate" in tool_lists[0])
+
+    def test_enhance_on_composite_is_untouched(self):
+        """The brief's accept #4: with enhance ON the tool-offering logic
+        still reads the COMPOSITE render_intent - a redirect arm must keep
+        offering generate to the brain. Source-pinned."""
+        src = (Path(__file__).resolve().parents[1] / "server.py") \
+            .read_text(encoding="utf-8")
+        self.assertIn("tools = base_tools if (render_intent or local_brain)",
+                      src)
+        self.assertIn(
+            "render_intent = user_wants_render(_utext, "
+            "conversation_has_visual(convo))", src)
+        # and the direct gate no longer reads the composite
+        self.assertIn("and (direct_intent or enhance_off_is_prompt(_utext))",
+                      src)
+        self.assertNotIn("and (render_intent or enhance_off_is_prompt", src)
+
+
+class AnAcceptedDraftAlwaysFires(unittest.TestCase):
+    """10.4, chat 5a045b81: three armed accepts ("go", "render it",
+    "SHOW ME!") of a written draft produced zero renders - the cloud brain
+    recited its no-tool invite line despite holding generate, and each
+    short apology then buried the draft below _pending_scene's word floor.
+    The accept backstop queues the draft when the accept round ends in
+    prose; the pending walk survives the chatter."""
+
+    DRAFT = ("She squats low on her haunches, elbows on knees, directly in "
+             "front of a lime-green supercar with a low wedge nose and black "
+             "wheels, camera at her eye level a few steps back, late sun "
+             "raking the flank, an empty rooftop car park and a low skyline "
+             "behind her, platinum ponytail, a small challenging half-smile. "
+             "Say go and I'll fire it.")
+    APOLOGY = ("That go didn't arm the trigger on my side - one more nudge: "
+               "say render it and I'll fire the shot exactly as written.")
+
+    def _replay(self, user_text, convo, rounds):
+        submitted, tool_lists = [], []
+        queue = list(rounds)
+
+        async def fake_submit(cid, src, template, scene, spec, count=1,
+                              parent=None, flags=None, verbatim=False):
+            submitted.append(scene)
+            return {"id": "test1234", "error": None}
+
+        async def fake_llm(messages, tools=None, cid=None):
+            tool_lists.append([t.get("function", {}).get("name")
+                               for t in (tools or [])])
+            msg = queue.pop(0) if queue else {"role": "assistant",
+                                              "content": "Done."}
+            return 200, {"choices": [{"message": msg}]}
+
+        cfg = json.loads(json.dumps(server.load_config()))
+        cfg["llm"]["base_url"] = "https://api.moonshot.example/v1"
+        real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
+        server.HUB.submit, server.llm_call = fake_submit, fake_llm
+        server.HUB.broadcast = lambda **kw: None
+        try:
+            with patch.object(server, "load_config", return_value=cfg):
+                asyncio.run(server._kimi_reply(
+                    "testcid", {"role": "user", "content": user_text}, convo,
+                    {"prompt_enhance": True}))
+        finally:
+            server.HUB.submit, server.llm_call, server.HUB.broadcast = real
+        return submitted, tool_lists
+
+    def test_the_incident_replay_go_fires_the_draft(self):
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        submitted, tool_lists = self._replay(
+            "go" + COMPOSER, convo,
+            [{"role": "assistant", "content": self.APOLOGY}])
+        self.assertEqual(len(submitted), 1,
+                         "the accepted draft was never queued")
+        self.assertIn("lime-green supercar", submitted[0])
+        self.assertNotIn("Say go", submitted[0],
+                         "the invite tail must be stripped")
+        self.assertIn("generate", tool_lists[0])
+
+    def test_the_cascade_render_it_still_sees_the_buried_draft(self):
+        """After a short apology turn the draft is no longer the newest
+        assistant message - the walk must still find it."""
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT},
+                 {"role": "user", "content": "go" + COMPOSER},
+                 {"role": "assistant", "content": self.APOLOGY}]
+        submitted, _ = self._replay(
+            "render it" + COMPOSER, convo,
+            [{"role": "assistant", "content": self.APOLOGY}])
+        self.assertEqual(len(submitted), 1)
+        self.assertIn("lime-green supercar", submitted[0])
+
+    def test_a_brain_that_fires_properly_queues_exactly_once(self):
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        call = {"id": "c1", "type": "function",
+                "function": {"name": "generate",
+                             "arguments": json.dumps({"prompt": self.DRAFT})}}
+        submitted, _ = self._replay(
+            "go" + COMPOSER, convo,
+            [{"role": "assistant", "content": "", "tool_calls": [call]},
+             {"role": "assistant", "content": "Fired!"}])
+        self.assertEqual(len(submitted), 1, "backstop double-queued the draft")
+
+    def test_a_rewritten_scene_this_round_wins_over_the_old_draft(self):
+        """When the accept round's own reply IS a scene, the brain rewrote
+        the draft - render its version, not the stale one."""
+        rewrite = self.DRAFT.replace("lime-green", "sunset-orange")
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        submitted, _ = self._replay(
+            "go" + COMPOSER, convo,
+            [{"role": "assistant", "content": rewrite}])
+        self.assertEqual(len(submitted), 1)
+        self.assertIn("sunset-orange", submitted[0])
+
+
+class PendingSceneWalk(unittest.TestCase):
+    """10.4's _pending_scene: survives short chatter, stops at anything
+    that acted, capped at six messages."""
+
+    DRAFT = ("A tall figure stands at the end of a rain-slicked pier at "
+             "dusk, coat lifting in the wind, gulls scattering off the "
+             "railing, the last orange light breaking under a shelf of "
+             "storm cloud far out over the water beyond them.")
+    SHORT = "One more nudge and I'll fire it."
+
+    def test_a_short_apology_does_not_bury_the_draft(self):
+        convo = [{"role": "assistant", "content": self.DRAFT},
+                 {"role": "user", "content": "go"},
+                 {"role": "assistant", "content": self.SHORT}]
+        self.assertEqual(server._pending_scene(convo), self.DRAFT)
+
+    def test_a_queued_receipt_closes_it(self):
+        convo = [{"role": "assistant", "content": self.DRAFT},
+                 {"role": "user", "content":
+                  "[SYSTEM: the server queued that scene as job deadbeef "
+                  "(h3_ref_still) - no reply needed.]"}]
+        self.assertIsNone(server._pending_scene(convo))
+
+    def test_a_tool_call_turn_closes_it(self):
+        convo = [{"role": "assistant", "content": self.DRAFT},
+                 {"role": "user", "content": "go"},
+                 {"role": "assistant", "content": "",
+                  "tool_calls": [{"id": "c1"}]}]
+        self.assertIsNone(server._pending_scene(convo))
+
+    def test_the_walk_is_capped_at_six_messages(self):
+        chatter = [{"role": "user", "content": "hm"},
+                   {"role": "assistant", "content": self.SHORT}]
+        convo = [{"role": "assistant", "content": self.DRAFT}] + chatter * 3
+        self.assertIsNone(server._pending_scene(convo))
+
+    def test_turn_policy_carries_the_accept_sentence(self):
+        self.assertIn("that is the fire signal", server.TURN_POLICY)
+        self.assertIn("never\n  invite again", server.TURN_POLICY)

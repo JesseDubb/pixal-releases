@@ -281,14 +281,16 @@ class ToggleMigration(unittest.TestCase):
         self.assertIn('import { Switch } from "../lib/Switch.jsx";', SRC)
 
     def test_the_four_binary_settings_are_toggles(self):
-        for value in ["on={stillCfg.skin_finish}",
+        # 10.1 swapped the seat: skin finish (retired) -> film grain.
+        for value in ["on={stillCfg.film_grain}",
                       "on={stillCfg.de_shine}",
                       "on={videoCfg.upscale_2x}",
                       "on={officialPrompting}"]:
             self.assertIn(value, SRC, "a binary row did not become a toggle")
+        self.assertNotIn("skin_finish", SRC, "skin1x is retired (10.1)")
 
     def test_the_toggles_keep_their_apply_payloads(self):
-        self.assertIn("apply({ still: { skin_finish: on } }", SRC)
+        self.assertIn("apply({ still: { film_grain: on } }", SRC)
         self.assertIn("apply({ still: { de_shine: on } }", SRC)
         self.assertIn("apply({ video: { upscale_2x: on } }", SRC)
         self.assertIn("apply({ llm: { official_prompting: on } }", SRC)

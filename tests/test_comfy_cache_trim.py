@@ -50,6 +50,7 @@ class _Hub:
 
     flush_comfy_cache = server.Hub.flush_comfy_cache
     reclaim_vram = server.Hub.reclaim_vram
+    note_node_cache_flush = server.Hub.note_node_cache_flush
 
 
 class TrimSendsNoRequest(unittest.IsolatedAsyncioTestCase):

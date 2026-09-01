@@ -1638,31 +1638,44 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Section>
         <GroupLabel>finishing</GroupLabel>
-        {/* 1.1.4b. Unlike the Upscaler below it this is not a button on a
-            finished frame - it runs inside the render, between the decode
-            and the save, so it belongs to the render's settings. On by
-            default when the file is there: it measured +80% to +220% fine
-            detail across a whole session, costs a couple of seconds, needs
-            no VRAM headroom and changes no dimension. */}
+        {/* 10.1: film grain holds the seat skin1x had (retired by Jesse's
+            eye - it read as skin only on close portraits). The judged dewax
+            recipe, applied to the delivered frame after shine removal:
+            seeded from the render, so a re-render lands identically. */}
         <Rows>
           {stillCfg ? (
             <>
-            <Field className="px-ghost-in" label={<>Skin finish <InfoTip text="A 1× detail model run over MiniMax H3 stills on their way out of the render. It adds skin, hair and fabric texture at the same size — nothing is enlarged or repainted. Measured +80% to +220% fine detail, and costs a couple of seconds. Greyed out until 1x-ITF-SkinDiffDetail-Lite-v1.pth is in ComfyUI/models/upscale_models." /></>}>
-              {/* No hint: the whole screen has a 150-word visible-prose
-                  budget, so the tip carries what it needs to say and the
-                  toggle's title carries the disabled reason on hover. 10.0:
-                  an on/off finish is a pixal toggle, not a two-option pill. */}
-              <Switch label="Skin finish"
-                on={stillCfg.skin_finish}
-                disabled={!stillCfg.skin_finish_available}
-                title={stillCfg.skin_finish_available
-                  ? "Texture added at the same size, inside the render."
-                  : `Needs ${stillCfg.skin_finish_model} in upscale_models.`}
-                onChange={(on) => {
-                  setStillCfg((s) => ({ ...(s || {}), skin_finish: on }));
-                  apply({ still: { skin_finish: on } },
-                        on ? "skin finish on" : "skin finish off");
-                }} />
+            <Field className="px-ghost-in" label={<>Film grain <InfoTip text="A fine monochrome grain over finished stills — the judged recipe from the de-wax session, strongest in the midtones the way negative film behaves. Seeded from the render, so re-renders match. It is the last thing applied, after shine removal and any upscale." /></>}>
+              {/* No hint: the tip carries the rule; the amount input only
+                  appears once the toggle is on - one row, the 34px beat. */}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {stillCfg.film_grain ? (
+                  <input type="number" step="0.1" min="0.1" max="8"
+                    value={stillCfg.film_grain_amount ?? 1.6}
+                    aria-label="Film grain amount"
+                    title="Grain strength. 1.6 is the judged default."
+                    style={{ width: 52, height: 24, padding: "0 8px",
+                             background: "var(--bg3)",
+                             border: "1px solid var(--border)",
+                             borderRadius: RADIUS.pill, color: "var(--text)",
+                             fontFamily: FONT, fontSize: TYPE.label,
+                             fontWeight: W.nav, textAlign: "center" }}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      setStillCfg((s) => ({ ...(s || {}), film_grain_amount: v }));
+                      apply({ still: { film_grain_amount: v } }, "film grain amount");
+                    }} />
+                ) : null}
+                <Switch label="Film grain"
+                  on={stillCfg.film_grain}
+                  title="Seeded monochrome grain on the finished still."
+                  onChange={(on) => {
+                    setStillCfg((s) => ({ ...(s || {}), film_grain: on }));
+                    apply({ still: { film_grain: on } },
+                          on ? "film grain on" : "film grain off");
+                  }} />
+              </span>
             </Field>
             {/* 9.93: "AI Skin Shine Removal". The brief asked for beside
                 the upscale-model selection; DESIGN.md's two-segmented-rows
@@ -1685,7 +1698,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </>
           ) : (
             <>
-              <Field label="Skin finish">
+              <Field label="Film grain">
                 <SwitchGhost />
               </Field>
               <Field label="Shine removal">

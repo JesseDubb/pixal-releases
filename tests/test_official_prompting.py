@@ -61,11 +61,13 @@ PIXAL_CRAFT = "ONE named light source"
 # (9.80's lamps-in-frame half was retracted; the caption budget, the
 # sign rule and "write the moment" joined it), so the two local=True
 # hashes moved and the remote ones did not.
+# 10.4 (2026-09-01) touched TURN_POLICY itself - the accept-turn fire
+# sentence rides every lane - so all four hashes moved together.
 OFF_SNAPSHOT = {
-    (False, False): "6e1e350fa6c55e90b4555098ff87daa6ab69e2b9b345922c6a582ef0e46e914f",
-    (False, True): "aa1e3fd0bc80a7c3c91231fb4e17b8c397d54d76a14ae39878c5ac6548d42ae0",
-    (True, False): "584f5dfe74004653124b6144375ac164e394bf45017e0bf5b220b04597a57c96",
-    (True, True): "87557f9ca6681c1adf5ccfbd285c31fdad84928e9da20e8c149c19a667522d25",
+    (False, False): "b84b0dab359f2f628df30826cbde982f0f518f915c5df2e29763b299c6554993",
+    (False, True): "7ce187f7d0ece53baa93728f15aef614b0897bfca5c1d287a6e83622e35eed48",
+    (True, False): "eb6e9a9ac333225209081a7b9a44f86f23fd23f4973a15406c783847e5224272",
+    (True, True): "992e3e44f0f9bae1661a4a0361df0797b329429670c221888451890152eb7238",
 }
 
 

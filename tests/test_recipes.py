@@ -2332,6 +2332,7 @@ class _RetryHub:
         return 30 * 2**30
 
     forget_residency = server.Hub.forget_residency
+    note_node_cache_flush = server.Hub.note_node_cache_flush
     seconds_that_fit = server.Hub.seconds_that_fit
     oom_retry_plan = server.Hub.oom_retry_plan
     retry_after_oom = server.Hub.retry_after_oom

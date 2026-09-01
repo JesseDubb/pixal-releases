@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.7b"
+PIXAL_VERSION = "1.1.8b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -617,7 +617,13 @@ def load_config():
            "video": {"default_engine": "", "default_model": "",
                      "upscale_2x": False, "h3_resolution": "standard",
                      "h3_dialogue_tags": "quotes"},
-           "still": {"skin_finish": False,
+           # 10.1: film grain replaced skin1x. Jesse retired the 1x skin
+           # model ("that skin 1 ... just didnt do a good job" - it read as
+           # skin only on close portraits, posterization wider, rejected
+           # twice at 1:1); the judged dewax grain takes its seat. A config
+           # written when skin_finish existed still loads - the dead key is
+           # simply never read.
+           "still": {"film_grain": False, "film_grain_amount": 1.6,
                      # 9.93: de-shine, numpy on the delivered frame. Needs no
                      # file, node or VRAM, so the toggle is the whole gate -
                      # still OFF until judged, like every other finisher.
@@ -2043,23 +2049,12 @@ H3_ONE_FRAME_NODE = "MM1FrameMiniMaxH3ReferenceToImage"
 # nothing was asked for, and stock stays the recipe default so a machine
 # without one is unaffected.
 H3_HYBRID_PREFERRED = "b30-49"
-# The skin finish (2026-08-30): a 1x detail model run over the decode, which
-# measured +80% to +220% Laplacian fine detail across the session's frames
-# and is the single biggest post-sampler lift found. 1x means the canvas is
-# unchanged - this adds texture, it does not resize.
-#
-# The session's full chain was skin1x -> CAS sharpen -> downscale by half,
-# and the last two are deliberately NOT ported. They are a DISPLAY trick
-# that only pays when the render is far bigger than the delivered frame:
-# those runs sampled 2688x3584 and delivered 1344x1792, so halving buried
-# the sharpen halo and concentrated real detail. Pixal's still lanes cap at
-# ~3.1 MP and deliver what they sample, so the same pair here would sharpen
-# at final size and then throw away half the pixels the user paid for.
-# Sample bigger first, and the pair becomes worth porting.
-#
-# Optional, like everything else in this recipe: absent the file, the graph
-# is built exactly as before.
-H3_SKIN_MODEL = "1x-ITF-SkinDiffDetail-Lite-v1.pth"
+# The skin finish (skin1x, 2026-08-30) lived here until 10.1. It measured
+# +80% to +220% Laplacian fine detail, and the metric was the trap: the
+# added texture read as skin only on close portraits and as posterization
+# anywhere wider - rejected twice at 1:1, retired by Jesse 2026-09-01
+# ("that skin 1 ... just didnt do a good job"). The judged dewax film grain
+# (still_film_grain, with de_shine) holds the finisher seat now.
 # The H3 creative LoRA the still recipes pin as their editable style stage
 # (9.74): a known-good one-click row, OFF by default so the untouched plan
 # renders exactly the pre-9.74 graph. The Animate lanes offer the same file
@@ -6245,7 +6240,7 @@ def _h3_still_clamp(width, height):
 
 def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                   character=None, lora_plan=None, finish=None):
+                   character=None, lora_plan=None):
     """MiniMax H3 as a still camera (brief 9.58), ported from the proven
     h3_image.py block - not redesigned.
 
@@ -6330,18 +6325,12 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
     # model, never the raw loader output.
     g["8"]["inputs"]["model"] = [model_tail, 0]
     g["9"]["inputs"]["model"] = [model_tail, 0]
-    # The skin finish is lane-independent: it runs on the decode, so the
-    # prompt-only still gets it on the same terms as the reference one.
-    skin = h3_skin_finish_active(finish)
-    if skin:
-        _h3_append_skin_finish(g, "13")
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(entry, "h3_still"),
             "text_encoder": base(assets["clip"]),
             "vae": base(assets["video_vae"]),
             **lora_job_info(entries, dropped),
-            "skin_finish": skin,
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
@@ -6938,7 +6927,7 @@ def character_h3_refs(ch, accessories=True):
 def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
                        overrides=(), standing=True, nsfw=False, model=None,
                        aspect=None, mp=None, character=None, lora_plan=None,
-                       accessories=True, one_frame=None, finish=None):
+                       accessories=True, one_frame=None):
     """MiniMax H3 REF2VA as a still camera with the anchor's own photo as the
     identity mechanism (brief 9.67): the ReferenceToVideo node takes
     reference images natively, so the character's identity_ref IS the
@@ -7122,12 +7111,6 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
     # model, never the raw loader output.
     g["8"]["inputs"]["model"] = [model_tail, 0]
     g["9"]["inputs"]["model"] = [model_tail, 0]
-    # The skin finish is the LAST thing before the save, and it is appended
-    # after the overrides so that an override targeting node 14 still names
-    # the save it always named.
-    skin = h3_skin_finish_active(finish)
-    if skin:
-        _h3_append_skin_finish(g, "12" if single else "13")
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(entry, "minimax_h3_ref2v_still"),
@@ -7139,7 +7122,6 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
             "accessories": len(refs) - 1,
             "prompt_repairs": prompt_repairs,
             "one_frame": single,
-            "skin_finish": skin,
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
@@ -7562,49 +7544,93 @@ def apply_h3_sparse(graph, model_tail, sparse=True):
     return "h3:sla"
 
 
-def h3_skin_finish_available():
-    """The 1x skin detail model on disk. Node-free: UpscaleModelLoader and
-    ImageUpscaleWithModel are core ComfyUI, so the weights are the whole
-    question."""
-    return _video_asset("upscale_models", H3_SKIN_MODEL) is not None
+# ---- film grain (10.1) ------------------------------------------------------
+# The dewax session's judged finisher, ported VERBATIM from the scratchpad
+# build Jesse judged at 1:1 on 2026-08-31 ("yours was perfect" against a
+# 3/5/8% ladder): seeded gaussian, monochrome, amount 1.6 (percent of full
+# scale, the dial), 0.6px soften on the grain field, midtone-weighted
+# w = 1 - |luma - .5| * 1.2, applied to the DELIVERED frame after everything
+# else - grain is the last thing that happens to final pixels. Every step
+# below, the uint8 round-trip of the noise field included, is part of what
+# was judged; do not "clean it up".
+STILL_GRAIN_SOFTEN = 0.6
 
 
-def h3_skin_finish_active(finish=None):
-    """Resolve the skin finish for one render: the explicit per-render answer
-    wins, then the Settings toggle, and either way the file has to be there.
-
-    Default OFF, and the reason is a gap in the evidence rather than a doubt
-    about the model. The +80% to +220% was measured on frames that were also
-    DOWNSCALED BY HALF at the end of the chain, and halving is what buries
-    what skin1x adds in flat areas - a faint regular crosshatch that reads as
-    skin at normal size and does not survive magnification. Pixal's still
-    lanes deliver what they sample, so nothing here hides it, and no one has
-    judged one of these at 1:1 yet.
-
-    A capability nobody has looked at is not a default. One click in Settings
-    turns it on; when a set has been judged at full size, this line is the
-    only thing that has to change."""
-    if not h3_skin_finish_available():
-        return False
-    if finish is not None:
-        return bool(finish)
+def still_film_grain_active():
+    """The Settings toggle is the whole gate - numpy + PIL on the delivered
+    frame, exactly like de-shine: no file, no node, no VRAM to probe.
+    Default OFF; a config from before the key reads as off."""
     try:
-        return bool(load_config()["still"]["skin_finish"])
+        return bool(load_config()["still"]["film_grain"])
     except (KeyError, TypeError):
         return False
 
 
-def _h3_append_skin_finish(g, source, save="14"):
-    """Run the decode through the 1x skin detail model on its way to the save.
+def still_film_grain_amount():
+    """The one exposed dial, in the judged recipe's own unit (1.6 == the
+    dewax 0.016). Clamped so a corrupt config cannot whiteout a frame."""
+    try:
+        v = float(load_config()["still"]["film_grain_amount"])
+    except (KeyError, TypeError, ValueError):
+        return 1.6
+    if not math.isfinite(v):
+        return 1.6              # float("nan") survives min/max; refuse it
+    return min(max(v, 0.1), 8.0)
 
-    Appends only - `source` keeps every wire it had, so a graph with the
-    finish off is the byte-identical graph without it."""
-    g["fin:model"] = {"class_type": "UpscaleModelLoader",
-                      "inputs": {"model_name": H3_SKIN_MODEL}}
-    g["fin:skin"] = {"class_type": "ImageUpscaleWithModel", "inputs": {
-        "upscale_model": ["fin:model", 0], "image": [source, 0]}}
-    g[save]["inputs"]["images"] = ["fin:skin", 0]
-    return "fin:skin"
+
+def add_film_grain(im, seed, amount=1.6, soften=STILL_GRAIN_SOFTEN):
+    """The judged dewax grain, byte-for-byte (dewax_variants.py:add_grain).
+
+    The uint8 quantize of the noise field and the unnormalized blur are NOT
+    accidents to fix: together they set the amplitude Jesse judged (the
+    stated 1.6 lands near 1.2 code values at the midtones), and the
+    D_grain_only.png in Desktop\\Pixal Renders\\2026-08-31-dewax is the
+    reference artifact this reproduces. Seeded with the render's own seed so
+    a re-render is deterministic."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFFFFFFFFFF)
+    noise = rng.normal(0.0, 1.0, a.shape[:2]).astype(np.float32)
+    n = Image.fromarray(((noise * 0.5 + 0.5) * 255).astype(np.uint8), "L")
+    n = n.filter(ImageFilter.GaussianBlur(soften))
+    noise = (np.asarray(n, dtype=np.float32) / 255.0 - 0.5) * 2.0
+    # Luminance-weighted: midtones grain hardest, shadows/highlights less -
+    # the way negative film behaves.
+    luma = a.mean(axis=2)
+    weight = 1.0 - np.abs(luma - 0.5) * 1.2
+    out = a + (noise * (amount / 100.0) * weight)[..., None]
+    return Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8))
+
+
+def _film_grain_delivered(path, seed, amount):
+    """Grain one delivered still in place, keeping the PNG's embedded graph
+    - the same tEXt-preserving save as _de_shine_delivered, for the same
+    reason. Never raises: it runs inside the ComfyUI bridge's message
+    loop."""
+    try:
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        with Image.open(path) as opened:
+            fmt = opened.format
+            meta = dict(opened.info)
+            im = opened.convert("RGB")
+        out = add_film_grain(im, seed, amount)
+        if fmt == "PNG":
+            info = PngInfo()
+            for key, value in meta.items():
+                if isinstance(value, str):
+                    info.add_text(key, value)
+            out.save(path, pnginfo=info)
+        else:
+            keep = {k: meta[k] for k in ("exif",) if k in meta}
+            out.save(path, **keep)
+        print(f"[pixal] film grain {path.name} (amount {amount:g}, "
+              f"seed {seed})", flush=True)
+        return True
+    except Exception as exc:
+        print(f"[pixal] film grain skipped {path.name}: {exc}", flush=True)
+        return False
 
 
 
@@ -11781,6 +11807,14 @@ class Hub:
                                      # (keep_model_loaded) - cleared on every flush
         self.job_seq = 0             # monotonic priced-job counter - the clock
                                      # model_last_used is read against
+        # 10.2 - the warm re-roll qualifier. flush_epoch counts every event
+        # that empties (or unknowables) ComfyUI's node-output cache; a
+        # sidecar start is itself an epoch, because the anchor below lives
+        # only in this process. _warm_encode is (encode_signature,
+        # flush_epoch) of the last successfully finalized priced job - the
+        # only anchor a re-roll may claim.
+        self.flush_epoch = 0
+        self._warm_encode = None
         self.model_last_used = {}    # model file -> (job_seq, template, bytes):
                                      # which lane used what, most recent last
                                      # (9.48). Cleared whenever the weights it
@@ -12250,6 +12284,17 @@ class Hub:
             # on already-textured skin.
             _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
                                 / img["filename"])
+        if img["media"] == "image" and still_film_grain_active():
+            # 10.1: the judged chain's LAST step, after de-shine, after
+            # whatever the graph did - grain belongs to final pixels, so
+            # upscale outputs get it too. Recorded on the job because an
+            # invisible setting on an artifact is the 08-30 lesson.
+            amt = still_film_grain_amount()
+            if _film_grain_delivered(
+                    CDIR / "output" / (img.get("subfolder") or "")
+                    / img["filename"], job.get("seed") or 0, amt) \
+                    and isinstance(job.get("info"), dict):
+                job["info"]["finish"] = f"grain@{amt:g}"
         job["images"].append(img)
         self.broadcast(type="image", job_id=job["id"],  # img carries its own "type" - rename
                        filename=img.get("filename"), subfolder=img.get("subfolder", ""),
@@ -12340,7 +12385,24 @@ class Hub:
                 entry["paging_watchdog"] = job["_paging_watchdog"]
             if cache is not None:
                 entry["cache"] = cache
+                # 10.2 - the label must say what RAN. The epoch tracks every
+                # wipe the sidecar can see, but ComfyUI's RAM-pressure cache
+                # evicts entries on its own clock (--cache-ram), so a
+                # qualified job can still find nothing served (observed live
+                # 2026-09-01: job c89c9509, warm-priced, 0/12 hits, encoder
+                # paid). The job rendered fine - OOM retry and ComfyUI's own
+                # weight manager are the backstop - but the ledger may not
+                # claim a cache that did not serve.
+                if (job.get("info") or {}).get("warm") \
+                        and cache.get("observed") and not cache.get("hit"):
+                    job["info"]["warm"] = "encode-missed"
             self.ledger_append(entry)
+            # 10.2 - a successfully finalized priced job is the warm
+            # re-roll's anchor: its encode side is provably in ComfyUI's
+            # node cache as of now, on this ComfyUI, in this flush epoch.
+            if job.get("_encode_sig"):
+                self._warm_encode = (job["_encode_sig"],
+                                     getattr(self, "flush_epoch", 0))
         if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
             # text later, because the very next line replaces that text with
@@ -12620,6 +12682,11 @@ class Hub:
         if not unload:
             print(f"[pixal] waiting for comfy's own trim ({why})", flush=True)
             return True
+        if free_memory:
+            # free_memory resets the node-output CacheSet (execution.py:672):
+            # every encode signature recorded so far dies with it - bump
+            # BEFORE the post, so a failed request still kills the credit.
+            self.note_node_cache_flush(why)
         self.resident_heavies = {}
         self.model_last_used = {}    # the weights it describes just left too
         self.critic_hot = False      # /free evicts the AILab model too
@@ -12710,6 +12777,19 @@ class Hub:
             and j.get("started", 0) > cutoff
             for j in self.jobs.values())
 
+    def note_node_cache_flush(self, why):
+        """Bump the flush epoch: ComfyUI's node-output cache is gone (or
+        unknowable), so no encode signature recorded before this moment may
+        qualify a warm re-roll (10.2). The ONE resolver every cache-killing
+        event routes through: any /free with free_memory=true (the make-room
+        reclaim, the OOM-recovery reclaim, the PiD/crawl post-job flush, the
+        settings and RAM routes), an OOM recovery, a detected ComfyUI
+        (re)boot or reconnect, and - by construction - a sidecar start."""
+        self.flush_epoch = getattr(self, "flush_epoch", 0) + 1
+        self._warm_encode = None
+        print(f"[pixal] node-cache epoch -> {self.flush_epoch} ({why})",
+              flush=True)
+
     def forget_residency(self, why):
         """Drop every claim about what ComfyUI is holding.
 
@@ -12724,6 +12804,9 @@ class Hub:
         self.resident_heavies = {}
         self.critic_hot = False
         self.model_last_used = {}    # the weights it describes are gone too
+        # What held true of the weights holds doubly of the node cache: a
+        # new or reconnected process is an unknowable CacheSet.
+        self.note_node_cache_flush(why)
     def _mark_used(self, heavy, template, seq):
         """Stamp every weight this graph names with the job that priced it -
         the usage record idle_lane_weights reads a left-behind lane from."""
@@ -12936,6 +13019,101 @@ class Hub:
                               "frames": (info or {}).get("peak_frames")
                               or (info or {}).get("frames") or 1}
             video = template in VIDEO_TEMPLATES
+            # 10.2 - the warm re-roll: when this graph's encode side is
+            # byte-identical to the last successful job's and no flush-epoch
+            # boundary stands between them, ComfyUI's node cache serves the
+            # encode and the text encoder never loads. Price the job WITHOUT
+            # the encoder entries and take only non-wiping paths. Every
+            # floor, the activation price and the _priced telemetry keep the
+            # FULL bill (seconds_that_fit must never see the reduced one);
+            # anything but a clean fit falls through to today's code below,
+            # which is byte-identical for a non-qualified job.
+            _side, _enc = encode_side(g)
+            job["_encode_sig"] = encode_signature(g)   # None when no encode side
+            if _enc and job["_encode_sig"] and \
+                    getattr(self, "_warm_encode", None) == \
+                    (job["_encode_sig"], getattr(self, "flush_epoch", None)):
+                pheavy = {n: b for n, b in heavy.items() if n not in _enc}
+                pweights = weights - (max(heavy.values()) if heavy else 0) \
+                    + (max(pheavy.values()) if pheavy else 0)
+                # hot is credited over EVERY resident heavy, the encoder
+                # included, video lanes included (the same residency trust as
+                # 9.39's warm path). The encoder credit is the line that makes
+                # this branch reachable where the DiT is the peak: a resident
+                # encoder occupies the free bytes this fit test reads, but a
+                # warm job never runs it, and ComfyUI's own weight manager
+                # evicts an unused model under pressure WITHOUT touching the
+                # node cache - so its bytes must not count against the job
+                # twice. Verified live 2026-09-01: without it, H3-on-32GB
+                # priced 15GB worse than today's path and always fell through.
+                hot = sum(b for n, b in heavy.items()
+                          if n in self.resident_heavies)
+                card_total = int(((self.gpu or {}).get("total") or 0) * 2**30)
+                brain_resident = 0
+                if card_total > 0:
+                    brain_row = next(
+                        (r for r in await asyncio.to_thread(gpu_process_table)
+                         if r["role"] == "brain"), None)
+                    brain_resident = (int(brain_row["gb"] * 2**30) if brain_row
+                                      else brain_vram_estimate())
+                if brain_headroom_rest(pweights + act, brain_resident,
+                                       card_total):
+                    await self.rest_brain_for_render(job, note=(
+                        f"*brain rested - this render prices "
+                        f"{(pweights + act) / 2**30:.1f} of "
+                        f"{card_total / 2**30:.1f} GB*"))
+                need = (pweights - hot) + act + VRAM_FLOOR
+                free = await comfy_vram_free_bytes()
+                if free is None:
+                    free = await asyncio.to_thread(gpu_free_bytes)
+                ram = ram_free_bytes()
+                ram_short = ram is not None \
+                    and ram < (pweights - hot) + RAM_FLOOR
+                if free is not None and free >= need and not ram_short:
+                    # It fits without the encoder. A warm job neither loads
+                    # nor evicts the encoder, so a claim the card already
+                    # carried for it stays; everything else is REPLACED,
+                    # never merged, exactly as the fit path below.
+                    kept = {n: b for n, b in self.resident_heavies.items()
+                            if n in _enc}
+                    self.resident_heavies = dict(pheavy)
+                    self.resident_heavies.update(kept)
+                    job["_warm"] = "encode-cached"
+                    enc_gb = sum(b for n, b in heavy.items() if n in _enc)
+                    print(f"[pixal] warm re-run: the node cache serves the "
+                          f"encode - priced without "
+                          f"{enc_gb / 2**30:.1f}GB of encoder ({template})",
+                          flush=True)
+                    if prev_floor_below_guard(self.prev_job_free_min,
+                                              PREV_JOB_FREE_GUARD):
+                        # The guard band's fixed order, unload=False always:
+                        # an idle lane, the brain, the bounded trim. The
+                        # free_memory wipe is the one move this job must
+                        # never take - it kills the cache that makes it
+                        # cheap.
+                        if await self.evict_idle_lane(template, heavy, job):
+                            # The soft unload took every weight with it,
+                            # encoder claim included; the node cache (and
+                            # this job's warmth) survives it.
+                            self.resident_heavies = dict(pheavy)
+                        elif await free_brain_vram():
+                            self.broadcast(type="text", cid=job["cid"], text=(
+                                "*rested the chat brain for headroom - the "
+                                "last render ended at "
+                                f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
+                        else:
+                            await self.reclaim_vram(
+                                f"trimming cache for {template} (last job "
+                                "ended at "
+                                f"{self.prev_job_free_min / 2**30:.1f}GB free)",
+                                target=act + VRAM_FLOOR, unload=False)
+                    return
+                # Rule 4's floor: even the no-encoder stack does not fit, so
+                # warmth loses - today's full-bill paths run below, the
+                # free_memory wipe included. Correctness beats warmth.
+                print(f"[pixal] warm re-roll does not fit even without the "
+                      f"encoder - pricing the full stack ({template})",
+                      flush=True)
             hot = 0 if video else sum(sz for name, sz in heavy.items()
                                       if name in self.resident_heavies)
             # 9.76 - headroom, BEFORE the fit test: a job that fits can still
@@ -13512,6 +13690,10 @@ class Hub:
                     if i == 0:
                         await self.ensure_vram(template, g, job, info)
                     if not job.get("info"):
+                        if job.pop("_warm", None):
+                            # 10.2 - the butler proved the encode is cached;
+                            # the ledger row and the job card carry it.
+                            info["warm"] = "encode-cached"
                         if style_tag:
                             info["style"] = style_tag
                         if tuning_tag:
@@ -13959,7 +14141,10 @@ TURN POLICY - decide before using a tool:
   changed and generate is not in your tools, no remaining tool can start one - do NOT substitute
   list_models, animate, review or upscale. Say one short line inviting an explicit go ("say
   render it and I'll fire it") and stop - never reply with a bare tool name. A missing generate is a server classification, not a
-  broken renderer - never tell the user rendering is broken.
+  broken renderer - never tell the user rendering is broken. The moment the user then affirms
+  ("go", "render it") and generate IS in your tools, that is the fire signal: call generate
+  immediately with the scene you already wrote, changed only as the user directed - never
+  invite again.
 - Tool rounds are scarce (single digits per turn). If two lookups have not produced a render or
   a reply, stop gathering and act.
 """
@@ -16363,7 +16548,8 @@ _PROSE_SCENE_WORDS = 30
 
 
 def _pending_scene(convo):
-    """True when the newest assistant turn is a written scene awaiting a go.
+    """The newest assistant-written scene still awaiting a go (its text,
+    truthy), or None.
 
     The local writer routinely prints the finished scene as chat instead of
     calling generate. When it does, a short "yes" / "go" / "shoe me" is the user
@@ -16371,17 +16557,33 @@ def _pending_scene(convo):
     classifier, which only sees the user's words, reads those as chat. Without
     this the user re-asks two or three times and the model rewrites the scene
     every round (observed: "shoe me?" then "show me!" before anything queued).
+
+    10.4: the walk survives short brain chatter. Chat 5a045b81 - the brain
+    answered an armed "go" with a 25-word apology, that apology became the
+    newest assistant turn, and the pending draft was buried below the word
+    floor: every later accept was genuinely toolless. A short assistant turn
+    that neither acted nor wrote a scene no longer closes the draft; the
+    walk is capped at the last six messages so a long-dead draft cannot
+    resurrect, and stops at anything that ACTED - a tool call, or the
+    queued-scene receipt this server appends after a render.
     """
-    for message in reversed(convo):
-        role = message.get("role")
-        if role == "assistant":
-            if message.get("tool_calls"):
-                return False          # it already acted; nothing is pending
-            return (len(str(message.get("content") or "").split())
-                    >= _PROSE_SCENE_WORDS)
-        if role == "user":
-            return False              # an unanswered user turn, not a proposal
-    return False
+    for message in list(reversed(convo))[:6]:
+        body = message.get("content")
+        if isinstance(body, list):
+            body = " ".join(part.get("text", "") for part in body
+                            if isinstance(part, dict)
+                            and part.get("type") == "text")
+        body = str(body or "")
+        if _QUEUED_SCENE_RECEIPT_RE.search(body):
+            return None               # something already queued since the draft
+        if message.get("role") != "assistant":
+            continue                  # nudges between drafts don't close it
+        if message.get("tool_calls"):
+            return None               # it already acted; nothing is pending
+        if len(body.split()) >= _PROSE_SCENE_WORDS:
+            return body               # the draft itself - the accept backstop
+                                      # renders exactly this
+    return None
 
 
 def _pending_question(convo):
@@ -18576,11 +18778,38 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     # then told Jesse - accurately - that it had no render tool. He had to
     # type "show me" to get it back (2026-08-13).
     _substantive = substantive_redirect(_utext)
+    _pending_draft = _pending_scene(convo)   # the draft text, or None (10.4)
     render_intent = user_wants_render(_utext, conversation_has_visual(convo)) or \
-        bool(_pending_scene(convo) and (_AFFIRMATIVE.match(_utext.strip()) or
-                                        _substantive)) or \
+        bool(_pending_draft and (_AFFIRMATIVE.match(_utext.strip()) or
+                                 _substantive)) or \
         bool(_pending_question(convo) and (_AFFIRMATIVE.match(_utext.strip()) or
                                            _substantive))
+    # 10.3 - the DIRECT enhance-off path (and its prose-rescue twin below)
+    # may fire only when this turn's OWN text is a prompt, or a bare ACCEPT
+    # of something pending (captured_prompt then reaches back to the user's
+    # last real prompt). A substantive REDIRECT is ABOUT a prompt, not a
+    # prompt - and user_wants_render alone cannot tell the difference: it
+    # scored "Yeah just not sexy enough and the environment sucks" (chat
+    # 4bf386fc) as a render ask, the composite gate agreed, and job
+    # 7e717049 rendered the critique as the caption. So when something is
+    # pending and the turn redirects it without accepting, the direct path
+    # stands down and the brain merges - UNLESS the turn's own text is a
+    # whole prompt (enhance_off_is_prompt, OR'd at the gate), because a
+    # freshly typed full prompt is the user's words whatever else pends.
+    _accepts = bool(_AFFIRMATIVE.match(_utext.strip()))
+    _redirects_pending = bool(
+        (_pending_draft or _pending_question(convo))
+        and _substantive and not _accepts)
+    direct_intent = not _redirects_pending and (
+        user_wants_render(_utext, conversation_has_visual(convo)) or
+        bool((_pending_draft or _pending_question(convo)) and _accepts))
+    # 10.4 - a pure accept of a pending DRAFT: the brain gets generate and
+    # is told to fire; if it narrates instead, the server fires the draft
+    # itself (the accept backstop at the prose-rescue below). _accepts alone
+    # decides: _AFFIRMATIVE anchors ^...$ so the whole turn IS the accept
+    # phrase - substantive_redirect's opinion of "go" (True, greedily) must
+    # not veto it.
+    _pure_accept = bool(_pending_draft and _accepts)
     # Whether the WRITER still gets to see the draft it left hanging, which is
     # a narrower question than whether generate is offered above. Both start
     # from _pending_scene, and then they part:
@@ -18596,8 +18825,8 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     # neither. local_iteration is the test that separates an edit from a new
     # shot, and it is the one this needs.
     keeps_pending_scene = bool(
-        _pending_scene(convo) and (_AFFIRMATIVE.match(_utext.strip()) or
-                                   local_iteration))
+        _pending_draft and (_AFFIRMATIVE.match(_utext.strip()) or
+                            local_iteration))
     nudged = rendered = False    # rescue arms only until SOMETHING got queued
     verbatim_bounces = 0         # cloud brains get ONE corrective error before
                                  # the server repairs the scene mechanically
@@ -18683,7 +18912,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     #     their constraints (see _direct_prompt_scene). Cloud lane only -
     #     has_vision_refs is False on the local one by construction.
     if not prompt_enhance and not local_iteration and not has_vision_refs \
-            and (render_intent or enhance_off_is_prompt(_utext)):
+            and (direct_intent or enhance_off_is_prompt(_utext)):
         args = {}
         template = (_apply_opts(args, opts) if opts else None) or "realism"
         # The brain is not here to set these, and their default (a person, kept
@@ -18760,14 +18989,33 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                 # not on an iteration turn: "make her jacket red" is an
                 # instruction, and the scene has to stay the brain's merge of it
                 # into the prior one.
-                direct_prompt = render_intent and not prompt_enhance \
+                # 10.3: direct_intent, not render_intent - a substantive
+                # redirect must never resolve to captured_prompt (the
+                # critique), on the rescue lane any more than on the direct
+                # path above.
+                direct_prompt = direct_intent and not prompt_enhance \
                     and not local_iteration
+                # 10.4 - the accept backstop. On a pure accept ("go",
+                # "render it") of a pending draft the brain HAS generate and
+                # was told to fire; chat 5a045b81 answered three armed
+                # accepts with fresh invites instead, and each apology then
+                # buried the draft one turn deeper. When the accept round
+                # ends in prose, the server queues the draft itself: the
+                # brain's own prose wins when it rewrote the scene this
+                # round, otherwise the pending draft renders. Only the pure
+                # accept - a substantive redirect stays the brain's merge,
+                # and a pending-question answer may still need shaping.
+                accept_backstop = (_pure_accept and prompt_enhance
+                                   and not local_iteration)
                 if render_intent and not rendered and (direct_prompt or
+                                                       accept_backstop or
                                                        (local_brain and looks_like_scene)):
                     # the model wrote the scene as prose - the server renders it
                     # directly. (A "call the tool properly" nudge round was tried
                     # and cut: identical outcome, one full model round slower.)
-                    render_scene = _scene_from_prose(scene_text) if prompt_enhance \
+                    _rescue_src = str(_pending_draft or "") \
+                        if accept_backstop and not looks_like_scene else scene_text
+                    render_scene = _scene_from_prose(_rescue_src) if prompt_enhance \
                         else _direct_prompt_scene(captured_prompt(convo, _utext),
                                                   scene_text, has_vision_refs)
                     args = {}
@@ -19746,18 +19994,14 @@ async def settings_get(_req):
                                            "available": m.get("available", True)}
                                           for m in e["models"]]}
                               for e in video_engine_options()]},
-        # The still finish (1.1.4b), published with whether the 1x skin model
-        # is actually installed - the same discipline as upscale_2x_available,
-        # so the row disables itself honestly rather than offering a setting
-        # that silently does nothing.
-        "still": {"skin_finish": bool((cfg.get("still") or {})
-                                      .get("skin_finish", False)),
-                  # 9.93: numpy on the delivered frame - nothing to probe,
-                  # so the toggle itself is the whole state.
+        # The still finishers - both numpy on the delivered frame, nothing
+        # to probe, so the toggles are the whole state. film_grain replaced
+        # skin_finish in 10.1 (skin1x retired by Jesse's eye).
+        "still": {"film_grain": bool((cfg.get("still") or {})
+                                     .get("film_grain", False)),
+                  "film_grain_amount": still_film_grain_amount(),
                   "de_shine": bool((cfg.get("still") or {})
                                    .get("de_shine", False)),
-                  "skin_finish_available": h3_skin_finish_available(),
-                  "skin_finish_model": H3_SKIN_MODEL,
                   # The one-frame spine is not a setting - there is no reason
                   # to prefer five frames and throw four away - but Settings
                   # says whether it is running, because it is the difference
@@ -19893,16 +20137,28 @@ async def settings_post(req):
     if "identity_finish" in pid_cfg:
         cfg["pid"]["identity_finish"] = bool(pid_cfg["identity_finish"])
     still_cfg = body.get("still") or {}
-    if "skin_finish" in still_cfg:
+    if "film_grain" in still_cfg:
         # Strictly a bool, the upscale_2x rule: a truthy string would stand a
         # setting the user never chose on every still they render.
-        if not isinstance(still_cfg["skin_finish"], bool):
+        if not isinstance(still_cfg["film_grain"], bool):
             return web.json_response(
                 {"ok": False,
-                 "error": f"not a bool: {still_cfg['skin_finish']}"}, status=400)
-        cfg.setdefault("still", {})["skin_finish"] = still_cfg["skin_finish"]
+                 "error": f"not a bool: {still_cfg['film_grain']}"}, status=400)
+        cfg.setdefault("still", {})["film_grain"] = still_cfg["film_grain"]
+    if "film_grain_amount" in still_cfg:
+        try:
+            amt = float(still_cfg["film_grain_amount"])
+        except (TypeError, ValueError):
+            amt = float("nan")
+        if not math.isfinite(amt):
+            return web.json_response(
+                {"ok": False, "error":
+                 f"not a number: {still_cfg['film_grain_amount']}"}, status=400)
+        # the resolver's clamp, applied at write time too - one range
+        cfg.setdefault("still", {})["film_grain_amount"] = \
+            min(max(amt, 0.1), 8.0)
     if "de_shine" in still_cfg:
-        # The same strict-bool rule as skin_finish (9.93).
+        # The same strict-bool rule as film_grain (9.93).
         if not isinstance(still_cfg["de_shine"], bool):
             return web.json_response(
                 {"ok": False,
@@ -22367,6 +22623,10 @@ async def comfy_free(req):
                 ok = r.status == 200
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=502)
+    if payload["free_memory"]:
+        # free_memory resets the node-output CacheSet even when the weights
+        # stay - the warm re-roll's anchor dies with it (10.2).
+        HUB.note_node_cache_flush("settings freed memory")
     if payload["unload_models"]:
         # The Settings button empties the card behind the butler's back. Left
         # unsaid, the next job would be credited with weights this call just
@@ -22504,6 +22764,9 @@ async def ram_free(_req):
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
         # A down ComfyUI must not keep Pixal's own RAM hostage.
         note = f"comfy node cache kept: {exc}"
+    if note is None:
+        # Delivered: the node-output CacheSet is gone (10.2's flush epoch).
+        HUB.note_node_cache_flush("freed host ram")
     import gc
     gc.collect()
     if _nt():
@@ -23253,6 +23516,88 @@ def graph_weight_bill(g):
     light = sum(sz for _name, (key, sz) in seen.items() if key not in HEAVY_KEYS)
     peak = (max(heavy.values()) if heavy else 0) + light
     return heavy, peak + (PID_STACK_BYTES if pid_stack else 0)
+
+
+# 10.2 - the warm re-roll. The loader input names that price a TEXT ENCODER,
+# derived from the same table the butler prices from (the folders encoders
+# live in) so a new encoder key joins automatically - never a lane's node
+# names, never an H3 constant. unet_name/ckpt_name are the sampler side.
+ENCODER_WEIGHT_KEYS = tuple(k for k in HEAVY_KEYS
+                            if "text_encoders" in WEIGHT_KEYS[k])
+DIT_WEIGHT_KEYS = tuple(k for k in HEAVY_KEYS if k not in ENCODER_WEIGHT_KEYS)
+
+
+def encode_side(g):
+    """(encode-side node ids, encoder weight files) of a built graph.
+
+    The encoder loaders are the nodes naming a text-encoder weight
+    (ENCODER_WEIGHT_KEYS). The ENCODE side proper is every node the
+    encoder's output can reach without crossing into the sampler side (the
+    nodes downstream of a DiT/checkpoint loader), plus everything upstream
+    of those nodes - the prompt text, the CLIP config, whatever the encode
+    actually reads. ComfyUI's node cache keys each of those nodes on
+    exactly this subgraph, so a byte-identical encode side is a cache hit
+    and the encoder never loads; the seed, the sampler, the scheduler and
+    the DiT itself are free to change. A lane's monolithic encode node
+    (MiniMaxH3* does the text encode AND the latent prep in one node) makes
+    even a clip-length change flip the side - correctly, because ComfyUI's
+    cache key for that node flips with it.
+    """
+    inputs = {nid: (n.get("inputs") or {}) for nid, n in g.items()}
+
+    def _loaders(keys):
+        return {nid for nid, ins in inputs.items()
+                if any(isinstance(ins.get(k), str) and ins[k] for k in keys)}
+
+    def _link(val):
+        return (val[0] if isinstance(val, list) and val
+                and isinstance(val[0], str) and val[0] in inputs else None)
+
+    enc_loaders = _loaders(ENCODER_WEIGHT_KEYS)
+    if not enc_loaders:
+        return set(), set()
+    consumers = {nid: [] for nid in inputs}
+    for nid, ins in inputs.items():
+        for val in ins.values():
+            src = _link(val)
+            if src is not None:
+                consumers[src].append(nid)
+
+    def _downstream(roots):
+        seen, stack = set(), list(roots)
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(consumers[cur])
+        return seen
+
+    frontier = _downstream(enc_loaders) - _downstream(_loaders(DIT_WEIGHT_KEYS))
+    side = set(frontier)
+    stack = list(frontier)
+    while stack:
+        cur = stack.pop()
+        for val in inputs[cur].values():
+            src = _link(val)
+            if src is not None and src not in side:
+                side.add(src)
+                stack.append(src)
+    files = {inputs[nid][k] for nid in enc_loaders for k in ENCODER_WEIGHT_KEYS
+             if isinstance(inputs[nid].get(k), str) and inputs[nid][k]}
+    return side, files
+
+
+def encode_signature(g):
+    """A stable hash of the graph's encode side, exactly as built - None
+    when the graph has no text encoder (PiD's upscale loads its TE inside
+    its own nodes; there is nothing for the node cache to serve)."""
+    side, _files = encode_side(g)
+    if not side:
+        return None
+    blob = json.dumps({nid: g[nid] for nid in sorted(side)},
+                      sort_keys=True, separators=(",", ":"))
+    return hashlib.blake2b(blob.encode("utf-8"), digest_size=8).hexdigest()
 
 
 def brain_headroom_rest(priced, brain_resident, card_total):

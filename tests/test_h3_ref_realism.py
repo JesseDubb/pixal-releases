@@ -82,7 +82,9 @@ def entries(root, *, image_vae=False, skin=False, hybrids=()):
     if image_vae:
         out.append(add("vae", server.H3_IMAGE_VAE))
     if skin:
-        out.append(add("upscale_models", server.H3_SKIN_MODEL))
+        # the retired skin1x weights, still on disk in the wild (10.1):
+        # their presence must mean nothing to any builder now
+        out.append(add("upscale_models", "1x-ITF-SkinDiffDetail-Lite-v1.pth"))
     return out
 
 
@@ -200,73 +202,101 @@ class OneFrameTests(_Lane):
                 self.assertTrue(server.h3_one_frame_available())
 
 
-class SkinFinishTests(_Lane):
-    """The one measured post-sampler stage: +80% to +220% fine detail."""
+class FilmGrainTests(_Lane):
+    """10.1: skin1x is retired - it read as skin only on close portraits and
+    as posterization anywhere wider, rejected twice at 1:1 (Jesse: "that
+    skin 1 ... just didnt do a good job"). The judged dewax film grain holds
+    the finisher seat, and it runs on the DELIVERED frame - so the builders
+    are finish-free by construction, whatever a legacy config still says."""
 
-    def test_the_finish_sits_between_the_decode_and_the_save(self):
+    def test_no_builder_emits_a_finish_node_even_with_the_legacy_config(self):
+        # _Lane.build's cfg still carries skin_finish: True and the skin
+        # model file is on disk - the graph must not care.
         g, _cap, info = self.build(image_vae=True, skin=True)
-        self.assertEqual(g["fin:model"]["inputs"]["model_name"],
-                         server.H3_SKIN_MODEL)
-        self.assertEqual(g["fin:skin"]["class_type"], "ImageUpscaleWithModel")
-        self.assertEqual(g["fin:skin"]["inputs"]["image"], ["12", 0])
-        self.assertEqual(g["14"]["inputs"]["images"], ["fin:skin", 0])
-        self.assertTrue(info["skin_finish"])
-
-    def test_it_hangs_off_the_frame_grab_on_the_five_frame_spine(self):
-        g, _cap, _info = self.build(image_vae=False, skin=True)
-        self.assertEqual(g["fin:skin"]["inputs"]["image"], ["13", 0])
-        self.assertEqual(g["14"]["inputs"]["images"], ["fin:skin", 0])
-
-    def test_the_canvas_is_unchanged(self):
-        # 1x means 1x. The session's chain also sharpened and halved, and
-        # both are deliberately absent: they pay only when the render is far
-        # bigger than the delivered frame, and this lane delivers what it
-        # samples.
-        g, _cap, info = self.build(image_vae=True, skin=True)
-        self.assertEqual(info["size"], "1536x2048")
-        classes = {n["class_type"] for n in g.values()}
-        self.assertNotIn("ImageScaleBy", classes)
-        self.assertNotIn("ImageCASharpening+", classes)
-
-    def test_the_missing_model_turns_it_off_silently(self):
-        g, _cap, info = self.build(image_vae=True, skin=False)
-        self.assertFalse(info["skin_finish"])
         self.assertNotIn("fin:skin", g)
+        self.assertNotIn("fin:model", g)
+        self.assertNotIn("skin_finish", info)
         self.assertEqual(g["14"]["inputs"]["images"], ["12", 0])
 
-    def test_it_is_opt_in(self):
-        # A fresh config, the file installed: still off. The measurement it
-        # rests on came from frames that were downscaled by half afterwards,
-        # and halving is what buries the uniform texture it adds - so at this
-        # lane's delivered size the evidence does not carry, and nobody has
-        # judged one at 1:1. One click turns it on.
-        with patch.object(server, "CONFIG", Path("does-not-exist.json")):
-            self.assertFalse(server.load_config()["still"]["skin_finish"])
-        # And a config saved before this key existed reads as off too.
-        with patch.object(server, "h3_skin_finish_available", return_value=True),              patch.object(server, "load_config", return_value={}):
-            self.assertFalse(server.h3_skin_finish_active())
-
-    def test_the_setting_turns_it_off(self):
-        with patch.object(server, "h3_skin_finish_available", return_value=True), \
-             patch.object(server, "load_config",
-                          return_value={"still": {"skin_finish": False}}):
-            self.assertFalse(server.h3_skin_finish_active())
-        # A per-render answer beats the setting in both directions.
-        with patch.object(server, "h3_skin_finish_available", return_value=True), \
-             patch.object(server, "load_config",
-                          return_value={"still": {"skin_finish": False}}):
-            self.assertTrue(server.h3_skin_finish_active(True))
-        # But nothing turns it on without the file.
-        with patch.object(server, "h3_skin_finish_available", return_value=False):
-            self.assertFalse(server.h3_skin_finish_active(True))
-
-    def test_the_prompt_only_still_gets_the_same_finish(self):
+    def test_the_prompt_only_still_is_finish_free_too(self):
         g, _cap, info = self.build(skin=True, builder=server.build_h3_still,
                                    character=None)
-        self.assertTrue(info["skin_finish"])
-        self.assertEqual(g["fin:skin"]["inputs"]["image"], ["13", 0])
-        self.assertEqual(g["14"]["inputs"]["images"], ["fin:skin", 0])
+        self.assertNotIn("fin:skin", g)
+        self.assertNotIn("skin_finish", info)
+        self.assertEqual(g["14"]["inputs"]["images"], ["13", 0])
 
+    def test_grain_is_deterministic_in_the_render_seed(self):
+        from PIL import Image
+        im = Image.new("RGB", (64, 64), (128, 128, 128))
+        a = server.add_film_grain(im, 424242)
+        b = server.add_film_grain(im, 424242)
+        c = server.add_film_grain(im, 424243)
+        self.assertEqual(a.tobytes(), b.tobytes())
+        self.assertNotEqual(a.tobytes(), c.tobytes())
+        self.assertNotEqual(a.tobytes(), im.tobytes())
+
+    def test_grain_is_monochrome(self):
+        # An equal offset on all three channels: on unclipped mid grey the
+        # per-channel deltas are identical.
+        import numpy as np
+        from PIL import Image
+        im = Image.new("RGB", (64, 64), (128, 128, 128))
+        d = (np.asarray(server.add_film_grain(im, 7), dtype=int)
+             - np.asarray(im, dtype=int))
+        self.assertTrue((d[..., 0] == d[..., 1]).all())
+        self.assertTrue((d[..., 0] == d[..., 2]).all())
+
+    def test_grain_concentrates_in_the_midtones(self):
+        import numpy as np
+        from PIL import Image
+        mid = Image.new("RGB", (128, 128), (128, 128, 128))
+        dark = Image.new("RGB", (128, 128), (20, 20, 20))
+        dm = (np.asarray(server.add_film_grain(mid, 9), dtype=float)
+              - np.asarray(mid, dtype=float)).std()
+        dd = (np.asarray(server.add_film_grain(dark, 9), dtype=float)
+              - np.asarray(dark, dtype=float)).std()
+        self.assertGreater(dm, dd * 1.5)
+
+    def test_the_setting_defaults_off_and_the_dial_defaults_judged(self):
+        with patch.object(server, "CONFIG", Path("does-not-exist.json")):
+            cfg = server.load_config()["still"]
+            self.assertFalse(cfg["film_grain"])
+            self.assertEqual(cfg["film_grain_amount"], 1.6)
+            self.assertNotIn("skin_finish", cfg)
+
+    def test_a_legacy_skin_finish_config_reads_as_grain_off(self):
+        # A 1.1.7b config still carrying the dead key: never a crash,
+        # never grain the user did not choose.
+        with patch.object(server, "load_config",
+                          return_value={"still": {"skin_finish": True}}):
+            self.assertFalse(server.still_film_grain_active())
+            self.assertEqual(server.still_film_grain_amount(), 1.6)
+
+    def test_the_amount_resolver_clamps_corruption(self):
+        for stored, want in ((1.6, 1.6), (0.0, 0.1), (99.0, 8.0),
+                             ("nan", 1.6)):
+            with patch.object(server, "load_config", return_value={
+                    "still": {"film_grain": True,
+                              "film_grain_amount": stored}}):
+                self.assertEqual(server.still_film_grain_amount(), want)
+
+    def test_the_delivered_wrapper_keeps_the_png_text_chunks(self):
+        # The embedded workflow is what the filename convention reads back -
+        # de-shine's rule, inherited.
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        with TemporaryDirectory() as td:
+            p = Path(td) / "frame.png"
+            meta = PngInfo()
+            meta.add_text("prompt", "{}")
+            meta.add_text("workflow", "{\"graph\": true}")
+            Image.new("RGB", (32, 32), (100, 110, 120)).save(p, pnginfo=meta)
+            before = p.read_bytes()
+            self.assertTrue(server._film_grain_delivered(p, 424242, 1.6))
+            self.assertNotEqual(p.read_bytes(), before)
+            with Image.open(p) as out:
+                self.assertEqual(out.info.get("workflow"), "{\"graph\": true}")
+                self.assertEqual(out.info.get("prompt"), "{}")
 
 class WardrobeLockTests(_Lane):
     """THE regression, on both still lanes.

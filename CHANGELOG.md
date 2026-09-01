@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.8b — 2026-09-01
+
+**Re-rolling a picture stops reloading everything.** Ask for the same
+scene with a new seed and Pixal used to clear the renderer's memory to
+make room for a text encoder it did not even need — every model
+reloaded, every re-roll as slow as the first render. Now, when nothing
+about the scene's text has changed, Pixal proves the encoding is still
+cached, prices the job without the encoder, and takes only the gentle
+memory paths. Measured on a 32 GB card: a re-roll dropped from 93 to 31
+seconds, with eight of twelve graph steps served from cache. Changing
+the sampler keeps the fast path; changing a single word of the scene
+correctly pays full price. This works on every lane — Krea 2, Z-Image,
+Klein and the video engines included — and where memory is genuinely too
+tight, the old careful behavior is untouched.
+
+**Saying "go" now actually fires the shot.** Two chat bugs, both from
+real sessions this week. With Prompt enhance off, replying "not sexy
+enough and the environment sucks" to a drafted scene rendered *that
+sentence* as the picture — a critique is not a caption, so redirects now
+go back to the writer to be merged into the draft, while your own typed
+prompts still pass through untouched, word for word. And when the writer
+drafts a scene, invites a "go", and then loses its nerve — three
+accepts in a row once produced three fresh invitations and zero renders
+— the server now fires the accepted draft itself. A short apology from
+the writer no longer buries the draft it just wrote.
+
+**Film grain, the judged recipe, in Settings.** The "Skin finish" pass
+is retired — its added texture read as skin only on close portraits and
+as posterization anywhere wider. In its seat: the fine monochrome film
+grain from the de-wax session, strongest in the midtones the way
+negative film behaves, seeded from the render so a re-render lands
+identically, applied as the last touch after shine removal. Off by
+default; one toggle and one dial (1.6 is the judged value) under
+Settings → Image.
+
 ## 1.1.7b — 2026-09-01
 
 **Settings speaks one design language now.** The panel was six tabs of

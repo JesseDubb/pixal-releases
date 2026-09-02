@@ -40,7 +40,7 @@ EDIT = SRC.split("<Section title={<>Edit model", 1)[1] \
 # encoder row all answer what an H3 render loads, and a MiniMax setting filed
 # under a global VRAM list is a setting nobody finds.
 H3 = SRC.split("<Section title={<>MiniMax H3", 1)[1] \
-        .split("<GroupLabel>finishing</GroupLabel>", 1)[0]
+        .split("<GroupLabel>Post processing</GroupLabel>", 1)[0]
 
 
 class SharedPickerTests(unittest.TestCase):

@@ -2,11 +2,11 @@
 // the image(s) as they land, and the recipe line (model · canvas · LoRA stack)
 // with re-roll / iterate / open actions.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { tuningLine } from "../lib/names.js";
+import { tuningLine, finishChips } from "../lib/names.js";
 import { ArrowClockwise, ArrowBendUpLeft, ArrowsOutSimple,
          Check, Copy, FilmStrip, LockSimple, LockSimpleOpen, MagnifyingGlass,
-         PencilSimple, Play } from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "../lib/design-tokens.js";
+         PaintBrush, Play } from "@phosphor-icons/react";
+import { FONT, W, TYPE, SPACE, RADIUS, MOTION, GLASS_SOLID } from "../lib/design-tokens.js";
 import { Disclosure, DisclosureTrigger } from "../lib/Disclosure.jsx";
 import { DotMatrix } from "../lib/DotMatrix.jsx";
 import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
@@ -37,6 +37,38 @@ const ActionBtn = ({ Icon, label, onClick }) => (
     <Icon size={10} weight="duotone" />{label}
   </button>
 );
+
+// The finish chain, as hover chips over the still (Jesse, 2026-09-01: "a
+// little set of subtle chips over somewhere intuitive on the image when you
+// hover") - the gallery tile's GLASS_SOLID chip recipe, faded in only while
+// the pointer is over the frame. finishChips (names.js) decides what shows;
+// the server re-sends jobinfo at finalize so a live card carries the chain
+// the finishers wrote, not the empty info the builder announced.
+const StillFrame = ({ im, alt, chips, onClick }) => {
+  const [hov, setHov] = useState(false);
+  return (
+    <div style={{ position: "relative" }}
+         onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      <img src={thumbUrl(im)} loading="lazy" alt={alt} onClick={onClick}
+           style={{ width: "100%", borderRadius: RADIUS.card, display: "block",
+                    cursor: "zoom-in", background: "var(--bg0)" }} />
+      {chips.length > 0 && (
+        <div aria-hidden="true" style={{
+          position: "absolute", top: SPACE[6], left: SPACE[6],
+          display: "flex", gap: 4, pointerEvents: "none",
+          opacity: hov ? 1 : 0, transition: `opacity ${MOTION.hover}`,
+        }}>
+          {chips.map((chip) => (
+            <span key={chip} style={{
+              ...GLASS_SOLID, padding: "2px 6px", fontFamily: MONO,
+              fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase",
+            }}>{chip}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 // The scene used to be a bare maxHeight:84 with overflow:hidden - it chopped
 // mid-word with nothing to say it had, and the full prompt was unreachable from
@@ -299,10 +331,9 @@ export const JobCard = ({ job, onOpen, onIterate, onReroll, onAnimate, onReview,
                 </div>
               </div>
             ) : (
-              <img key={i} src={thumbUrl(im)} loading="lazy" alt={job.scene}
-                   onClick={() => onOpen(job.images, i, job)}
-                   style={{ width: "100%", borderRadius: RADIUS.card, display: "block",
-                            cursor: "zoom-in", background: "var(--bg0)" }} />
+              <StillFrame key={i} im={im} alt={job.scene}
+                          chips={finishChips(info)}
+                          onClick={() => onOpen(job.images, i, job)} />
             )
           ))}
         </div>
@@ -330,7 +361,7 @@ export const JobCard = ({ job, onOpen, onIterate, onReroll, onAnimate, onReview,
             {!isVideoJob && (
               <ActionBtn Icon={FilmStrip} label="animate" onClick={() => onAnimate(job)} />)}
             {!isVideoJob && onEdit &&
-              <ActionBtn Icon={PencilSimple} label="edit" onClick={() => onEdit(job)} />}
+              <ActionBtn Icon={PaintBrush} label="edit" onClick={() => onEdit(job)} />}
             {!isVideoJob &&
               <ActionBtn Icon={MagnifyingGlass} label="review" onClick={() => onReview(job)} />}
             {onUpscale &&

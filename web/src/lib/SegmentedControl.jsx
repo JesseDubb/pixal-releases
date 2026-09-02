@@ -26,8 +26,11 @@
 //   `buttonProps` were carried across from there 2026-08-23; raise any
 //   change to this variant back against Lumen so the two do not drift.
 //
-// options — [{ v, label, Icon?, disabled?, title?, buttonProps? }]. ONE key:
-//   `v`. The grid original's `value` key is gone; there is no shim.
+// options — [{ v, label, chip?, Icon?, disabled?, title?, buttonProps? }].
+//   ONE key: `v`. The grid original's `value` key is gone; there is no shim.
+// chip — a scale factor ("2×", "4×") rendered as the little Chip badge after
+//   the label, never written into the label as prose (Jesse, 2026-09-01).
+//   It joins the composed tooltip so the full name survives there.
 // title — composed: `label — title` when a distinct title exists, else the
 //   title, else the label itself. The full label ALWAYS survives in the
 //   tooltip, which is what makes flex clipping honest.
@@ -44,6 +47,7 @@
 // group gets its accessible name from ariaLabel (DESIGN.md §6).
 
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "./design-tokens.js";
+import { Chip } from "./Chip.jsx";
 // The pill selector's track (brief 10.0, the mockup's .seg): bg3 with a
 // hairline border, 2px padding and gap, pill radius. Module-level so the
 // spec has one name; options get theirs in the map below (pillStyle).
@@ -99,8 +103,10 @@ export const SegmentedControl = ({
         const off = !!opt.disabled;
         // The composed title: the full label survives in the tooltip even
         // when a distinct title carries a description (9.21's honesty rule).
-        const title = opt.title && opt.title !== opt.label
-          ? `${opt.label} — ${opt.title}` : (opt.title || opt.label);
+        // A chip is part of the name ("PiD 4×"), so it rejoins the label here.
+        const fullLabel = opt.chip ? `${opt.label} ${opt.chip}` : opt.label;
+        const title = opt.title && opt.title !== fullLabel
+          ? `${fullLabel} — ${opt.title}` : (opt.title || fullLabel);
         // flex segment style — the shrink rule travels with its clip rules
         // (the label span below carries the ellipsis): a segment that can
         // shrink must clip, never paint over its neighbour.
@@ -174,6 +180,7 @@ export const SegmentedControl = ({
                 {opt.label}
               </span>
             )}
+            {opt.chip && <Chip>{opt.chip}</Chip>}
           </button>
         );
       })}

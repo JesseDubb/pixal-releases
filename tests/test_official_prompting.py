@@ -244,7 +244,7 @@ class BrainTabRowTests(unittest.TestCase):
         brain = self._brain_tab()
         self.assertIn("Official prompting", brain)
         self.assertLess(brain.index("Official prompting"),
-                        brain.index("<GroupLabel>vision</GroupLabel>"),
+                        brain.index("<GroupLabel>Vision</GroupLabel>"),
                         "the row drifted below the vision cluster")
 
     def test_the_row_has_its_tip(self):

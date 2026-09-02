@@ -132,6 +132,10 @@ takes you:
   words go to the model verbatim: Pixal does not rewrite, polish or expand
   them. The composer says so on the message itself: a "Prompt enhance off"
   note rides under your turn.
+- When the brain drafts a scene and invites you to say go, two pills sit
+  under its message: **Generate** fires that draft as written, **Something
+  else** asks for a different take. Typing "go" yourself does the same
+  thing; the pills are the same two answers, one tap away.
 - The **style** pill (next section) steers the look; the **model** pill pins
   which checkpoint renders it. Leave the model on "Let Pixal choose" — its
   own words for what it does: "Reads what you asked for and matches it to the
@@ -361,8 +365,13 @@ implies, or "the recipe’s own canvas" when you leave it automatic.
 A finished card carries up to six buttons. Most of them ride every tile in
 **Past generations** too, joined there by a seed-freeze toggle, **open** and
 a two-step **delete** ("delete" arms to "sure?"; the tooltip warns "click
-again - gone for good"). Clicking the picture itself opens the lightbox: full size, its recipe readout (model,
-dimensions, seed, sampler, elapsed), a save button, and arrow keys to move
+again - gone for good"). Hovering a finished still fades in a row of
+small chips over the frame — DLSS 5, Matte skin, Upscaled, Film grain —
+one for each finishing pass that actually touched those pixels, in the
+order it ran (Section 5). Clicking the picture itself opens the lightbox:
+full size, its recipe readout in the lower left (model, dimensions, seed,
+the sampler schedule — sampler, scheduler, steps, cfg — elapsed, LoRAs)
+with the same finish chips above it, a save button, and arrow keys to move
 through the set.
 
 **animate** — opens the Animate dialog with this frame as the first frame of
@@ -636,7 +645,7 @@ Two modes, named exactly as Settings names them:
   shows its scale as a chip, like "4×"). The footnote does the arithmetic:
   "The model's own factor decides the size — a 4× model on a 1024-wide frame
   gives 4096."
-- **PiD 4×** — "NVIDIA PiD v1.5, INT8 ConvRot. 4-step diffusion in 1024px
+- **PiD** (its 4× rides in the little scale chip) — "NVIDIA PiD v1.5, INT8 ConvRot. 4-step diffusion in 1024px
   tiles at 4× — any aspect ratio; invents texture instead of sharpening.
   Models auto-download on first use. Non-commercial license." Where Model
   mode sharpens what exists, PiD hallucinates new fine detail. It needs the
@@ -651,8 +660,8 @@ The "Video clips" control lists the clip upscalers:
   Windows driver feature. The hint states the deal: "Doubled at 2× with
   audio kept." (The scale figure follows your setting.) Without the Deno RTX
   VFX node pack the row is greyed: "Install the Deno RTX VFX node pack."
-- **LTX 2.5 2x** — a generative re-render: "Re-rendered at 2× — real new
-  detail, audio untouched." Slower than
+- **LTX 2.5** (its 2× rides in the scale chip) — a generative re-render:
+  "Re-rendered at 2× — real new detail, audio untouched." Slower than
   VSR, and it invents detail rather than interpolating it.
 
 ### PiD finish
@@ -800,8 +809,38 @@ is trained against one set of weights, so the wrong accelerator does not
 error — it quietly ruins the edit. `config.json` is re-read on every edit,
 so the next one picks the change up; no restart.
 
+**Post processing** — one group for what happens to a finished still.
+Three rows, all off by default; with everything on, the chain runs
+DLSS 5 first, then shine removal, then film grain (grain after any
+upscale):
+
+- **DLSS 5** (the row wears NVIDIA's mark) — runs the finished still
+  through NVIDIA's DLSS 5 neural re-render: relights materials and tames
+  glare at the same resolution, about a second per frame. With the toggle
+  on, a style select (default / natural / cinematic) and an intensity
+  dial (1.0 is the shipped default) ride inline on the row. Two things
+  make the row light up, and Pixal ships neither: the ComfyUI-DLSS5-NR
+  node pack, and the DLSS DLL itself — NVIDIA has not released DLSS 5
+  publicly, so Pixal can neither bundle the runtime nor download it for
+  you. **Bring your own** `nvngx_dlssnr.dll` (about 158 MB) and press
+  **Add DLL** on the row: Pixal copies it into the node's runtime folder
+  and checks it by SHA-256 — the known 310.8.0.0 build toasts "verified",
+  anything else is seated with an honest "unrecognized build, may not
+  run". Placing the file yourself at
+  `ComfyUI\custom_nodes\ComfyUI-DLSS5-NR\runtime\nvngx_dlssnr.dll` works
+  identically. Until both halves are in place the switch is greyed, and
+  the subline names whichever half is missing.
+- **Film grain** — a fine monochrome grain, strongest in the midtones the
+  way negative film behaves. Seeded from the render, so a re-render lands
+  identically. One dial when on; 1.6 is the judged default. Always the
+  last touch.
+- **Shine removal** — pulls specular highlights on skin toward the tone
+  around them: the hot spots on foreheads, cheeks and chests. It only
+  darkens, eyes and teeth fall outside the skin range, and it runs on the
+  finished frame before any upscale. Nothing to install.
+
 **Upscaler** — "Model enlarges; PiD repaints." plus the installed count. The
-still-frame mode (Model / PiD 4×) and the upscale model picker are walked in
+still-frame mode (Model / PiD, the 4× as a chip) and the upscale model picker are walked in
 Section 5; the tip holds the size math (the model's own factor decides — a
 4× model on a 1024-wide frame gives 4096). The clip side sits on the Video
 tab.
@@ -1227,7 +1266,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.8b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.9b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

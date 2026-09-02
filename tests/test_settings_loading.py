@@ -64,7 +64,9 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 2,
          "vae": 1, "pidCfg": 1, "upd": 1,
          # 1.1.4b: the still finish. Its own slot rather than a videoCfg key -
-         # it is an image setting and it lands on the Image tab.
+         # it is an image setting and it lands on the Image tab. 2026-09-01:
+         # the dlss 5 and finishing groups merged into one "post processing"
+         # group (Jesse), so a single gate swaps all three ghost rows.
          "stillCfg": 1, "h3Cfg": 1}
 
 GHOST_MARKERS = ("<SegGhost", "<PickerGhost", "<SwitchGhost", "<LineGhost",

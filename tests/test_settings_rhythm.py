@@ -54,8 +54,10 @@ class SettingsRhythm(unittest.TestCase):
         self.assertGreaterEqual(outer, mid * 2, "clusters do not read as separate")
 
     def test_a_cluster_heading_belongs_to_what_is_under_it(self):
-        """48 above, 12 below. Equal air on both sides was the old bug: the
-        heading floated between two sections instead of opening one."""
+        """48 above, 8 below. Equal air on both sides was the old bug: the
+        heading floated between two sections instead of opening one. 8 is
+        the Section's own title-to-rows gap - heading and title share one
+        register since 2026-09-01, so they share one below-air too."""
         css = re.search(r'const CSS = `(.*?)`;', SRC, re.S)
         self.assertIsNotNone(css, "the rhythm stylesheet is gone")
         css = css.group(1)
@@ -64,7 +66,10 @@ class SettingsRhythm(unittest.TestCase):
         gap = int(re.search(r'className="px-scroll px-set".*?gap: SPACE\[(\d+)\]',
                             SRC, re.S).group(1))
         self.assertEqual(gap + above, 48)
-        self.assertEqual(gap - below, 12)
+        self.assertEqual(gap - below, 8)
+        section = re.search(r'const Section = .*?gap: SPACE\[(\d+)\]', SRC, re.S)
+        self.assertEqual(gap - below, int(section.group(1)),
+                         "a heading's below-air drifted from the Section title's")
         self.assertLess(gap - below, gap + above,
                         "the heading must hug the group it names")
         self.assertIn('.px-set > .px-set-group:first-child { margin-top: 0; }', css,

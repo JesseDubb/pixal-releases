@@ -159,8 +159,25 @@ export const prettyResolvedModel = (info, template) => {
   return family === "zimage" && profile ? `${model} · ${profile}` : model;
 };
 
+// The finish chain as chips, in pixel order: DLSS 5 -> matte skin ->
+// upscale -> grain. Data, never settings: a chip appears only when the
+// ledger says the pass actually touched these pixels (info.finish is
+// written in run order as each finisher lands; info.upscaler is set only
+// by the upscale builders). One source for the card's hover strip and the
+// lightbox readout.
+export const finishChips = (info) => {
+  if (!info) return [];
+  const finish = String(info.finish || "");
+  const chips = [];
+  if (finish.includes("dlss5")) chips.push("DLSS 5");
+  if (finish.includes("deshine")) chips.push("Matte skin");
+  if (info.upscaler) chips.push("Upscaled");
+  if (finish.includes("grain")) chips.push("Film grain");
+  return chips;
+};
+
 // One line for a sampler schedule, everywhere it is stated: the tuning card's
-// collapsed summary and the job card's record of what ran.
+// collapsed summary, the job card's record of what ran, the lightbox readout.
 export const tuningLine = (t) => !t ? "" : [
   t.sampler_name, t.scheduler,
   t.steps !== undefined && t.steps !== null ? `${t.steps} steps` : null,

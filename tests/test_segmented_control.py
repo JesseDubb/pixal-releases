@@ -110,11 +110,16 @@ class FlexKeepsTheClipContract(unittest.TestCase):
 
     def test_the_composed_title_still_guarantees_the_label(self):
         # Clipping is only honest if hover hands the whole label back. The
-        # title is built from opt.label even when a distinct opt.title
-        # carries a description.
+        # title is built from fullLabel, which itself must be built from
+        # opt.label (2026-09-01: the chip rejoins the label there, so a
+        # "PiD" + 4× chip still tooltips as "PiD 4×").
+        full = re.search(r"const fullLabel = (.+?);", LIB, re.S)
+        self.assertIsNotNone(full, "the chip-aware fullLabel is gone")
+        self.assertIn("opt.label", full.group(1),
+                      "fullLabel must be built from opt.label")
         m = re.search(r"const title = (.+?);", LIB, re.S)
         self.assertIsNotNone(m, "options carry no composed title at all")
-        self.assertIn("opt.label", m.group(1),
+        self.assertIn("fullLabel", m.group(1),
                       "a clipped segment's tooltip must contain the full label")
 
 

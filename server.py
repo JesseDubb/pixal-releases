@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.8b"
+PIXAL_VERSION = "1.1.9b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -627,7 +627,12 @@ def load_config():
                      # 9.93: de-shine, numpy on the delivered frame. Needs no
                      # file, node or VRAM, so the toggle is the whole gate -
                      # still OFF until judged, like every other finisher.
-                     "de_shine": False},
+                     "de_shine": False,
+                     # 10.5: DLSS 5, the chain's FIRST finisher - a whole-frame
+                     # neural re-render through the ComfyUI-DLSS5-NR node. Same
+                     # doctrine as grain: fresh installs render untouched.
+                     "dlss5": False, "dlss5_style": "default",
+                     "dlss5_intensity": 1.0},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -7633,6 +7638,266 @@ def _film_grain_delivered(path, seed, amount):
         return False
 
 
+# 10.5: DLSS 5, the chain's FIRST finisher (dlss5 -> de-shine -> grain). The
+# installed ComfyUI-DLSS5-NR node re-renders the whole delivered frame
+# neurally - relights materials and tames glare at the SAME resolution (it
+# is not an upscaler). A whole-frame pass must see the raw render, so it
+# runs before shine removal measures skin; and it never goes inside a
+# build_* graph - a native failure there would kill the render, out here
+# the same failure is a no-op with one log line.
+DLSS5_NODE = "DLSS5NeuralRendering"
+DLSS5_STYLES = ("default", "natural", "cinematic")
+DLSS5_TIMEOUT = 30.0    # ~0.4-1.9 s per 3 MP frame; the cap is for a busy box
+# Fixed node inputs, per the brief: exposing them waits on a judged reason.
+# preset 3, neutral tone/structure, skin mask off (the de-shine pass owns
+# skin), per-still batch, the card the render ran on, channel order auto -
+# verified correct on the user-supplied runtime DLL.
+DLSS5_FIXED = {"preset": 3, "tone": 1.0, "structure": 1.0, "skin": -1.0,
+               "auto_mask": False, "batch_mode": "still images",
+               "gpu_index": 0, "channel_order": "auto"}
+
+# The runtime DLL is the user's to supply - Pixal neither bundles it nor
+# downloads it from anywhere. The only public build today is extracted
+# from a game's early-access files (NVIDIA has not released DLSS 5 NR;
+# announced for fall 2026), so there is no legal endpoint to fetch from -
+# see briefs/QUEUE.md, addendum 2026-09-01. /api/dlss5/dll therefore only
+# SEATS a copy the user already has, and fingerprints it so the row can
+# say "verified" instead of hoping. Revisit the moment NVIDIA ships it.
+DLSS5_DLL_NAME = "nvngx_dlssnr.dll"
+DLSS5_DLL_SIZE = 165_840_496            # bytes - the 310.8.0.0 build, ~158 MB
+DLSS5_DLL_SHA256 = ("e16bcf15e16e13f527491cdf7845b2fe"
+                    "6521a738d8f7c9c721866a8496e1fc8e")
+DLSS5_DLL_VERSION = "310.8.0.0"
+DLSS5_DLL_MIN_BYTES = 50_000_000        # anything smaller is not an NR runtime
+DLSS5_DLL_MAX_BYTES = 400_000_000       # stream cap; the known build is 158 MB
+
+
+def dlss5_runtime_dir():
+    return CDIR / "custom_nodes" / "ComfyUI-DLSS5-NR" / "runtime"
+
+
+def dlss5_dll_verdict(filename, size, sha256_hex):
+    """(error, verified) for a candidate runtime. Name and a sane size are
+    required; the sha decides only VERIFIED vs unrecognized - a future
+    official build must not be refused for failing to match a game's."""
+    name = str(filename or "").replace("\\", "/").split("/")[-1]
+    if name.lower() != DLSS5_DLL_NAME:
+        return (f"that file is {name or 'unnamed'} - the runtime is named "
+                f"{DLSS5_DLL_NAME}", False)
+    if size < DLSS5_DLL_MIN_BYTES:
+        return (f"that is {size / 1e6:.0f} MB - the runtime is about "
+                f"{DLSS5_DLL_SIZE / 1e6:.0f} MB", False)
+    verified = (size == DLSS5_DLL_SIZE
+                and str(sha256_hex).lower() == DLSS5_DLL_SHA256)
+    return None, verified
+
+
+def still_dlss5_active():
+    """The Settings toggle is the gate, same doctrine as grain: default OFF,
+    a config from before the key reads as off. Availability is reported to
+    Settings but does not gate the attempt - a stale probe must not eat a
+    finisher the live node could have run, and every failure is a no-op."""
+    try:
+        return bool(load_config()["still"]["dlss5"])
+    except (KeyError, TypeError):
+        return False
+
+
+def still_dlss5_style():
+    """One of the three judged styles ("default" is Jesse's pick, cinematic
+    also approved); anything else in a config reads as the shipped default.
+    The numeric experimental ladder arms are deliberately not offered."""
+    try:
+        style = str(load_config()["still"]["dlss5_style"])
+    except (KeyError, TypeError):
+        return "default"
+    return style if style in DLSS5_STYLES else "default"
+
+
+def still_dlss5_intensity():
+    """0-2, the film_grain_amount rule: clamped so a corrupt config cannot
+    cook a frame; nan refused the same way."""
+    try:
+        v = float(load_config()["still"]["dlss5_intensity"])
+    except (KeyError, TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(v):
+        return 1.0
+    return min(max(v, 0.0), 2.0)
+
+
+def dlss5_available():
+    """The node AND its runtime DLL - both, or the Settings row disables.
+
+    The OPPOSITE of _node_available's unprobed-means-True: a cold ComfyUI
+    reads as unavailable (settings_get re-probes on every open), because a
+    row offering a finisher whose node is missing is the worse lie here."""
+    names = _COMFY_NODES["names"]
+    if names is None or DLSS5_NODE not in names:
+        return False
+    return (dlss5_runtime_dir() / DLSS5_DLL_NAME).is_file()
+
+
+def dlss5_finish_tag(style, intensity):
+    """The ledger token: dlss5@default, intensity only when it left 1.0."""
+    tag = f"dlss5@{style}"
+    if intensity != 1.0:
+        tag += f":{intensity:g}"
+    return tag
+
+
+def _record_finish(job, tag):
+    """Append one finisher to the job's finish chain in run order:
+    dlss5@default+grain@1.6. An invisible setting on an artifact is the
+    08-30 lesson - this line is how the audit reads what touched pixels."""
+    if isinstance(job.get("info"), dict):
+        prev = job["info"].get("finish")
+        job["info"]["finish"] = f"{prev}+{tag}" if prev else tag
+
+
+def _dlss5_http(url, payload=None, timeout=10.0):
+    """One JSON round trip to ComfyUI for the finisher - urllib because this
+    runs in the bridge's sync delivery path, not in an async handler."""
+    req = urllib.request.Request(url)
+    if payload is not None:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _dlss5_delivered(path, style, intensity, timeout=DLSS5_TIMEOUT,
+                     interval=0.5):
+    """Run one delivered still through the DLSS 5 node, in place.
+
+    Stages the file into ComfyUI/input under a one-run temp name (the
+    normal staging contract), queues LoadImage -> DLSS5NeuralRendering ->
+    SaveImage with "front": true so a queued batch cannot starve the
+    finisher past its timeout, polls FULL /history (the per-pid endpoint
+    answers {} on this ComfyUI build - see Hub.watch), then overwrites the
+    delivered file's PIXELS while keeping its tEXt chunks - the embedded
+    workflow graph is how renders are audited here. Any failure - node not
+    registered, DLL missing, native error, timeout, comfy unreachable - is
+    a no-op with one log line: the job must never fail or stall because
+    the finisher could not run. Never raises: it runs inside the ComfyUI
+    bridge's message loop."""
+    try:
+        if not (CDIR / "custom_nodes" / "ComfyUI-DLSS5-NR" / "runtime"
+                / "nvngx_dlssnr.dll").is_file():
+            print(f"[pixal] dlss5 skipped {path.name}: runtime DLL missing",
+                  flush=True)
+            return False
+        token = uuid.uuid4().hex
+        staged = f"pixal_dlss5_{token}.png"
+        prefix = f"pixal_dlss5_{token}"
+        staged_path = CDIR / "input" / staged
+        out_path = None
+        try:
+            (CDIR / "input").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, staged_path)
+            graph = {
+                "1": {"class_type": "LoadImage",
+                      "inputs": {"image": staged}},
+                "2": {"class_type": DLSS5_NODE,
+                      "inputs": {"image": ["1", 0], "style": style,
+                                 "intensity": intensity, **DLSS5_FIXED}},
+                "3": {"class_type": "SaveImage",
+                      "inputs": {"images": ["2", 0],
+                                 "filename_prefix": prefix}},
+            }
+            resp = _dlss5_http(f"{COMFY}/prompt",
+                               {"prompt": graph, "front": True})
+            pid = resp.get("prompt_id") if isinstance(resp, dict) else None
+            if not pid:
+                print(f"[pixal] dlss5 skipped {path.name}: "
+                      f"comfy rejected the graph: {resp}", flush=True)
+                return False
+            rec, deadline = None, time.time() + timeout
+            while time.time() < deadline:
+                hist = _dlss5_http(f"{COMFY}/history?max_items=32")
+                if isinstance(hist, dict) and hist.get(pid):
+                    rec = hist[pid]
+                    break
+                time.sleep(interval)
+            if rec is None:
+                # Found live 2026-09-01, first batch: "front": true jumps the
+                # WAITING queue but cannot preempt the render already
+                # executing, so mid-batch this poll times out while the pass
+                # is still pending - and cleaning the temps then leaves a
+                # poison graph whose LoadImage fails loudly in the console
+                # once the batch reaches it. The staged input must never
+                # outlive the graph the other way round: yank a still-pending
+                # prompt before cleanup; a prompt already EXECUTING finishes
+                # in ~2s, so give that case one short grace lap instead.
+                try:
+                    q = _dlss5_http(f"{COMFY}/queue")
+                    running = any(item[1] == pid for item in
+                                  (q.get("queue_running") or []))
+                    if running:
+                        grace = time.time() + 15.0
+                        while time.time() < grace:
+                            hist = _dlss5_http(f"{COMFY}/history?max_items=32")
+                            if isinstance(hist, dict) and hist.get(pid):
+                                rec = hist[pid]
+                                break
+                            time.sleep(interval)
+                    else:
+                        _dlss5_http(f"{COMFY}/queue", {"delete": [pid]})
+                except Exception:
+                    pass           # the rescue is best-effort; fall through
+            if rec is None:
+                print(f"[pixal] dlss5 skipped {path.name}: "
+                      f"no history after {timeout:g}s (pending pass "
+                      f"cancelled)", flush=True)
+                return False
+            st = rec.get("status") or {}
+            if st.get("status_str") != "success" and not st.get("completed"):
+                print(f"[pixal] dlss5 skipped {path.name}: "
+                      f"node run failed ({st.get('status_str')})", flush=True)
+                return False
+            for node_out in (rec.get("outputs") or {}).values():
+                for img in node_out.get("images") or []:
+                    if img.get("type") == "output" and \
+                            str(img.get("filename", "")).startswith(prefix):
+                        out_path = CDIR / "output" / \
+                            (img.get("subfolder") or "") / img["filename"]
+                        break
+                if out_path is not None:
+                    break
+            if out_path is None or not out_path.is_file():
+                print(f"[pixal] dlss5 skipped {path.name}: no output frame",
+                      flush=True)
+                return False
+            from PIL import Image
+            from PIL.PngImagePlugin import PngInfo
+            with Image.open(path) as opened:
+                fmt, meta = opened.format, dict(opened.info)
+            with Image.open(out_path) as rendered:
+                im = rendered.convert("RGB")
+            if fmt == "PNG":
+                info = PngInfo()
+                for key, value in meta.items():
+                    if isinstance(value, str):
+                        info.add_text(key, value)
+                im.save(path, pnginfo=info)
+            else:
+                keep = {k: meta[k] for k in ("exif",) if k in meta}
+                im.save(path, **keep)
+            print(f"[pixal] dlss5 {path.name} (style {style}, "
+                  f"intensity {intensity:g})", flush=True)
+            return True
+        finally:
+            for tmp in (staged_path, out_path):
+                try:
+                    if tmp is not None and tmp.is_file():
+                        tmp.unlink()
+                except OSError:
+                    pass
+    except Exception as exc:
+        print(f"[pixal] dlss5 skipped {path.name}: {exc}", flush=True)
+        return False
+
 
 # 9.93: de-shine, shipped as "AI Skin Shine Removal". The zGenMedia method
 # from docs/2026-08-30-h3-ref-realism.md, ported from the scratchpad build
@@ -7724,7 +7989,7 @@ def _de_shine_delivered(path):
             im = opened.convert("RGB")
         out, covered = de_shine(im)
         if covered <= 0.0:
-            return
+            return False
         if fmt == "PNG":
             info = PngInfo()
             for key, value in meta.items():
@@ -7736,8 +8001,10 @@ def _de_shine_delivered(path):
             out.save(path, **keep)
         print(f"[pixal] de-shine {path.name} "
               f"(mask {covered * 100:.2f}% of frame)", flush=True)
+        return True
     except Exception as exc:
         print(f"[pixal] de-shine skipped {path.name}: {exc}", flush=True)
+        return False
 
 
 def h3_one_frame_available():
@@ -12276,14 +12543,27 @@ class Hub:
         img["media"] = "video" if fmt.startswith("video") or \
             name.endswith((".mp4", ".webm", ".mov", ".gif")) else "image"
         if img["media"] == "image" and job.get("template") != "upscale_image" \
+                and still_dlss5_active():
+            # 10.5: DLSS 5 runs FIRST - a whole-frame neural re-render must
+            # see the raw render; shine removal then measures the
+            # re-rendered skin and grain stays the last touch. The
+            # upscale_image exemption is the double-apply rule: the
+            # pre-upscale file already carries it, so the upscale lane's
+            # own output must not be re-rendered again.
+            style, intensity = still_dlss5_style(), still_dlss5_intensity()
+            if _dlss5_delivered(CDIR / "output" / (img.get("subfolder") or "")
+                                / img["filename"], style, intensity):
+                _record_finish(job, dlss5_finish_tag(style, intensity))
+        if img["media"] == "image" and job.get("template") != "upscale_image" \
                 and still_de_shine_active():
             # 9.93: de-shine runs on the delivered frame, which is what makes
             # it lane-independent - and what orders it BEFORE any upscale
             # model: the upscale action reads this file afterwards, and its
             # own output is exempt above, so the percentile is never measured
             # on already-textured skin.
-            _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
-                                / img["filename"])
+            if _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
+                                   / img["filename"]):
+                _record_finish(job, "deshine")
         if img["media"] == "image" and still_film_grain_active():
             # 10.1: the judged chain's LAST step, after de-shine, after
             # whatever the graph did - grain belongs to final pixels, so
@@ -12292,9 +12572,8 @@ class Hub:
             amt = still_film_grain_amount()
             if _film_grain_delivered(
                     CDIR / "output" / (img.get("subfolder") or "")
-                    / img["filename"], job.get("seed") or 0, amt) \
-                    and isinstance(job.get("info"), dict):
-                job["info"]["finish"] = f"grain@{amt:g}"
+                    / img["filename"], job.get("seed") or 0, amt):
+                _record_finish(job, f"grain@{amt:g}")
         job["images"].append(img)
         self.broadcast(type="image", job_id=job["id"],  # img carries its own "type" - rename
                        filename=img.get("filename"), subfolder=img.get("subfolder", ""),
@@ -12427,6 +12706,15 @@ class Hub:
                 self.broadcast(type="text", cid=job["cid"], text=(
                     f"*rendered at a full card - {job['elapsed'] - usual:.0f} "
                     "s slower than usual*"))
+        # The finish chain (dlss5 / deshine / grain) and an upscaler are
+        # recorded into info AFTER the first jobinfo went out - at delivery,
+        # by _record_finish - so the live card never saw them, and the hover
+        # chips only ever appeared on cards rehydrated from history (Jesse,
+        # 2026-09-01: "the little hover tags dont always show"). Send the
+        # final truth again: the card's info and the ledger row are then the
+        # same dict.
+        if isinstance(job.get("info"), dict):
+            self.broadcast(type="jobinfo", job_id=job["id"], **job["info"])
         self.broadcast(type="jobdone", job_id=job["id"], cid=job["cid"],
                        elapsed=job["elapsed"], images=len(job["images"]),
                        error=job["error"])
@@ -18711,6 +18999,17 @@ async def kimi_reply(cid, user_msg, convo, opts=None):
         HUB.broadcast(type="thinkingdone", cid=cid)
         HUB.broadcast(type="error", cid=cid, message=str(e))
     finally:
+        # The lane's Generate / Something-else buttons (Jesse, 2026-09-01)
+        # key off the SAME condition as 10.4's accept backstop: a drafted
+        # scene still awaiting its go. Broadcast at every turn end - true
+        # arms the buttons under the invite, false retires them the moment
+        # the draft fires or dies. Guarded: a broken probe must never keep
+        # _turn_end from running.
+        try:
+            HUB.broadcast(type="draft", cid=cid,
+                          pending=bool(_pending_scene(convo)))
+        except Exception:
+            pass
         _turn_end()
 
 # A withheld-generate note is true only for the turn it rode in on. Left in the
@@ -20002,6 +20301,23 @@ async def settings_get(_req):
                   "film_grain_amount": still_film_grain_amount(),
                   "de_shine": bool((cfg.get("still") or {})
                                    .get("de_shine", False)),
+                  # 10.5: the first finisher's keys, published with whether
+                  # the node AND its runtime DLL are actually there, so the
+                  # row disables itself honestly - the same discipline as
+                  # upscale_2x_available. available is False on a cold
+                  # ComfyUI; the next settings open re-probes.
+                  "dlss5": bool((cfg.get("still") or {})
+                                .get("dlss5", False)),
+                  "dlss5_style": still_dlss5_style(),
+                  "dlss5_intensity": still_dlss5_intensity(),
+                  "dlss5_available": dlss5_available(),
+                  # The two halves separately, so the row can offer the
+                  # right fix: the node pack missing wants an install, the
+                  # DLL missing wants the user's own copy seated (the
+                  # /api/dlss5/dll picker) - one flag cannot say which.
+                  "dlss5_node": dlss5_runtime_dir().parent.is_dir(),
+                  "dlss5_dll": (dlss5_runtime_dir()
+                                / DLSS5_DLL_NAME).is_file(),
                   # The one-frame spine is not a setting - there is no reason
                   # to prefer five frames and throw four away - but Settings
                   # says whether it is running, because it is the difference
@@ -20164,6 +20480,35 @@ async def settings_post(req):
                 {"ok": False,
                  "error": f"not a bool: {still_cfg['de_shine']}"}, status=400)
         cfg.setdefault("still", {})["de_shine"] = still_cfg["de_shine"]
+    if "dlss5" in still_cfg:
+        # The same strict-bool rule as film_grain and de_shine (10.5).
+        if not isinstance(still_cfg["dlss5"], bool):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"not a bool: {still_cfg['dlss5']}"}, status=400)
+        cfg.setdefault("still", {})["dlss5"] = still_cfg["dlss5"]
+    if "dlss5_style" in still_cfg:
+        # One of the three judged styles, refused by name otherwise: the
+        # numeric experimental ladder arms are deliberately not offered, so
+        # saving one would be a config the resolver silently rewrites.
+        style = still_cfg["dlss5_style"]
+        if style not in DLSS5_STYLES:
+            return web.json_response(
+                {"ok": False,
+                 "error": f"unknown dlss5 style: {style}"}, status=400)
+        cfg.setdefault("still", {})["dlss5_style"] = style
+    if "dlss5_intensity" in still_cfg:
+        try:
+            amt = float(still_cfg["dlss5_intensity"])
+        except (TypeError, ValueError):
+            amt = float("nan")
+        if not math.isfinite(amt):
+            return web.json_response(
+                {"ok": False, "error":
+                 f"not a number: {still_cfg['dlss5_intensity']}"}, status=400)
+        # the resolver's clamp, applied at write time too - one range
+        cfg.setdefault("still", {})["dlss5_intensity"] = \
+            min(max(amt, 0.0), 2.0)
     h3_cfg = body.get("h3") or {}
     for key, lane in (("ref_model", "ref"), ("fl_model", "fl")):
         if key in h3_cfg and isinstance(h3_cfg[key], str):
@@ -22332,6 +22677,74 @@ async def history_delete(req):
           flush=True)
     return web.json_response({"ok": True, "files_removed": removed,
                               "files_failed": failed})
+
+async def dlss5_dll(req):
+    """Seat the user's own DLSS 5 NR runtime into the node pack.
+
+    Pixal cannot legally ship or fetch this DLL (see the constants block);
+    what it CAN do is the annoying part - know where the file goes. The
+    upload streams to a .part beside its destination while a sha-256 runs
+    over it, and only a complete file is moved into place, so a dropped
+    connection never leaves a half-written runtime for the bridge to load.
+    The sha decides verified-vs-unrecognized, never accept-vs-refuse: a
+    future official build must not be turned away for failing to match
+    the build this was fingerprinted on. The node resolves the DLL lazily
+    at render time, so no ComfyUI restart is needed after seating it."""
+    node_dir = dlss5_runtime_dir().parent
+    if not node_dir.is_dir():
+        return web.json_response(
+            {"ok": False,
+             "error": "install the ComfyUI-DLSS5-NR node pack first"},
+            status=400)
+    field = None
+    try:
+        reader = await req.multipart()
+        while (part := await reader.next()) is not None:
+            if part.name == "dll":
+                field = part
+                break
+            await part.release()
+    except web.HTTPRequestEntityTooLarge:
+        return web.json_response(
+            {"ok": False, "error": "that file is larger than any NR runtime"},
+            status=413)
+    except Exception:
+        field = None
+    if field is None:
+        return web.json_response(
+            {"ok": False, "error": "send the DLL as a multipart 'dll' field"},
+            status=400)
+    filename = str(field.filename or "")
+    runtime = dlss5_runtime_dir()
+    runtime.mkdir(parents=True, exist_ok=True)
+    staged = runtime / (DLSS5_DLL_NAME + ".part")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with open(staged, "wb") as out:
+            while chunk := await field.read_chunk(1 << 20):
+                size += len(chunk)
+                if size > DLSS5_DLL_MAX_BYTES:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": "that file is larger than any NR runtime"},
+                        status=413)
+                digest.update(chunk)
+                out.write(chunk)
+        sha = digest.hexdigest()
+        error, verified = dlss5_dll_verdict(filename, size, sha)
+        if error:
+            return web.json_response({"ok": False, "error": error}, status=400)
+        os.replace(staged, runtime / DLSS5_DLL_NAME)
+    finally:
+        staged.unlink(missing_ok=True)
+    print(f"[pixal] dlss5 runtime seated: {size} bytes, sha {sha[:12]}…, "
+          f"{'verified ' + DLSS5_DLL_VERSION if verified else 'unrecognized build'}",
+          flush=True)
+    return web.json_response({
+        "ok": True, "verified": verified, "size": size, "sha256": sha,
+        "version": DLSS5_DLL_VERSION if verified else None})
+
 
 async def upload(req):
     """Forward one image to ComfyUI's /upload/image (lands in ComfyUI/input/)."""
@@ -24887,8 +25300,11 @@ def main():
     ACCESS_KEY = cfg["access_key"]
     # aiohttp defaults to a 1 MiB request body, which made normal camera photos
     # fail before upload() could enforce and explain Pixal's real 40 MB limit.
+    # The app-wide cap sits above the DLSS runtime seat (~158 MB, streamed);
+    # every other route still enforces its own tighter limit (upload() keeps
+    # the 40 MB image rule), so only /api/dlss5/dll ever sees a body this big.
     app = web.Application(middlewares=[access_gate],
-                          client_max_size=UPLOAD_CLIENT_MAX_BYTES)
+                          client_max_size=DLSS5_DLL_MAX_BYTES + 1_000_000)
     app["convo"] = HUB.convo               # legacy alias; HUB owns per-chat convos now
     app.router.add_get("/", index)
     app.router.add_get("/manifest.webmanifest", manifest)
@@ -24915,6 +25331,7 @@ def main():
     app.router.add_get("/api/quant_alternatives", quant_alternatives)
     app.router.add_post("/api/quant_fetch", quant_fetch)
     app.router.add_post("/api/upload", upload)
+    app.router.add_post("/api/dlss5/dll", dlss5_dll)
     app.router.add_post("/api/input-ref-type", input_ref_type_post)
     app.router.add_get("/api/setup", setup_get)
     app.router.add_post("/api/setup", setup_post)

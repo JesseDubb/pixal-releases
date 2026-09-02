@@ -9,7 +9,7 @@ import { ArrowClockwise, ArrowUp, ArrowRight, CaretLeft, CaretRight,
          DiceOne, DiceTwo, DiceThree, DiceFour,
          DiceFive, DiceSix, DownloadSimple, LockSimple, Stop, UserCircle, UserCircleCheck,
          UserCirclePlus, Sparkle, X, Brain, ArrowsLeftRight } from "@phosphor-icons/react";
-import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
+import { CURVE, DARK, LIGHT, FONT, LOGO_FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY, GLASS_SOLID } from "../lib/design-tokens.js";
 
 // The lobby die: every roll spins it a random 1¼–1¾ turns on a spring curve
 // and lands on a DIFFERENT face — a real roll, not a button that swaps text.
@@ -17,7 +17,7 @@ const DICE_FACES = [DiceOne, DiceTwo, DiceThree, DiceFour, DiceFive, DiceSix];
 import { Thinking } from "../lib/Thinking.jsx";
 import { VideoPlayer } from "../lib/VideoPlayer.jsx";
 import { renderRichText } from "../lib/richtext.js";
-import { prettyTemplate, prettyResolvedModel, prettyLora } from "../lib/names.js";
+import { prettyTemplate, prettyResolvedModel, prettyLora, tuningLine, finishChips } from "../lib/names.js";
 import { imgUrl } from "../transport.js";
 import { useJobLive, useStore, renderIntent, loadPromptEnhance,
          PROMPT_ENHANCE_KEY } from "../store.js";
@@ -124,6 +124,11 @@ const metaFor = (src) => ({
   // clip is as complete as an image's
   engine: src.info && src.info.engine,
   sampler: src.info && src.info.sampler,
+  // stills: the sampler schedule that ran (sampler, scheduler, steps, cfg)
+  // and the finish chain - the same facts the card's hover chips read
+  tuning: src.info && src.info.tuning,
+  finish: src.info && src.info.finish,
+  upscaler: src.info && src.info.upscaler,
   shots: src.info && src.info.shots,
   frames: src.info && src.info.frames,
   audio: src.info && src.info.audio,
@@ -532,12 +537,14 @@ const Lightbox = ({ lb, onClose, onNav }) => {
     m.seed !== undefined ? "seed " + m.seed : null,
     prettyTemplate(m.template),
     m.sampler,                                     // video: resolved sampler line
+    tuningLine(m.tuning) || null,                  // stills: sampler · scheduler · steps
     m.shots > 1 ? m.shots + " shots" : null,
     m.frames ? m.frames + " frames" : null,
     m.audio,
     m.elapsed ? m.elapsed + "s" : null,
     m.loras && m.loras.length ? m.loras.map(prettyLora).join(" · ") : null,
   ].filter(Boolean);
+  const chips = finishChips(m);
   return (
     <div onClick={onClose} style={{
       // Below every dialog: animate and edit open FROM this viewer, so they
@@ -656,7 +663,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
                       cursor: zoom.s === 1 ? "zoom-in" : drag.current ? "grabbing" : "grab",
                       touchAction: "none" }} />
       )}
-      {(m.scene || rows.length > 0) && (
+      {(m.scene || rows.length > 0 || chips.length > 0) && (
         <div onClick={(e) => e.stopPropagation()} style={{
           position: "absolute", left: 0, bottom: 0, width: "min(380px, 88vw)",
           padding: `${SPACE[16]}px ${SPACE[20]}px`,
@@ -668,6 +675,22 @@ const Lightbox = ({ lb, onClose, onNav }) => {
                           marginBottom: SPACE[6], display: "-webkit-box",
                           WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
                           overflow: "hidden" }}>{m.scene}</div>
+          )}
+          {chips.length > 0 && (
+            // The finish chain, the card's hover chips at rest (Jesse,
+            // 2026-09-01: "the light box also shows those tags in the lower
+            // left where the other information is")
+            <div aria-label="Finish chain" style={{
+              display: "flex", flexWrap: "wrap", gap: 4, marginBottom: SPACE[6],
+            }}>
+              {chips.map((chip) => (
+                <span key={chip} style={{
+                  ...GLASS_SOLID, padding: "2px 6px", fontFamily: MONO,
+                  fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase",
+                  border: "1px solid rgba(232,237,240,0.14)",
+                }}>{chip}</span>
+              ))}
+            </div>
           )}
           <div style={{ fontFamily: MONO, fontSize: 10, color: "var(--textTer)",
                         lineHeight: 1.8 }}>
@@ -1087,6 +1110,29 @@ export const Chat = () => {
               }} />
           ))}
 
+          {store.draftPending && !generating && (
+            // The writer drafted a scene and invited a "go" (Jesse,
+            // 2026-09-01: inline buttons after the system asks you
+            // something). Generate sends the accept - the 10.4 backstop
+            // guarantees a pure accept fires the pending draft; Something
+            // else sends a plain redirect the writer answers with a fresh
+            // take. Both are ordinary chat turns, visible in the lane, so
+            // the transcript stays honest. The strip keys off the server's
+            // own draft probe, broadcast at every turn end, and leaves the
+            // moment the draft fires, dies, or either button is pressed.
+            <div role="toolbar" aria-label="Drafted scene actions"
+              style={{ display: "flex", flexWrap: "wrap", gap: SPACE[8] }}>
+              <Pill primary onClick={() => send("go")}>
+                Generate
+                <ArrowRight size={13} weight="bold"
+                  style={{ color: "var(--accentInk)" }} />
+              </Pill>
+              <Pill onClick={() => send("Something else — pitch a different take.")}>
+                Something else
+              </Pill>
+            </div>
+          )}
+
           {onlyGreeting && !generating && lobby && (
             <div role="toolbar" aria-label="Prompt starters"
               style={{ display: "flex", flexWrap: "wrap", gap: SPACE[8] }}>
@@ -1472,8 +1518,14 @@ export const Chat = () => {
       {desktopLoraRail && (
         <aside aria-label="Model LoRA execution order" style={{
           position: "sticky", top: 0, alignSelf: "stretch",
-          width: vw < 1100 ? 288 : 320, height: "100%", flexShrink: 0,
-          boxSizing: "border-box", padding: SPACE[12], overflow: "hidden",
+          // +12 width carries the wider left padding so the chain's content
+          // column keeps its measured width (the narrowest in the app).
+          // 24 against the divider: the chain used to hug the rule at 12
+          // while the chat side kept a real gutter - the air around the
+          // line reads balanced now (Jesse, 2026-09-01).
+          width: vw < 1100 ? 300 : 332, height: "100%", flexShrink: 0,
+          boxSizing: "border-box", padding: SPACE[12],
+          paddingLeft: SPACE[24], overflow: "hidden",
           borderLeft: "1px solid var(--border)", zIndex: 4,
           // The chain owns the rail alone now: its cards carry the recipe
           // dials (9.23a), and the column flexes so the list keeps the

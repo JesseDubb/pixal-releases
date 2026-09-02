@@ -549,11 +549,12 @@ class H3Upscale2xSection(unittest.TestCase):
 
     def test_the_section_sits_in_finishing_right_after_the_upscaler(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
-        fin = video.index("<GroupLabel>finishing</GroupLabel>")
+        fin = video.index("<GroupLabel>Finishing</GroupLabel>")
         upscaler = video.index('<Section title={<>Upscaler', fin)
         # 10.0: the 2x default is a ROW now, immediately after the section
         nxt = video.index("<Field ", video.index("</Section>", upscaler))
-        self.assertIn("H3 2× upscale", video[nxt:nxt + 300],
+        # 2026-09-01: the factor renders as the little Chip, not label prose
+        self.assertIn("H3 <Chip>2×</Chip> upscale", video[nxt:nxt + 300],
                       "the row right after Upscaler is not the H3 2× one")
 
     def test_the_infotip_names_both_undiscoverable_facts(self):
@@ -578,7 +579,7 @@ class H3ResolutionSection(unittest.TestCase):
 
     def test_the_section_sits_next_to_the_2x_one(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
-        two_x = video.index('label={<>H3 2× upscale')
+        two_x = video.index('label={<>H3 <Chip>2×</Chip> upscale')
         nxt = video.index("<Field ", two_x + 1)
         self.assertIn("H3 resolution", video[nxt:nxt + 300],
                       "the row right after H3 2× upscale is not the "

@@ -34,6 +34,10 @@ const state = {
   // switch keys off THIS, never off the visible messages (switching chats
   // mid-render used to un-calm the UI and fight CUDA for the compositor).
   liveJobs: [],
+  // A drafted scene is waiting on a "go" (the server broadcasts this at
+  // every turn end, off the same probe as its accept backstop). While true
+  // the lane shows Generate / Something-else under the writer's invite.
+  draftPending: false,
 };
 
 function loadTheme() {
@@ -798,6 +802,10 @@ function onEvent(d) {
       if (d.text && d.text.trim())
         appendMsg({ id: cid(), role: "assistant", text: d.text, ts: d.ts });
       break;
+    case "draft":
+      state.draftPending = !!d.pending;
+      emit();
+      break;
     case "job":
       // a re-roll launched from the held card hands the lock to the child, so
       // lock -> adjust -> re-roll -> adjust again keeps the same dice throughout
@@ -806,6 +814,7 @@ function onEvent(d) {
         saveSeedLock();
       }
       state.liveJobs = [...state.liveJobs, d.job_id];
+      state.draftPending = false;      // the draft fired; the offer is spent
       appendMsg({
         id: cid(), role: "assistant", ts: d.ts,
         job: { job_id: d.job_id, template: d.template, scene: d.scene,
@@ -909,6 +918,10 @@ export const api = {
   get gpu() { return state.gpu; },
   get brain() { return state.brain; },
   get liveJobs() { return state.liveJobs; },
+  // The lane reads the store through these getters, never state directly -
+  // the draft flag shipped without one and the strip read undefined forever
+  // while the server was broadcasting true (2026-09-01, seq 690).
+  get draftPending() { return state.draftPending; },
   get scan() { return state.scan; },
   get history() { return state.history; },
   get options() { return state.options; },
@@ -1289,6 +1302,10 @@ export const api = {
   async sendChatMessage(convId, text, opts) {
     const t = (text || "").trim();
     if (!t) return;
+    // Optimistic: the buttons leave the moment either is pressed (or the
+    // user types their own turn); the server re-broadcasts the real state
+    // at turn end, so a still-pending draft brings them back honestly.
+    state.draftPending = false;
     appendMsg({ id: cid(), role: "user", text: t, ts: Date.now() / 1000 });
     if (opts) appendMsg({ id: cid(), role: "optsnote",
                           text: opts.summary || String(opts), ts: Date.now() / 1000 });

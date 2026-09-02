@@ -254,13 +254,23 @@ class TheRowBeat(unittest.TestCase):
         self.assertIn('marginLeft: "auto"', field)   # the right-hand rail
 
     def test_section_titles_take_the_cluster_register(self):
+        # 2026-09-01: the register lives in TITLE_STYLE, ONE style shared
+        # by Section titles and GroupLabel headings (Jesse: "why would you
+        # make a one off style") - so the literals are asserted there, and
+        # both consumers are asserted to reference it.
+        reg = _region(SRC, "const TITLE_STYLE", "const GroupLabel")
+        self.assertIn("fontSize: TYPE.micro", reg)
+        self.assertIn("fontWeight: W.nav", reg)
+        self.assertIn('"uppercase"', reg)
+        self.assertIn('"0.09em"', reg)
+        self.assertIn('"var(--textTer)"', reg)
+        self.assertIn('borderTop: "1px solid var(--border)"', reg)
         section = _region(SRC, "const Section", "const inputStyle")
-        self.assertIn("fontSize: TYPE.micro", section)
-        self.assertIn("fontWeight: W.nav", section)
-        self.assertIn('"uppercase"', section)
-        self.assertIn('"0.09em"', section)
-        self.assertIn('"var(--textTer)"', section)
-        self.assertIn('borderTop: "1px solid var(--border)"', section)
+        self.assertIn("TITLE_STYLE", section)
+        self.assertIn("<Hairline />", section)
+        group = _region(SRC, "const GroupLabel", "const Badge")
+        self.assertIn("TITLE_STYLE", group)
+        self.assertIn("<Hairline />", group)
 
     def test_rows_travel_in_named_runs(self):
         # consecutive rows touch; a run continuing its cluster after a

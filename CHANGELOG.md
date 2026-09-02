@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.1.9b — unreleased
+
+**NVIDIA DLSS 5 on finished stills — bring your own DLL.** A still can
+now take a pass through NVIDIA's DLSS 5 neural re-render on its way out:
+materials get relit and glare gets tamed at the same resolution, in
+about a second per frame. A style pick (default, natural, cinematic) and
+an intensity dial (1.0 is the shipped default) sit inline on the row,
+which wears NVIDIA's mark. Two things make it available and Pixal ships
+neither: the ComfyUI-DLSS5-NR node pack, and the DLSS DLL itself —
+NVIDIA has not released DLSS 5 publicly yet, so Pixal can neither
+bundle the runtime nor download it for you. What it can do is the
+annoying part: press **Add DLL** on the row, pick your own
+`nvngx_dlssnr.dll` (about 158 MB), and Pixal seats it in the node's
+runtime folder and checks it by SHA-256 — the known 310.8.0.0 build
+reads "verified", anything else is seated with an honest "unrecognized
+build, may not run". Until both halves are in place the switch disables
+and the row names whichever half is missing. Off by default; a pass
+that times out cancels itself cleanly instead of leaving a stuck job
+behind.
+
+**One "Post processing" group in Settings → Image.** DLSS 5, film
+grain and shine removal were split across two clusters; they are one
+group now, since they are one chain — DLSS 5 re-renders first, shine
+removal pulls the hot spots down, grain lands last after any upscale.
+
+**Scale factors read as chips.** Wherever the app used to write "2x" or
+"4x" into a label — the PiD upscaler, the LTX 2.5 clip re-render, the H3
+2× rows in Settings and the Animate dialog — the factor now rides in the
+same little scale chip the upscale-model picker already used.
+
+**A finished still says what touched it.** Hover a render in the chat and
+a row of small chips fades in over the frame — DLSS 5, Matte skin,
+Upscaled, Film grain — one for each pass that actually ran on those
+pixels, in the order it ran. The same chips sit in the lightbox's
+lower-left readout, which now also prints the sampler schedule the frame
+was made with: sampler, scheduler, steps and cfg, the line the card
+already carried. The chips read the render's own record, never your
+Settings, so a picture made before you switched grain on stays honest.
+The first cut of the hover chips missed most fresh renders (the card
+learned the finish chain only after a reload); that is fixed.
+
+**Generate / Something else.** When the brain drafts a scene and asks you
+to say go, two buttons now sit under its message. **Generate** fires the
+draft; **Something else** asks for a different take. Both are ordinary
+chat turns and show up in the lane as such.
+
+**Smaller.** Settings group headings share one register with the section
+titles. The edit button on a card wears a paintbrush. The LoRA rail
+beside the chat got the same breathing room against its divider that
+the chat side already had.
+
 ## 1.1.8b — 2026-09-01
 
 **Re-rolling a picture stops reloading everything.** Ask for the same

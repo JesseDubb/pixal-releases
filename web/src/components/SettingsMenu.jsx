@@ -14,6 +14,7 @@ import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/de
 import { Lockup } from "../lib/Lockup.jsx";
 import { ModalShell, OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { Picker } from "../lib/Picker.jsx";
+import { Chip } from "../lib/Chip.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { Switch } from "../lib/Switch.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
@@ -54,14 +55,16 @@ const VSR_DEFAULT_MODE = "VSR High";
 //
 // Rows always travel in a named run (Rows / px-set-rows): the scroll
 // container gaps every direct child 32, so unwrapped rows would read as
-// clusters of one. The asymmetry that mattered survives: 12 under a
+// clusters of one. The asymmetry that mattered survives: 8 under a
 // heading against 48 above it means the heading still opens what follows
-// instead of floating between two groups. The offsets are relative to the
+// instead of floating between two groups - and 8 is the SAME air a
+// Section title keeps above its rows, because heading and title share one
+// register now (Jesse, 2026-09-01). The offsets are relative to the
 // container's own 32px gap.
 const CSS = `
 .px-set-group { margin-top: 16px; }
 .px-set > .px-set-group:first-child { margin-top: 0; }
-.px-set > .px-set-group + * { margin-top: -20px; }
+.px-set > .px-set-group + * { margin-top: -24px; }
 .px-set > .px-set-rows--cont { margin-top: -16px; }
 `;
 
@@ -288,13 +291,9 @@ const PickRow = ({ selected, onClick, children, title }) => (
   >{children}</button>
 );
 
-const Chip = ({ children }) => (
-  <span style={{
-    flexShrink: 0, fontFamily: MONO, fontSize: 9, padding: "1px 6px",
-    borderRadius: RADIUS.pill, background: "var(--bg3)",
-    border: "1px solid var(--border)", color: "var(--textTer)",
-  }}>{children}</span>
-);
+// The little badge (the pickers' "4×" scale chip) lives in lib/Chip.jsx
+// now — shared with SegmentedControl options and the Animate dialog, so a
+// factor never renders as prose in one surface and a chip in another.
 
 // ── the search (brief 10.0) ───────────────────────────────────────────────
 // The header field filters THIS tab: a case-insensitive match on section
@@ -369,10 +368,24 @@ const Rows = ({ cont, children }) => (
        style={{ display: "flex", flexDirection: "column" }}>{children}</div>
 );
 
+// THE one heading register (Jesse, 2026-09-01: "why would you make a one
+// off style") - TYPE.micro, W.nav, uppercase, .09em tracking, textTer,
+// the hairline running right. Section titles and cluster GroupLabels both
+// render it; neither carries a private look.
+const TITLE_STYLE = {
+  fontSize: TYPE.micro, fontWeight: W.nav, fontFamily: FONT,
+  color: "var(--textTer)", textTransform: "uppercase",
+  letterSpacing: "0.09em", whiteSpace: "nowrap",
+};
+const Hairline = () => (
+  <span aria-hidden="true" style={{ flex: 1, borderTop: "1px solid var(--border)" }} />
+);
+
 // Cluster heading inside a tab - the information architecture the flat wall
-// of Sections was missing. 10.0 gave it the mockup's card-title register
-// (13/600, no hairline - the Section titles carry the rule now); `badge`
-// slots at the right edge (the Models tab's family state).
+// of Sections was missing. Same register as the Section titles (TITLE_STYLE
+// + the hairline); what separates a cluster heading is its 48px of air
+// above (the rhythm CSS), not a different look. `badge` slots at the right
+// edge (the Models tab's family state).
 const GroupLabel = ({ children, badge }) => {
   const q = useContext(SettingsQuery);
   // Searching flattens the panel to matching rows; a heading whose group
@@ -381,8 +394,8 @@ const GroupLabel = ({ children, badge }) => {
   return (
     <div className="px-set-group"
          style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-      <span style={{ fontSize: TYPE.body, fontWeight: W.heading, fontFamily: FONT,
-                     color: "var(--text)", whiteSpace: "nowrap" }}>{children}</span>
+      <span style={TITLE_STYLE}>{children}</span>
+      <Hairline />
       {badge}
     </div>
   );
@@ -587,15 +600,13 @@ const Section = ({ title, gloss, children }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: SPACE[8] }}>
       <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-        <span style={{ fontSize: TYPE.micro, fontWeight: W.nav, fontFamily: FONT,
-                       color: "var(--textTer)", textTransform: "uppercase",
-                       letterSpacing: "0.09em", whiteSpace: "nowrap" }}>{title}</span>
+        <span style={TITLE_STYLE}>{title}</span>
         {gloss && (
           <span style={{ fontSize: TYPE.label, fontWeight: W.label, fontFamily: FONT,
                          color: "var(--textTer)", whiteSpace: "nowrap", minWidth: 0,
                          overflow: "hidden", textOverflow: "ellipsis" }}>{gloss}</span>
         )}
-        <span aria-hidden="true" style={{ flex: 1, borderTop: "1px solid var(--border)" }} />
+        <Hairline />
       </div>
       {children}
     </div>
@@ -670,6 +681,31 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [note, setNote] = useState(null);
   const [upd, setUpd] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The DLSS runtime seat (Jesse, 2026-09-01): Pixal can neither ship nor
+  // fetch the DLL (no legal source exists until NVIDIA releases DLSS 5),
+  // so the row offers the next best thing - pick your own copy and the
+  // server seats it in the node's runtime folder, sha-checked.
+  const [dllBusy, setDllBusy] = useState(false);
+  const dllInputRef = useRef(null);
+  const seatDll = async (file) => {
+    if (!file) return;
+    setDllBusy(true); setNote(null);
+    try {
+      const form = new FormData();
+      form.append("dll", file, file.name);
+      const r = await fetch("/api/dlss5/dll", { method: "POST", body: form });
+      const d = await r.json();
+      if (d.ok) {
+        setStillCfg((s) => ({ ...(s || {}), dlss5_available: true, dlss5_dll: true }));
+        setNote(d.verified
+          ? { ok: true, text: `DLSS 5 runtime verified — ${d.version}` }
+          : { ok: true, text: "runtime seated — unrecognized build, may not run" });
+      } else {
+        setNote({ ok: false, text: d.error || "failed" });
+      }
+    } catch (e) { setNote({ ok: false, text: e.message }); }
+    setDllBusy(false);
+  };
   const [comfyBusy, setComfyBusy] = useState(false);
   // The brain's idle window (9.46): minutes before the local brain unloads
   // itself. 0 = Never, it stays resident.
@@ -1007,7 +1043,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         display: "flex", flexDirection: "column", gap: SPACE[32],
       }}>
         {tab === "general" && (<>
-        <GroupLabel>the app</GroupLabel>
+        <GroupLabel>The app</GroupLabel>
         <Rows>
           <Field label="Appearance" hint="System follows Windows.">
             <SegmentedControl variant="pill" ariaLabel="Appearance" value={store.themePref}
@@ -1039,7 +1075,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Field>
         </Rows>
 
-        <GroupLabel>this machine</GroupLabel>
+        <GroupLabel>This machine</GroupLabel>
         <Section title={<>Compute <InfoTip text="The ComfyUI box that renders. Another rig's address borrows its GPU. Restart is for the state no endpoint can fix." /></>}>
           <input style={inputStyle} value={comfyUrl}
                  autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
@@ -1254,7 +1290,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </>)}
 
         {tab === "video" && (<>
-        <GroupLabel>defaults</GroupLabel>
+        <GroupLabel>Defaults</GroupLabel>
                 <Rows>
 <Field label={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}
                  hint="Which engine the popup opens on.">
@@ -1328,7 +1364,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Field>
         </Rows>
-        <GroupLabel>finishing</GroupLabel>
+        <GroupLabel>Finishing</GroupLabel>
         <Section title={<>Upscaler <InfoTip text="The upscale button on finished clips." /></>}>
           {/* Two different things, not one five-step ladder. RTX Super
               Resolution is NVIDIA's image-space filter and its Low..Ultra are
@@ -1359,7 +1395,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                     title: upscale.video_available
                       ? "NVIDIA RTX Super Resolution"
                       : "RTX Super Resolution - install the Deno RTX VFX node pack" },
-                  { v: "ltx", label: "LTX 2.5 2×", Icon: LightricksMark,
+                  { v: "ltx", label: "LTX 2.5", chip: "2×", Icon: LightricksMark,
                     disabled: !upscale.ltx25_video_available,
                     title: upscale.ltx25_video_available
                       ? "Lightricks LTX 2.5, 2× re-render"
@@ -1421,7 +1457,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Section>
         <Rows cont>
-          <Field label={<>H3 2× upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
+          <Field label={<>H3 <Chip>2×</Chip> upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
                  hint={videoCfg && !videoCfg.upscale_2x_available
                    ? "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."
                    : "The popup still decides per clip — this sets the default."}>
@@ -1480,7 +1516,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </>)}
 
         {tab === "image" && (<>
-        <GroupLabel>model choices</GroupLabel>
+        <GroupLabel>Model choices</GroupLabel>
         <Rows>
           <Field label={<>Z-Image decoder <InfoTip text="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Applies to Z-Image renders only — the clear-anime profile keeps its own matched VAE either way." /></>}
                  hint="Sharper drop-in; can over-sharpen on one pass.">
@@ -1637,14 +1673,100 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Rows>
           )}
         </Section>
-        <GroupLabel>finishing</GroupLabel>
-        {/* 10.1: film grain holds the seat skin1x had (retired by Jesse's
-            eye - it read as skin only on close portraits). The judged dewax
-            recipe, applied to the delivered frame after shine removal:
-            seeded from the render, so a re-render lands identically. */}
+        <GroupLabel>Post processing</GroupLabel>
+        {/* One group for the whole delivered-frame chain (Jesse,
+            2026-09-01: DLSS 5, film grain and shine removal all belong
+            under post processing - the dlss 5 and finishing labels merged
+            here). Every row keeps the grain row's exact 34px beat: inline
+            value controls appear only while their toggle is on. DLSS 5
+            unavailable (node or runtime DLL missing) follows the H3 2x
+            idiom - the switch disables with a truthful one-fact subline,
+            not a perpetual loading ghost. */}
         <Rows>
           {stillCfg ? (
             <>
+            <Field className="px-ghost-in" label={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><NvidiaAccent size={13} /> DLSS 5 <InfoTip text="Runs the finished still through NVIDIA's DLSS 5 neural re-render — relights materials and tames glare at the same resolution. Applied first, before shine removal and grain. Needs the ComfyUI-DLSS5-NR node pack plus a DLSS DLL you supply yourself — NVIDIA has not released it publicly, so Pixal can neither ship nor download it. Add DLL copies your own nvngx_dlssnr.dll (about 158 MB) into the node's runtime folder and verifies it by SHA-256 against the known 310.8.0.0 build; an unrecognized build is seated anyway and may not run." /></span>}
+                   hint={stillCfg.dlss5_available ? undefined
+                     : stillCfg.dlss5_node ? "Bring your own nvngx_dlssnr.dll · 158 MB"
+                     : "Install the ComfyUI-DLSS5-NR node pack"}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {!stillCfg.dlss5_available && stillCfg.dlss5_node ? (
+                  <>
+                    <input ref={dllInputRef} type="file" accept=".dll" hidden
+                      onChange={(e) => {
+                        seatDll(e.target.files && e.target.files[0]);
+                        e.target.value = "";
+                      }} />
+                    <button type="button" disabled={dllBusy}
+                      title="Copies your own nvngx_dlssnr.dll into the node's runtime folder, SHA-256 checked against the known 310.8.0.0 build."
+                      onClick={() => dllInputRef.current && dllInputRef.current.click()}
+                      style={{ height: 24, padding: "0 10px",
+                               background: "var(--bg3)",
+                               border: "1px solid var(--border)",
+                               borderRadius: RADIUS.pill, color: "var(--textSec)",
+                               fontFamily: FONT, fontSize: TYPE.label,
+                               fontWeight: W.nav,
+                               cursor: dllBusy ? "default" : "pointer" }}>
+                      {dllBusy ? "checking…" : "Add DLL"}
+                    </button>
+                  </>
+                ) : null}
+                {stillCfg.dlss5 && stillCfg.dlss5_available ? (
+                  <>
+                    <select value={stillCfg.dlss5_style ?? "default"}
+                      aria-label="DLSS 5 style"
+                      title="The re-render's grade."
+                      style={{ height: 24, padding: "0 8px",
+                               background: "var(--bg3)",
+                               border: "1px solid var(--border)",
+                               borderRadius: RADIUS.pill, color: "var(--text)",
+                               fontFamily: FONT, fontSize: TYPE.label,
+                               fontWeight: W.nav }}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setStillCfg((s) => ({ ...(s || {}), dlss5_style: v }));
+                        apply({ still: { dlss5_style: v } }, "DLSS 5 style");
+                      }}>
+                      <option value="default">default</option>
+                      <option value="natural">natural</option>
+                      <option value="cinematic">cinematic</option>
+                    </select>
+                    <input type="number" step="0.05" min="0" max="2"
+                      value={stillCfg.dlss5_intensity ?? 1.0}
+                      aria-label="DLSS 5 intensity"
+                      title="Re-render strength. 1.0 is the shipped default."
+                      style={{ width: 52, height: 24, padding: "0 8px",
+                               background: "var(--bg3)",
+                               border: "1px solid var(--border)",
+                               borderRadius: RADIUS.pill, color: "var(--text)",
+                               fontFamily: FONT, fontSize: TYPE.label,
+                               fontWeight: W.nav, textAlign: "center" }}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        setStillCfg((s) => ({ ...(s || {}), dlss5_intensity: v }));
+                        apply({ still: { dlss5_intensity: v } }, "DLSS 5 intensity");
+                      }} />
+                  </>
+                ) : null}
+                <Switch label="Nvidia DLSS 5"
+                  on={stillCfg.dlss5}
+                  disabled={!stillCfg.dlss5_available}
+                  title={stillCfg.dlss5_available
+                    ? "Neural re-render on the finished still, before shine removal and grain."
+                    : "Needs the node pack + your own DLL"}
+                  onChange={(on) => {
+                    setStillCfg((s) => ({ ...(s || {}), dlss5: on }));
+                    apply({ still: { dlss5: on } },
+                          on ? "DLSS 5 on" : "DLSS 5 off");
+                  }} />
+              </span>
+            </Field>
+            {/* 10.1: film grain holds the seat skin1x had (retired by
+                Jesse's eye - it read as skin only on close portraits). The
+                judged dewax recipe, applied to the delivered frame after
+                shine removal: seeded from the render, so a re-render lands
+                identically. */}
             <Field className="px-ghost-in" label={<>Film grain <InfoTip text="A fine monochrome grain over finished stills — the judged recipe from the de-wax session, strongest in the midtones the way negative film behaves. Seeded from the render, so re-renders match. It is the last thing applied, after shine removal and any upscale." /></>}>
               {/* No hint: the tip carries the rule; the amount input only
                   appears once the toggle is on - one row, the 34px beat. */}
@@ -1698,6 +1820,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </>
           ) : (
             <>
+              <Field label={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><NvidiaAccent size={13} /> DLSS 5</span>}>
+                <SwitchGhost />
+              </Field>
               <Field label="Film grain">
                 <SwitchGhost />
               </Field>
@@ -1737,7 +1862,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   }}
                   options={[
                     { v: "model", label: "Upscale" },
-                    { v: "pid", label: "PiD 4×", Icon: NvidiaAccent,
+                    { v: "pid", label: "PiD", chip: "4×", Icon: NvidiaAccent,
                       disabled: upscale.pid_available === false,
                       title: upscale.pid_available === false
                         ? "install the ComfyUI-PiD node pack" : undefined },
@@ -1823,7 +1948,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 }}
                 options={[
                   { v: false, label: "Wan VAE" },
-                  { v: true, label: "PiD 4×", Icon: NvidiaAccent,
+                  { v: true, label: "PiD", chip: "4×", Icon: NvidiaAccent,
                     disabled: pidCfg.decode_available === false,
                     title: pidCfg.decode_available === false
                       ? "install the ComfyUI-PiD node pack" : undefined },
@@ -1839,7 +1964,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         {/* 9.30 — the library. Read-only on purpose: it is the surface that
             finally shows the user what they own and what each thing can and
             cannot do here; the choosing stays on the medium tabs. */}
-        <GroupLabel>what you own</GroupLabel>
+        <GroupLabel>What you own</GroupLabel>
         <Section title={<>The library <InfoTip text="A profile is what Pixal knows about a file — its family, its variant, and the lanes it can run — and a LoRA without one is skipped at render time rather than stacked blindly." /></>}
                  gloss={store.options ? (
                    <span className="px-ghost-in">{`${lib.length} models · ${libLoras.length} LoRAs · ${unprofiled} have no profile`}</span>
@@ -1899,7 +2024,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </>)}
 
         {tab === "brain" && (<>
-        <GroupLabel>chat</GroupLabel>
+        <GroupLabel>Chat</GroupLabel>
         <Section title={<>Chat brain <InfoTip text="The AI you talk to — it writes the prompts and drives ComfyUI. Local runs entirely on this PC; Pixal starts and stops it for you." /></>}>
           {/* API | Local swaps the whole panel below it — a control that
               changes what else is on the screen is navigation, so it wears
@@ -2098,7 +2223,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Field>
         </Rows>
 
-        <GroupLabel>vision</GroupLabel>
+        <GroupLabel>Vision</GroupLabel>
         {/* This section used to read "Image reviewer" over the ComfyUI picker
             with no mention of the brain, so it looked like the picked model
             was doing the reviewing. It is not: brain_vl_read gets first

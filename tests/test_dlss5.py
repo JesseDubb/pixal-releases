@@ -456,7 +456,7 @@ class ChainOrderTests(unittest.TestCase):
             # de-shine records itself since the hover chips (2026-09-01):
             # the chain reads in run order, dlss5 -> deshine -> grain
             self.assertEqual(job["info"]["finish"],
-                             "dlss5@default+deshine+grain@1.6")
+                             "dlss5@default+deshine@0.85+grain@1.6")
 
     def test_the_tag_records_the_style_and_a_non_default_intensity(self):
         with TemporaryDirectory() as td:

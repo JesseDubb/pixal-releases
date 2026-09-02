@@ -213,11 +213,13 @@ def main():
     got = replay(TURN6 + COMPOSER, [], enhance=True)
     ok("enhance ON still consults the brain", "tools" in got)
 
-    # Iteration must NOT bypass - the change has to be merged into the prior scene.
+    # 10.10 (Jesse, 2026-09-02): "I do not want that when it is off - I want
+    # direct to text encoder!" Iteration words are no exception any more:
+    # with enhance OFF nothing pays a brain round, whatever the turn says.
     got = replay("make her jacket red" + COMPOSER,
                  [{"role": "user", "content": TURN6 + COMPOSER}])
-    ok("iteration is not passed through as the whole prompt",
-       got.get("scene") != "make her jacket red", repr(got.get("scene")))
+    ok("enhance OFF never calls the brain, even on iteration words",
+       "tools" not in got, repr(got.get("tools")))
 
     # The local lane must keep generate even on a turn scored as conversation.
     if server.load_config()["llm"]["base_url"].find("127.0.0.1") >= 0:
@@ -523,8 +525,9 @@ class ProseRescueOnlyWithEnhance(unittest.TestCase):
         self.assertEqual(submitted, [self.CLEAN])
 
     def test_enhance_off_never_reaches_scene_from_prose(self):
-        # An iteration turn, so the enhance-off fast path holds back and the
-        # 18605 branch is the one exercised.
+        # 10.10: an iteration turn no longer holds the fast path back, so the
+        # prose rescue is never reached at all with enhance OFF - neither
+        # helper runs, the typed words go straight to submit.
         convo = [{"role": "user", "content": TURN6 + COMPOSER}]
         with patch.object(server, "_scene_from_prose",
                           side_effect=AssertionError(
@@ -533,8 +536,8 @@ class ProseRescueOnlyWithEnhance(unittest.TestCase):
                              return_value="the user's own words") as dps:
             submitted = self._replay("make her jacket red" + COMPOSER, convo,
                                      False, self.PROSE)
-        self.assertTrue(dps.called)
-        self.assertEqual(submitted, ["the user's own words"])
+        self.assertFalse(dps.called)
+        self.assertEqual(submitted, ["make her jacket red"])
 
 
 class ACritiqueIsNotACaption(unittest.TestCase):
@@ -587,13 +590,23 @@ class ACritiqueIsNotACaption(unittest.TestCase):
             server.HUB.submit, server.llm_call, server.HUB.broadcast = real
         return submitted, tool_lists
 
-    def test_the_incident_replay_a_redirect_never_queues_verbatim(self):
+    def test_the_incident_replay_a_redirect_renders_verbatim_with_enhance_off(self):
+        # 10.10 reverses the enhance-OFF half of 10.3 on Jesse's word: OFF
+        # means no brain, so a critique typed with the writer off IS the
+        # prompt. The merge lives on the enhance-ON path (next test).
         convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
                  {"role": "assistant", "content": self.DRAFT}]
         submitted, tool_lists = self._replay(
             self.CRITIQUE + COMPOSER, convo, enhance=False)
-        self.assertEqual(submitted, [],
-                         "the critique was queued as a caption")
+        self.assertEqual(submitted, [self.CRITIQUE])
+        self.assertEqual(tool_lists, [], "enhance OFF never pays a brain call")
+
+    def test_a_redirect_with_enhance_on_still_goes_to_the_brain(self):
+        convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
+                 {"role": "assistant", "content": self.DRAFT}]
+        submitted, tool_lists = self._replay(
+            self.CRITIQUE + COMPOSER, convo, enhance=True)
+        self.assertEqual(submitted, [], "the critique was queued as a caption")
         self.assertTrue(tool_lists, "the redirect never reached the brain")
         self.assertIn("generate", tool_lists[0],
                       "the redirect must still OFFER the tool")
@@ -636,10 +649,12 @@ class ACritiqueIsNotACaption(unittest.TestCase):
         self.assertIn(
             "render_intent = user_wants_render(_utext, "
             "conversation_has_visual(convo))", src)
-        # and the direct gate no longer reads the composite
-        self.assertIn("and (direct_intent or enhance_off_is_prompt(_utext))",
-                      src)
+        # and the direct gate reads no intent score at all any more (10.10):
+        # enhance OFF is the whole gate, a pure accept of a draft the only
+        # exception
+        self.assertIn("if not prompt_enhance:   # OFF now means off", src)
         self.assertNotIn("and (render_intent or enhance_off_is_prompt", src)
+        self.assertNotIn("and (direct_intent or enhance_off_is_prompt", src)
 
 
 class AnAcceptedDraftAlwaysFires(unittest.TestCase):
@@ -700,7 +715,9 @@ class AnAcceptedDraftAlwaysFires(unittest.TestCase):
         self.assertIn("lime-green supercar", submitted[0])
         self.assertNotIn("Say go", submitted[0],
                          "the invite tail must be stripped")
-        self.assertIn("generate", tool_lists[0])
+        # 10.7: the accept never reaches the brain - the apology round this
+        # replay queued up is never consumed (tests/test_accept_fires_mechanically.py)
+        self.assertEqual(tool_lists, [])
 
     def test_the_cascade_render_it_still_sees_the_buried_draft(self):
         """After a short apology turn the draft is no longer the newest
@@ -727,17 +744,21 @@ class AnAcceptedDraftAlwaysFires(unittest.TestCase):
              {"role": "assistant", "content": "Fired!"}])
         self.assertEqual(len(submitted), 1, "backstop double-queued the draft")
 
-    def test_a_rewritten_scene_this_round_wins_over_the_old_draft(self):
-        """When the accept round's own reply IS a scene, the brain rewrote
-        the draft - render its version, not the stale one."""
+    def test_a_go_renders_the_draft_the_user_read_not_a_silent_rewrite(self):
+        """10.4 let the brain's own rewrite win when the accept round came
+        back as a scene. 10.7 removes that round: "go" means the draft the
+        user just read, and a brain that would have quietly recoloured it
+        is never asked. A redirect ("make it sunset orange") is still the
+        brain's merge - that is the other test class."""
         rewrite = self.DRAFT.replace("lime-green", "sunset-orange")
         convo = [{"role": "user", "content": "zara by a supercar" + COMPOSER},
                  {"role": "assistant", "content": self.DRAFT}]
-        submitted, _ = self._replay(
+        submitted, tool_lists = self._replay(
             "go" + COMPOSER, convo,
             [{"role": "assistant", "content": rewrite}])
         self.assertEqual(len(submitted), 1)
-        self.assertIn("sunset-orange", submitted[0])
+        self.assertIn("lime-green", submitted[0])
+        self.assertEqual(tool_lists, [])
 
 
 class PendingSceneWalk(unittest.TestCase):

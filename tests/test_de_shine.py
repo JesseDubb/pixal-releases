@@ -5,8 +5,9 @@ Settings toggle. The doc's own words were "No home. It is numpy operating on
 a decoded frame"; the home it got is the Hub's delivery chokepoint, where it
 runs on every still lane's decoded frame before any upscale pass can read
 the file. Jesse judged the chain at 1:1 on 2026-08-31 and asked for the
-gentler shipped defaults: strength 0.55 at the 93rd percentile (the doc's
-0.85 / 88th stay reachable as arguments).
+gentler 0.55 / 93rd while it was a whole-frame pass; 10.8 confined it to
+the face and the doc's 0.85 / 88th became the default (the gentle pair
+stays reachable as constants).
 
 What these tests pin:
 
@@ -165,25 +166,106 @@ class DeShineAlgorithmTests(unittest.TestCase):
         self.assertLess(drops[0], drops[1])
         self.assertLess(drops[1], drops[2])
 
-    def test_the_shipped_defaults_are_055_at_the_93rd(self):
+    def test_the_shipped_defaults_are_the_docs_085_at_the_88th(self):
+        # 10.8: face-masked, the doc's setting is the one Jesse judged on
+        # the back-seat frame ("so much better"); the 0.55 / 93rd pair that
+        # shipped for the whole-frame pass stays reachable as constants.
         sig = inspect.signature(server.de_shine)
-        self.assertEqual(sig.parameters["strength"].default, 0.55)
-        self.assertEqual(sig.parameters["percentile"].default, 93.0)
-        self.assertEqual(server.DE_SHINE_STRENGTH, 0.55)
-        self.assertEqual(server.DE_SHINE_PERCENTILE, 93.0)
-        # the doc's numbers stay reachable as arguments, pinned as constants
-        self.assertEqual(server.DE_SHINE_DOC_STRENGTH, 0.85)
-        self.assertEqual(server.DE_SHINE_DOC_PERCENTILE, 88.0)
-        # and the shipped setting is strictly gentler on the same frame
+        self.assertEqual(sig.parameters["strength"].default, 0.85)
+        self.assertEqual(sig.parameters["percentile"].default, 88.0)
+        self.assertEqual(server.DE_SHINE_STRENGTH, server.DE_SHINE_DOC_STRENGTH)
+        self.assertEqual(server.DE_SHINE_PERCENTILE, server.DE_SHINE_DOC_PERCENTILE)
+        self.assertEqual(server.DE_SHINE_GENTLE_STRENGTH, 0.55)
+        self.assertEqual(server.DE_SHINE_GENTLE_PERCENTILE, 93.0)
+        # and the gentle pair darkens strictly less on the same frame
         im = face()
-        gentle, _ = server.de_shine(im)
-        strong, _ = server.de_shine(
-            im, strength=server.DE_SHINE_DOC_STRENGTH,
-            percentile=server.DE_SHINE_DOC_PERCENTILE)
+        strong, _ = server.de_shine(im)
+        gentle, _ = server.de_shine(
+            im, strength=server.DE_SHINE_GENTLE_STRENGTH,
+            percentile=server.DE_SHINE_GENTLE_PERCENTILE)
         drop_g = (arr(im) - arr(gentle)).clip(0).sum()
         drop_s = (arr(im) - arr(strong)).clip(0).sum()
         self.assertGreater(drop_g, 0)
         self.assertLess(drop_g, drop_s)
+
+
+class FaceMaskTests(unittest.TestCase):
+    """10.8: the pass stays inside the face. Jesse (2026-09-02): the
+    chrominance mask alone reached arms, chests and hands. A face box from
+    the ultralytics finder narrows it; the three states of `faces` mean
+    three different things and each is pinned here."""
+
+    def two_faces(self):
+        # the synthetic face on the left, a second skin blob (an "arm")
+        # on the right with its own hot patch, same chroma
+        im = face(size=160)
+        a = np.asarray(im).copy()
+        tone = np.array((190, 140, 110), np.uint8)
+        a[130:160, 115:160] = tone
+        a[135:143, 125:150] = (tone + (55, 45, 35)).clip(0, 255)
+        return Image.fromarray(a)
+
+    def test_a_face_box_leaves_skin_outside_it_untouched(self):
+        src = self.two_faces()
+        out, covered = server.de_shine(src, faces=[(35.0, 20.0, 105.0, 95.0)])
+        before, after = arr(src), arr(out)
+        self.assertGreater(covered, 0.0)
+        # the face's hot patch darkened...
+        self.assertLess(after[30:46, 88:118].sum(), before[30:46, 88:118].sum())
+        # ...the arm's hot patch is byte-identical
+        self.assertTrue((after[130:160, 115:160] == before[130:160, 115:160]).all())
+
+    def test_the_percentile_is_measured_on_the_face_alone(self):
+        # a brighter arm must not set the threshold and blind the face
+        src = self.two_faces()
+        a = np.asarray(src).copy()
+        a[130:160, 115:160] = (250, 190, 150)
+        src = Image.fromarray(a)
+        out, _ = server.de_shine(src, faces=[(35.0, 20.0, 105.0, 95.0)])
+        self.assertLess(arr(out)[30:46, 88:118].sum(), arr(src)[30:46, 88:118].sum())
+
+    def test_no_face_found_returns_the_frame_untouched(self):
+        src = face()
+        out, covered = server.de_shine(src, faces=[])
+        self.assertEqual(covered, 0.0)
+        self.assertTrue((arr(out) == arr(src)).all())
+
+    def test_no_finder_falls_back_to_the_whole_frame(self):
+        src = self.two_faces()
+        out, _ = server.de_shine(src, faces=None)
+        before, after = arr(src), arr(out)
+        self.assertLess(after[135:143, 125:150].sum(), before[135:143, 125:150].sum())
+
+    def test_face_mask_is_a_soft_ellipse_grown_past_the_box(self):
+        m = np.asarray(server.face_mask((200, 200), [(60.0, 60.0, 140.0, 140.0)]))
+        self.assertEqual(m[100, 100], 255)            # centre
+        self.assertGreater(m[100, 54], 0)             # grown past the box edge
+        self.assertEqual(m[10, 10], 0)                # far corner clear
+        self.assertTrue(0 < m[100, 150] < 255)        # feathered edge
+
+    def test_find_faces_is_none_without_a_model_file(self):
+        with TemporaryDirectory() as td, \
+                patch.object(server, "CDIR", Path(td)):
+            self.assertIsNone(server.find_faces(Path(td) / "x.png"))
+
+    def test_find_faces_parses_the_subprocess_and_never_raises(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "models" / "ultralytics" / "bbox").mkdir(parents=True)
+            (root / "models" / "ultralytics" / "bbox" / "Face.pt").write_bytes(b"x")
+            ok = type("P", (), {"returncode": 0, "stdout": "noise\n[[1, 2, 30, 40, 0.9]]\n",
+                                "stderr": ""})()
+            with patch.object(server, "CDIR", root), \
+                    patch.object(server.subprocess, "run", return_value=ok):
+                self.assertEqual(server.find_faces(root / "x.png"),
+                                 [(1.0, 2.0, 30.0, 40.0)])
+            bad = type("P", (), {"returncode": 1, "stdout": "", "stderr": "boom"})()
+            with patch.object(server, "CDIR", root), \
+                    patch.object(server.subprocess, "run", return_value=bad):
+                self.assertIsNone(server.find_faces(root / "x.png"))
+            with patch.object(server, "CDIR", root), \
+                    patch.object(server.subprocess, "run", side_effect=OSError("no exe")):
+                self.assertIsNone(server.find_faces(root / "x.png"))
 
 
 def _write_png(path, im):
@@ -289,6 +371,60 @@ def full_cfg(still=None):
             "still": still or {}, "extra_model_roots": [],
             "comfy_editor": False, "comfy_console": "tui",
             "explicit": "auto", "vram_profile": "auto"}
+
+
+class StrengthDialTests(unittest.TestCase):
+    """10.9: the one exposed de-shine dial, the film_grain_amount contract."""
+
+    def test_resolver_defaults_and_clamps(self):
+        with patch.object(server, "load_config", return_value={"still": {}}):
+            self.assertEqual(server.still_de_shine_strength(), 0.85)
+        for stored, want in ((0.5, 0.5), (0.0, 0.1), (3.0, 1.0), ("nan", 0.85),
+                             ("x", 0.85), (None, 0.85)):
+            with patch.object(server, "load_config",
+                              return_value={"still": {"de_shine_strength": stored}}):
+                self.assertEqual(server.still_de_shine_strength(), want, stored)
+
+    def test_settings_round_trip_clamp_and_rejection(self):
+        saved = []
+        with patch.object(server, "load_config", return_value=full_cfg()),              patch.object(server, "model_catalog", return_value=[]),              patch.object(server, "_video_asset", side_effect=lambda _k, rel: rel),              patch.object(server, "refresh_comfy_nodes", AsyncMock()),              patch.object(server, "save_config",
+                          side_effect=lambda c: saved.append(c)):
+            post = asyncio.run(server.settings_post(
+                FakeRequest({"still": {"de_shine_strength": 0.6}})))
+            self.assertEqual(post.status, 200)
+            self.assertEqual(saved[-1]["still"]["de_shine_strength"], 0.6)
+            asyncio.run(server.settings_post(
+                FakeRequest({"still": {"de_shine_strength": 5}})))
+            self.assertEqual(saved[-1]["still"]["de_shine_strength"], 1.0)
+            bad = asyncio.run(server.settings_post(
+                FakeRequest({"still": {"de_shine_strength": "wide"}})))
+            self.assertEqual(bad.status, 400)
+        with patch.object(server, "load_config",
+                          return_value=full_cfg({"de_shine_strength": 0.7})),              patch.object(server, "model_catalog", return_value=[]),              patch.object(server, "_video_asset", side_effect=lambda _k, rel: rel),              patch.object(server, "refresh_comfy_nodes", AsyncMock()):
+            response = asyncio.run(server.settings_get(FakeRequest({})))
+        self.assertEqual(json.loads(response.text)["still"]["de_shine_strength"], 0.7)
+
+    def test_delivery_uses_the_dial_and_records_it(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "output").mkdir()
+            _write_png(root / "output" / "still.png", face())
+            seen = {}
+            real = server.de_shine
+
+            def spy(im, **kw):
+                seen.update(kw)
+                return real(im, **kw)
+            hub = object.__new__(server.Hub)
+            hub.broadcast = lambda **kw: None
+            job = {"id": "job0001", "template": "realism", "seen": set(),
+                   "images": [], "info": {}}
+            cfg = {"still": {"de_shine": True, "de_shine_strength": 0.6}}
+            with patch.object(server, "CDIR", root),                  patch.object(server, "de_shine", side_effect=spy),                  patch.object(server, "load_config", return_value=cfg):
+                hub.add_image(job, {"filename": "still.png", "subfolder": "",
+                                    "type": "output"})
+            self.assertEqual(seen.get("strength"), 0.6)
+            self.assertEqual(job["info"]["finish"], "deshine@0.6")
 
 
 class SettingsTests(unittest.TestCase):

@@ -174,6 +174,14 @@ export const deleteStyle = async (id) =>
 export const styleSampler = async (base, model) =>
   (await fetch("/api/styles/sampler?base=" + encodeURIComponent(base) +
                "&model=" + encodeURIComponent(model || ""))).json();
+// Star / forget one sampler x scheduler pair on the sampler card. Both take the
+// PAIR, never a row id: a RES4LYF name carries a slash (multistep/res_2m) and
+// that does not survive a URL path. Both answer with the seat's whole shelf, so
+// the card never has to guess where the new row landed in the order.
+export const starCombo = (base, model, sampler_name, scheduler) =>
+  post("/api/sampler/combos/star", { base, model: model || "", sampler_name, scheduler });
+export const forgetCombo = (base, model, sampler_name, scheduler) =>
+  post("/api/sampler/combos/forget", { base, model: model || "", sampler_name, scheduler });
 // `input` names a photo already in ComfyUI/input (an attached one); `id` names a
 // finished render. Exactly one is needed - the server stages the render, the
 // attachment is already where the graph reads from.

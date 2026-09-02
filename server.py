@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.1.9b"
+PIXAL_VERSION = "1.2.0b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -591,7 +591,7 @@ def load_config():
                 "text_encoder": ""},
            # Optional decoder swap for the Z-Image/Flux VAE - "" keeps the
            # profile's own matched VAE. See zimage_vae_candidates().
-           "vae": {"zimage": ""},
+           "vae": {"zimage": "", "special": "", "special_force": False},
            # NVIDIA PiD as the finishing decoder. identity_finish routes the
            # Identity Edit sampler's final latent through PiD at 4x instead of
            # the Wan VAE - experimental: Krea 2 shares Qwen-Image's latent
@@ -628,6 +628,9 @@ def load_config():
                      # file, node or VRAM, so the toggle is the whole gate -
                      # still OFF until judged, like every other finisher.
                      "de_shine": False,
+                     # 10.9: the one exposed de-shine dial, the blend
+                     # strength; the doc's 0.85 is the judged default.
+                     "de_shine_strength": 0.85,
                      # 10.5: DLSS 5, the chain's FIRST finisher - a whole-frame
                      # neural re-render through the ComfyUI-DLSS5-NR node. Same
                      # doctrine as grain: fresh installs render untouched.
@@ -1858,6 +1861,79 @@ KREA_CLIP_REALISM = "Qwen\\qwen3-vl-4b-heretic_nvfp4.safetensors"
 KREA_CLIP_EDIT = "Qwen\\qwen3vl_4b_fp8_scaled.safetensors"
 KREA_VAE_REALISM = "Qwen-Image\\qwenImageVAESharpKrea2_fp32.safetensors"
 KREA_VAE_WAN = "Wan\\Wan2_1_VAE_fp32.safetensors"
+
+# Special decoders (Settings > Image > Special decoders). A drop-in decoder that
+# reads the Wan 2.1 / Qwen-Image 16-channel latent and replaces the recipe's
+# VAEDecode. spacepxl's Wan2.1-VAE-upscale2x emits 12 channels and pixel-
+# shuffles to 2x: the decode IS the upscale, one pass, no second model
+# inventing texture (docs/2026-08-17-vram-vae-findings.md M3). Core ComfyUI
+# cannot decode it (SaveImage dies on 12 channels), so it runs through the
+# author's ComfyUI-VAE-Utils pack. Off by default; "force" widens it from the
+# Krea 2 still lanes to every graph whose VAE lives in that latent space.
+SPECIAL_DECODERS = {
+    "wan2x": {"label": "Wan 2.1 2× VAE",
+              "vae": "Wan\\Wan2.1_VAE_upscale2x_imageonly_real_v1.safetensors",
+              "loader": "VAEUtils_CustomVAELoader",
+              "decoder": "VAEUtils_VAEDecodeTiled",
+              "factor": 2},
+}
+SPECIAL_DECODER_RECIPES = ("realism", "realism_ii")   # without force: Krea 2 stills only
+
+
+def _wan_latent_vae(name):
+    """A VAE file in the Wan 2.1 / Qwen-Image latent space, by folder."""
+    n = (name or "").replace("/", "\\")
+    return (n.startswith("Qwen-Image\\") or n.startswith("Wan\\")
+            or n.lower().startswith("qwen_image_vae")) and "upscale2x" not in n.lower()
+
+
+def _special_decoder_available(spec):
+    return _node_available(spec["decoder"]) and _node_available(spec["loader"])
+
+
+def apply_special_decoder(g, template, info, cfg=None):
+    """Route every decode fed by a Wan/Qwen-latent VAELoader through the
+    configured special decoder. Encoders keep the recipe's own VAE: a fresh
+    loader node is added for the decode, never swapped in place. Returns the
+    decoder spec when the graph changed, else None."""
+    cfg = cfg or load_config()
+    vcfg = cfg.get("vae") or {}
+    spec = SPECIAL_DECODERS.get(vcfg.get("special") or "")
+    if not spec:
+        return None
+    if not vcfg.get("special_force") and template not in SPECIAL_DECODER_RECIPES:
+        return None
+    loaders = {nid for nid, sp in g.items()
+               if sp.get("class_type") == "VAELoader"
+               and _wan_latent_vae(sp.get("inputs", {}).get("vae_name"))}
+    decodes = [nid for nid, sp in g.items()
+               if sp.get("class_type") in ("VAEDecode", "VAEDecodeTiled")
+               and isinstance(sp.get("inputs", {}).get("vae"), list)
+               and sp["inputs"]["vae"][0] in loaders]
+    if not decodes:
+        return None
+    if not _catalog_has("vae", spec["vae"]):
+        info["special_decoder_skipped"] = f"VAE file missing: {spec['vae']}"
+        return None
+    if not _special_decoder_available(spec):
+        info["special_decoder_skipped"] = "install the ComfyUI-VAE-Utils node pack"
+        return None
+    loader_id = "sd:vae"
+    g[loader_id] = {"class_type": spec["loader"],
+                    "inputs": {"vae_name": spec["vae"], "disable_offload": True,
+                               "precision": "auto"},
+                    "_meta": {"title": f"Load VAE ({spec['label']})"}}
+    for nid in decodes:
+        old = g[nid]["inputs"]
+        g[nid] = {"class_type": spec["decoder"],
+                  "inputs": {"samples": old["samples"], "vae": [loader_id, 0],
+                             "upscale": -1, "tile": False, "tile_size": 512,
+                             "overlap": 64, "temporal_size": 4096,
+                             "temporal_overlap": 64},
+                  "_meta": {"title": f"VAE Decode ({spec['label']})"}}
+    info["decoder"] = spec["label"]
+    info["decoder_factor"] = spec["factor"]
+    return spec
 
 # Qwen-Image-Edit is an instruction editor, not a text-to-image recipe: it always
 # consumes a finished frame. Its conditioning stack is the non-VL Qwen 2.5 VL 7B
@@ -3725,6 +3801,204 @@ def sampler_presets(base_id, model=None):
             continue
         out.append({"id": p["id"], "label": p["label"], "note": p["note"],
                     "tuning": tuning})
+    return out
+
+
+# ── sampler combos ───────────────────────────────────────────────────────────
+# The presets above are the three or four pairs somebody stands behind. This is
+# the other half of the question: a shelf you can flip through with two arrows,
+# and a star that keeps the one you liked.
+#
+# Jesse, 2026-09-02: "make it easy to save combos of sampler scheduler you like
+# right in the panel / sampler card ... I want these loaded up and a little
+# arrow left right to select the combo presets."
+#
+# "These" is the community report's graphic-quality slice - the same 3,504-vote
+# report behind briefs/ref/h3-community-sampler-ratings-2026-08-27.md, re-sorted
+# on the one dimension that transfers from video to stills. It is NOT a table of
+# measurements: the ranking runs with no vote floor, so a 5.00 at the top is one
+# or two people and the ordering is mostly noise above 4.5. That is exactly what
+# a stepper is for - twenty leads to audition at a locked seed, not twenty
+# verdicts. The InfoTip on the card says so; every row carries its own vote count
+# so nothing has to be taken on trust.
+#
+# Rank order is the report's, kept verbatim. Row 20 came off the paste without a
+# score (it sorts below 4.50 and that is all that is known), so it says that
+# rather than borrowing a number from its neighbour.
+H3_COMMUNITY_COMBOS = (
+    ("dpmpp_2m_sde",           "simple",           5.00, 2),
+    ("dpmpp_2s_ancestral",     "beta",             5.00, 2),
+    ("dpmpp_sde",              "linear_quadratic", 5.00, 1),
+    ("dpmpp_sde",              "normal",           5.00, 1),
+    ("er_sde",                 "simple",           5.00, 1),
+    ("euler_ancestral",        "normal",           5.00, 1),
+    ("euler",                  "beta",             5.00, 2),
+    ("euler_cfg_pp",           "beta",             5.00, 1),
+    ("euler_cfg_pp",           "simple",           5.00, 2),
+    ("exp_heun_2_x0_sde",      "normal",           5.00, 1),
+    ("heunpp2",                "linear_quadratic", 5.00, 1),
+    ("ipndm",                  "sgm_uniform",      5.00, 1),
+    ("dpmpp_sde_gpu",          "ddim_uniform",     4.67, 3),
+    ("euler",                  "simple",           4.67, 3),
+    ("sa_solver",              "normal",           4.67, 3),
+    ("dpmpp_2m_sde_gpu",       "beta",             4.60, 5),
+    ("dpmpp_2m_sde_gpu",       "simple",           4.50, 2),
+    ("dpmpp_2s_ancestral",     "normal",           4.50, 2),
+    ("dpmpp_sde_gpu",          "beta",             4.50, 2),
+    ("euler_ancestral_cfg_pp", "beta",             None, None),
+)
+
+# Keyed by family so a second table can arrive without touching the reader. The
+# community report rated MiniMax H3 and nothing else; Krea 2's shelf is whatever
+# Jesse stars on it, which is the honest answer until somebody runs the A/B that
+# docs/2026-08-31-sampler-presets.md still lists as open.
+COMMUNITY_COMBOS = {"minimax_h3": H3_COMMUNITY_COMBOS}
+
+# Your own pairs live beside config.json rather than inside it. config.json's
+# merge is a whitelist and an unreadable one falls back to defaults, which then
+# get saved over the real file - that has already happened on this box once
+# (config.json.defaults-written-by-mistake, still at the repo root). A starred
+# combo is not worth losing to that.
+SAMPLER_COMBOS = HERE / "sampler_combos.json"
+
+
+def _combo_id(source, family, sampler_name, scheduler):
+    """Stable across restarts and across saves: the pair IS the identity, so a
+    pair starred twice cannot become two rows and a forget cannot miss."""
+    return f"{source}:{family}:{sampler_name}:{scheduler}"
+
+
+def load_saved_combos():
+    """Every pair you have starred, newest first. Never raises."""
+    if not SAMPLER_COMBOS.exists():
+        return []
+    try:
+        raw = json.loads(SAMPLER_COMBOS.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[pixal] sampler_combos.json unreadable, ignoring: {exc}", flush=True)
+        return []
+    out = []
+    for row in (raw.get("combos") if isinstance(raw, dict) else raw) or []:
+        if not isinstance(row, dict):
+            continue
+        family = str(row.get("family") or "").strip()
+        sampler_name = str(row.get("sampler_name") or "").strip()
+        scheduler = str(row.get("scheduler") or "").strip()
+        if not (family and sampler_name and scheduler):
+            continue
+        out.append({"family": family, "sampler_name": sampler_name,
+                    "scheduler": scheduler,
+                    "saved_at": float(row.get("saved_at") or 0)})
+    out.sort(key=lambda r: r["saved_at"], reverse=True)
+    return out
+
+
+def save_saved_combos(rows):
+    SAMPLER_COMBOS.write_text(
+        json.dumps({"version": 1, "combos": rows}, ensure_ascii=False, indent=1),
+        encoding="utf-8")
+
+
+def star_combo(family, sampler_name, scheduler):
+    """Keep this pair. Starring one already kept is a no-op, not a duplicate."""
+    rows = load_saved_combos()
+    for r in rows:
+        if (r["family"], r["sampler_name"], r["scheduler"]) == \
+                (family, sampler_name, scheduler):
+            return rows
+    rows.insert(0, {"family": family, "sampler_name": sampler_name,
+                    "scheduler": scheduler, "saved_at": time.time()})
+    save_saved_combos(rows)
+    return rows
+
+
+def unstar_combo(family, sampler_name, scheduler):
+    """Drop a starred pair. Addressed by the pair rather than by an id because
+    a RES4LYF sampler name carries a slash (multistep/res_2m) and an id in a
+    URL path does not survive that. A pair that was never starred is already
+    gone, not an error."""
+    rows = load_saved_combos()
+    kept = [r for r in rows
+            if (r["family"], r["sampler_name"], r["scheduler"]) !=
+               (family, sampler_name, scheduler)]
+    if len(kept) != len(rows):
+        save_saved_combos(kept)
+    return kept
+
+
+def sampler_combos(base_id, model=None):
+    """The shelf the card's arrows walk, for this seat.
+
+    Yours first (newest first), then the community table for this family, with
+    a pair you have starred appearing once - as yours. Filtered against the
+    seat's REAL option list exactly the way sampler_presets is, so the arrows
+    can never land on a name the graph would refuse; a seat ComfyUI has not
+    been probed for yet offers an empty choice list, which filters nothing and
+    is the same "unprobed is not a rejection" contract sampler_choices keeps.
+    """
+    seat = sampler_seat(base_id, model)
+    spec = RECIPE_SPECS.get(base_id)
+    if not seat or not spec:
+        return []
+    keys = set(seat_tuning_keys(seat))
+    if "sampler_name" not in keys or "scheduler" not in keys:
+        return []                   # a pair needs both halves to mean anything
+    choices = seat_choices(seat) or {}
+    family = spec["family"]
+
+    def runnable(sampler_name, scheduler):
+        for key, value in (("sampler_name", sampler_name), ("scheduler", scheduler)):
+            allowed = choices.get(key)
+            if allowed and value not in allowed:
+                return False
+        return True
+
+    # Rank first, so a starred pair that IS a community row keeps its ranking
+    # instead of losing it the moment you keep it - star #7 and the card should
+    # go on saying it was #7.
+    table = {(s, c): (rank, score, votes) for rank, (s, c, score, votes)
+             in enumerate(COMMUNITY_COMBOS.get(family, ()), start=1)}
+
+    def ranking(pair):
+        """(#7, "5.00 from 2 votes") - the rank and the sample size, apart, so
+        the two copy registers below can each read as a sentence."""
+        rank, score, votes = table[pair]
+        if score is None:
+            return f"#{rank}", "score not captured"
+        return (f"#{rank}",
+                f"{score:.2f} from {votes} vote{'' if votes == 1 else 's'}")
+
+    # Two strings on purpose. `note` stands alone under the bar, where nothing
+    # else says where the pair came from; `detail` sits inside the list, under a
+    # group heading that has already said it, so it carries only the fact.
+    out, seen = [], set()
+    for r in load_saved_combos():
+        if r["family"] != family:
+            continue
+        pair = (r["sampler_name"], r["scheduler"])
+        if pair in seen or not runnable(*pair):
+            continue
+        seen.add(pair)
+        # A starred pair that IS a community row keeps its ranking rather than
+        # losing it the moment you keep it: star #7 and the card goes on saying
+        # #7, which is most of what made it worth keeping.
+        rank, rated = ranking(pair) if pair in table else ("", "")
+        out.append({"id": _combo_id("saved", family, *pair), "source": "saved",
+                    "note": f"Yours. Community graphic quality {rank}, {rated}."
+                            if rank else "Yours - starred here.",
+                    "detail": f"Starred - community {rank}, {rated}"
+                              if rank else "Starred here",
+                    "tuning": {"sampler_name": pair[0], "scheduler": pair[1]}})
+    for pair in table:
+        if pair in seen or not runnable(*pair):
+            continue
+        seen.add(pair)
+        rank, rated = ranking(pair)
+        out.append({"id": _combo_id("community", family, *pair),
+                    "source": "community",
+                    "note": f"Community graphic quality {rank}, {rated}.",
+                    "detail": f"Graphic quality {rank}, {rated}",
+                    "tuning": {"sampler_name": pair[0], "scheduler": pair[1]}})
     return out
 
 
@@ -7902,13 +8176,104 @@ def _dlss5_delivered(path, style, intensity, timeout=DLSS5_TIMEOUT,
 # 9.93: de-shine, shipped as "AI Skin Shine Removal". The zGenMedia method
 # from docs/2026-08-30-h3-ref-realism.md, ported from the scratchpad build
 # Jesse judged at 1:1 on 2026-08-31. The doc's numbers (0.85 at the 88th
-# percentile) read too aggressive next to the raw frame; both softening axes
-# moved and both stay reachable as arguments - they are a stronger setting,
-# not a wrong one.
-DE_SHINE_STRENGTH = 0.55
-DE_SHINE_PERCENTILE = 93.0
+# percentile) read too aggressive as a WHOLE-FRAME pass, so 0.55 / 93rd
+# shipped first. 10.8 confined the pass to the face, and on the same
+# back-seat frame Jesse judged the doc's setting "so much better - the shine
+# on the skin is such a dead give away of fake" (2026-09-02). The doc's
+# numbers are the default now; the gentle pair stays reachable.
+DE_SHINE_STRENGTH = 0.85
+DE_SHINE_PERCENTILE = 88.0
 DE_SHINE_DOC_STRENGTH = 0.85
 DE_SHINE_DOC_PERCENTILE = 88.0
+DE_SHINE_GENTLE_STRENGTH = 0.55
+DE_SHINE_GENTLE_PERCENTILE = 93.0
+
+
+# 10.8: the pass stays INSIDE the face. Jesse (2026-09-02): "it doesn't
+# mask just to the face" - the chrominance mask alone reaches arms, chests,
+# hands and anything tan. A YOLO face box narrows it. The venv has no torch,
+# so detection shells out to the ComfyUI portable's interpreter, which owns
+# ultralytics and the Impact-style bbox models under models/ultralytics/bbox.
+# CPU inference, ~3 s a frame including the import; a finisher can afford it.
+FACE_FINDER_TIMEOUT = 45.0
+FACE_FINDER_CONF = 0.4
+FACE_MASK_GROW = 0.18          # box -> ellipse, grown for forehead and chin
+_FACE_FINDER_SCRIPT = (
+    "import json,sys\n"
+    "from ultralytics import YOLO\n"
+    "r=YOLO(sys.argv[1]).predict(sys.argv[2],device='cpu',verbose=False,"
+    "conf=float(sys.argv[3]))[0]\n"
+    "print(json.dumps([[float(v) for v in b.xyxy[0]] for b in r.boxes]))\n")
+
+
+def _face_bbox_model():
+    """The face detector under ComfyUI/models/ultralytics/bbox: Face.pt
+    first (the one on Jesse's box), else any file whose name says face."""
+    root = CDIR / "models" / "ultralytics" / "bbox"
+    if not root.is_dir():
+        return None
+    exact = root / "Face.pt"
+    if exact.is_file():
+        return exact
+    for cand in sorted(root.glob("*.pt")):
+        if "face" in cand.name.lower():
+            return cand
+    return None
+
+
+def _face_finder_python():
+    """An interpreter that can import ultralytics: the ComfyUI portable's
+    python_embeded first (it runs the detector nodes already), then the
+    one Pixal runs on."""
+    portable = CDIR.parent / "python_embeded" / "python.exe"
+    if portable.is_file():
+        return portable
+    return Path(sys.executable)
+
+
+def find_faces(path, conf=FACE_FINDER_CONF, timeout=FACE_FINDER_TIMEOUT):
+    """Face boxes (x0, y0, x1, y1) in pixels for one image file.
+
+    Returns None when no finder exists (no model file, no ultralytics, a
+    crash, a timeout) so the caller can tell "nothing to find with" from
+    "looked and found no face" - the two mean different things to the
+    de-shine pass. Never raises."""
+    model = _face_bbox_model()
+    if model is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [str(_face_finder_python()), "-c", _FACE_FINDER_SCRIPT,
+             str(model), str(path), str(conf)],
+            capture_output=True, text=True, timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if proc.returncode != 0:
+            print(f"[pixal] face finder failed: {proc.stderr.strip()[-300:]}",
+                  flush=True)
+            return None
+        line = proc.stdout.strip().splitlines()[-1]
+        boxes = json.loads(line)
+        return [tuple(float(v) for v in b[:4]) for b in boxes]
+    except Exception as exc:
+        print(f"[pixal] face finder unavailable: {exc}", flush=True)
+        return None
+
+
+def face_mask(size, faces, grow=FACE_MASK_GROW):
+    """A soft white ellipse per face box, grown so forehead and chin are in,
+    feathered by a sixteenth of the box so the edge blends, not patches."""
+    from PIL import Image, ImageDraw, ImageFilter
+    w, h = size
+    m = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(m)
+    feather = 4.0
+    for x0, y0, x1, y1 in faces:
+        bw, bh = max(1.0, x1 - x0), max(1.0, y1 - y0)
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        rx, ry = bw / 2.0 * (1.0 + grow), bh / 2.0 * (1.0 + grow)
+        d.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=255)
+        feather = max(feather, bw / 16.0)
+    return m.filter(ImageFilter.GaussianBlur(feather))
 
 
 def still_de_shine_active():
@@ -7922,8 +8287,21 @@ def still_de_shine_active():
         return False
 
 
+def still_de_shine_strength():
+    """The one exposed de-shine dial (10.9), the film_grain_amount rule:
+    clamped so a corrupt config cannot zero the pass or overshoot the
+    blend, NaN refused, a missing key reads as the judged default."""
+    try:
+        v = float(load_config()["still"]["de_shine_strength"])
+    except (KeyError, TypeError, ValueError):
+        return DE_SHINE_STRENGTH
+    if not math.isfinite(v):
+        return DE_SHINE_STRENGTH
+    return min(max(v, 0.1), 1.0)
+
+
 def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
-             mask_blur=9, tone_blur=41):
+             mask_blur=9, tone_blur=41, faces=None):
     """Pull specular highlights on skin down toward the local tone.
 
     Five steps, and the tests pin each one's reason:
@@ -7940,10 +8318,21 @@ def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
        strength. It can never brighten anything.
 
     Eyes and teeth are untouched: they fall outside the skin chrominance
-    range. Returns (image, covered fraction of the frame)."""
+    range.
+
+    `faces` (10.8): a list of face boxes narrows the whole pass to soft
+    ellipses around them - the percentile is measured on the face's skin
+    and the blend never leaves the ellipse, so arms, chests and hands keep
+    their light. An empty list means a finder looked and found nobody: the
+    frame is returned untouched. None means no finder, and the pass falls
+    back to the whole-frame skin mask it shipped with.
+
+    Returns (image, covered fraction of the frame)."""
     import numpy as np
     from PIL import Image, ImageFilter
 
+    if faces is not None and not faces:
+        return im.copy(), 0.0
     rgb = np.asarray(im.convert("RGB")).astype(np.float32)
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
 
@@ -7951,6 +8340,10 @@ def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
     cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b
     cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b
     skin = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173)
+    fm = None
+    if faces:
+        fm = np.asarray(face_mask(im.size, faces)).astype(np.float32) / 255.0
+        skin &= fm > 0.5
     if not skin.any():
         return im.copy(), 0.0
 
@@ -7960,6 +8353,8 @@ def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
     mask = Image.fromarray((hot * 255).astype(np.uint8)).filter(
         ImageFilter.GaussianBlur(mask_blur))
     m = (np.asarray(mask).astype(np.float32) / 255.0)[..., None] * strength
+    if fm is not None:
+        m = m * fm[..., None]
 
     target = np.asarray(im.convert("RGB").filter(
         ImageFilter.GaussianBlur(tone_blur))).astype(np.float32)
@@ -7970,7 +8365,7 @@ def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
         float(m.mean())
 
 
-def _de_shine_delivered(path):
+def _de_shine_delivered(path, strength=DE_SHINE_STRENGTH):
     """De-shine one delivered still in place, keeping the PNG's embedded
     graph. A naive PIL re-save drops the tEXt chunks (prompt, workflow)
     that style-from-render and the realism doc's verdicts read - that is
@@ -7987,9 +8382,15 @@ def _de_shine_delivered(path):
             fmt = opened.format
             meta = dict(opened.info)
             im = opened.convert("RGB")
-        out, covered = de_shine(im)
+        faces = find_faces(path)
+        out, covered = de_shine(im, strength=strength, faces=faces)
         if covered <= 0.0:
+            if faces is not None and not faces:
+                print(f"[pixal] de-shine skipped {path.name}: no face found",
+                      flush=True)
             return False
+        where = ("whole frame, no face finder" if faces is None
+                 else f"{len(faces)} face{'s' if len(faces) != 1 else ''}")
         if fmt == "PNG":
             info = PngInfo()
             for key, value in meta.items():
@@ -7999,8 +8400,8 @@ def _de_shine_delivered(path):
         else:
             keep = {k: meta[k] for k in ("exif",) if k in meta}
             out.save(path, **keep)
-        print(f"[pixal] de-shine {path.name} "
-              f"(mask {covered * 100:.2f}% of frame)", flush=True)
+        print(f"[pixal] de-shine {path.name} @{strength:g} "
+              f"({where}, mask {covered * 100:.2f}% of frame)", flush=True)
         return True
     except Exception as exc:
         print(f"[pixal] de-shine skipped {path.name}: {exc}", flush=True)
@@ -12561,9 +12962,12 @@ class Hub:
             # model: the upscale action reads this file afterwards, and its
             # own output is exempt above, so the percentile is never measured
             # on already-textured skin.
+            strength = still_de_shine_strength()
             if _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
-                                   / img["filename"]):
-                _record_finish(job, "deshine")
+                                   / img["filename"], strength):
+                # deshine@0.85, the grain@1.6 shape: the strength that
+                # touched the pixels is on the job, not only in Settings.
+                _record_finish(job, f"deshine@{strength:g}")
         if img["media"] == "image" and still_film_grain_active():
             # 10.1: the judged chain's LAST step, after de-shine, after
             # whatever the graph did - grain belongs to final pixels, so
@@ -13974,6 +14378,7 @@ class Hub:
                     g, full, info = BUILDERS[template](scene, base_seed + i, **spec_args)
                     if sampler_swap_tag:
                         swap_sampler_node(g, sampler_swap_tag)
+                    apply_special_decoder(g, template, info)
                     validate_job_model_info(template, info, g)
                     if i == 0:
                         await self.ensure_vram(template, g, job, info)
@@ -16913,6 +17318,38 @@ _QUEUED_SCENE_RECEIPT_RE = re.compile(
     .replace(re.escape("{template}"), r"[^()]*"))
 
 
+async def _fire_scene(cid, convo, opts, render_scene, writer_tag,
+                      display_text=None):
+    """Queue one server-authored scene as this turn's render.
+
+    The ONE path both the prose rescue (10.4) and the mechanical accept
+    (10.7) go through, so the two can never drift: scrub, show, submit,
+    receipt. `display_text` is what the lane shows before the thinking
+    note - None means the scrubbed scene itself, "" means nothing (the
+    caller already spoke). Returns HUB.submit's job dict."""
+    args = {}
+    template = (_apply_opts(args, opts) if opts else None) or "realism"
+    render_scene = strip_seed_prose(scrub_style_caption(render_scene, template))
+    if display_text is None:
+        display_text = render_scene
+    if display_text:
+        HUB.broadcast(type="text", cid=cid, text=chat_speech(display_text, opts))
+    HUB.broadcast(type="thinking", cid=cid,
+                  note="writing the workflow - " + plain_render_words(template))
+    freeze_seed(args, opts)
+    args["_writer"] = writer_tag
+    job = await HUB.submit(cid, "chat", template, render_scene, args, 1)
+    if not job["error"]:
+        # Keep history coherent for the NEXT turn, but only when Comfy
+        # actually accepted the graph. HUB.submit already broadcasts the
+        # concrete failure when submission fails.
+        convo.append({"role": "user", "content":
+                      _QUEUED_SCENE_RECEIPT_FMT.format(job_id=job["id"],
+                                                       template=template)})
+    HUB.broadcast(type="thinkingdone", cid=cid)
+    return job
+
+
 def local_history_view(messages, current_user_index, preserve_latest_render=False,
                        preserve_pending_scene=False):
     """Context view for the local prompt writer, without old render echo.
@@ -19064,7 +19501,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     # words; otherwise the toggle plus the recipe's family pick the rulebook.
     # The tag rides the job's info so a card and the A/B driver can tell.
     turn_recipe = effective_recipe(opts or {}) or "realism"
-    writer_tag = "verbatim" if not prompt_enhance and not local_iteration else \
+    writer_tag = "verbatim" if not prompt_enhance else \
         ("official" if official_writer_base(local_brain, turn_recipe) is not None
          else "pixal")
     # Anything the assistant left hanging - a written scene OR a question -
@@ -19203,15 +19640,15 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
     # 4B that reached for a withheld tool put the word "generate" on the card
     # (629d1c68). Nothing in the path now: captured text straight to submit.
     #
-    # Held back in the two cases that genuinely need the model:
-    #   iteration ("make her jacket red") has to be merged into the prior scene;
-    #     rendering those four words as the whole prompt is not what anybody
-    #     means by passing it through.
-    #   attached references are read into the scene as prose so a re-roll keeps
-    #     their constraints (see _direct_prompt_scene). Cloud lane only -
-    #     has_vision_refs is False on the local one by construction.
-    if not prompt_enhance and not local_iteration and not has_vision_refs \
-            and (direct_intent or enhance_off_is_prompt(_utext)):
+    # 10.10 (Jesse, 2026-09-02): "I do not want that when it is off - I want
+    # direct to text encoder!" The gate used to hold back short turns, turns
+    # with a question mark, iteration words and attached references, and every
+    # one of those still paid a brain round - and the brain's prose reply then
+    # drew Generate / Something else pills under a render that had already
+    # been queued. OFF now means off: the typed words go to the text encoder,
+    # whatever they look like. An accept ("go") still reaches back to the
+    # user's own last prompt through captured_prompt, on this path, no brain.
+    if not prompt_enhance:   # OFF now means off
         args = {}
         template = (_apply_opts(args, opts) if opts else None) or "realism"
         # The brain is not here to set these, and their default (a person, kept
@@ -19237,6 +19674,20 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                           f"[SYSTEM: the server queued that prompt as job "
                           f"{job['id']} ({template}) - no reply needed.]"})
         HUB.broadcast(type="thinkingdone", cid=cid)
+        return
+    # 10.7 - a pure accept of a pending draft fires it with NO brain round.
+    # Jesse, 2026-09-02: "If I say go the system should just literally and
+    # mechanically fire the render!" The draft IS the scene and the accept
+    # IS the yes; the round the brain used to get here had no decision left
+    # in it - it cost tokens, seconds, and one more exposure to a 429 (the
+    # "kimi-k3 is busy - trying again in 3s" he watched on a bare "go").
+    # Same three terms as 10.4's accept_backstop in the prose rescue below,
+    # which stays as the fallback for every other route into that branch.
+    if _pure_accept and prompt_enhance and not local_iteration:
+        HUB.broadcast(type="text", cid=cid,
+                      text="Got it \u2014 firing the draft.")
+        await _fire_scene(cid, convo, opts, _scene_from_prose(_pending_draft),
+                          writer_tag, display_text="")
         return
     # name the invisible phase: this is a cloud call, not the GPU working
     HUB.broadcast(type="thinking", cid=cid, note=f"asking {brain_name()} to direct the shot")
@@ -19317,30 +19768,13 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                     render_scene = _scene_from_prose(_rescue_src) if prompt_enhance \
                         else _direct_prompt_scene(captured_prompt(convo, _utext),
                                                   scene_text, has_vision_refs)
-                    args = {}
-                    template = (_apply_opts(args, opts) if opts else None) or "realism"
-                    render_scene = strip_seed_prose(
-                        scrub_style_caption(render_scene, template))
                     # In direct mode the user's exact prompt is already visible
                     # in the lane. Keep the model-authored acknowledgement (when
                     # it supplied one) instead of echoing the prompt as Pixal.
-                    display_text = scene_text if direct_prompt else render_scene
-                    if display_text:
-                        HUB.broadcast(type="text", cid=cid,
-                                      text=chat_speech(display_text, opts))
-                    HUB.broadcast(type="thinking", cid=cid,
-                                  note="writing the workflow - " + plain_render_words(template))
-                    freeze_seed(args, opts)
-                    args["_writer"] = writer_tag
-                    job = await HUB.submit(cid, "chat", template, render_scene, args, 1)
-                    if not job["error"]:
-                        # Keep history coherent for the NEXT turn, but only when
-                        # Comfy actually accepted the graph. HUB.submit already
-                        # broadcasts the concrete failure when submission fails.
-                        convo.append({"role": "user", "content":
-                                      _QUEUED_SCENE_RECEIPT_FMT.format(
-                                          job_id=job["id"], template=template)})
-                    HUB.broadcast(type="thinkingdone", cid=cid)
+                    # (_fire_scene is the same code the 10.7 mechanical accept
+                    # runs - scrub, show, submit, receipt - kept in one place.)
+                    await _fire_scene(cid, convo, opts, render_scene, writer_tag,
+                                      display_text=scene_text if direct_prompt else None)
                     return
                 HUB.broadcast(type="thinkingdone", cid=cid)
                 # Two different failures land here and they used to share one
@@ -20258,7 +20692,12 @@ async def settings_get(_req):
                  "inpaint_default": KLEIN_MODEL},
         "vae": {**cfg["vae"],
                 "installed": [e["rel"] for e in model_catalog("vae")],
-                "stock": list(ZIMAGE_VAE_CANDIDATES)},
+                "stock": list(ZIMAGE_VAE_CANDIDATES),
+                "special_decoders": [
+                    {"id": k, "label": s["label"], "factor": s["factor"],
+                     "file_installed": _catalog_has("vae", s["vae"]),
+                     "available": _special_decoder_available(s)}
+                    for k, s in SPECIAL_DECODERS.items()]},
         "pid": {**cfg["pid"],
                 "decode_available": _pid_node_available(PID_DECODE_NODE)},
         # The two H3 model slots (9.91): stored picks, per-lane candidates,
@@ -20301,6 +20740,7 @@ async def settings_get(_req):
                   "film_grain_amount": still_film_grain_amount(),
                   "de_shine": bool((cfg.get("still") or {})
                                    .get("de_shine", False)),
+                  "de_shine_strength": still_de_shine_strength(),
                   # 10.5: the first finisher's keys, published with whether
                   # the node AND its runtime DLL are actually there, so the
                   # row disables itself honestly - the same discipline as
@@ -20428,6 +20868,14 @@ async def settings_post(req):
             return web.json_response(
                 {"ok": False, "error": f"VAE is not installed: {want}"}, status=400)
         cfg["vae"]["zimage"] = want
+    if "special" in vae:
+        want = (vae["special"] or "").strip()
+        if want and want not in SPECIAL_DECODERS:
+            return web.json_response(
+                {"ok": False, "error": f"not a special decoder: {want}"}, status=400)
+        cfg["vae"]["special"] = want
+    if "special_force" in vae:
+        cfg["vae"]["special_force"] = bool(vae["special_force"])
     if upscale.get("image_mode") in UPSCALE_IMAGE_MODES:
         cfg["upscale"]["image_mode"] = upscale["image_mode"]
     if "image_vsr_mode" in upscale:
@@ -20480,6 +20928,19 @@ async def settings_post(req):
                 {"ok": False,
                  "error": f"not a bool: {still_cfg['de_shine']}"}, status=400)
         cfg.setdefault("still", {})["de_shine"] = still_cfg["de_shine"]
+    if "de_shine_strength" in still_cfg:
+        # 10.9: the film_grain_amount contract - a number, finite, clamped
+        # at write time to the resolver's range so there is one range.
+        try:
+            amt = float(still_cfg["de_shine_strength"])
+        except (TypeError, ValueError):
+            amt = float("nan")
+        if not math.isfinite(amt):
+            return web.json_response(
+                {"ok": False, "error":
+                 f"not a number: {still_cfg['de_shine_strength']}"}, status=400)
+        cfg.setdefault("still", {})["de_shine_strength"] = \
+            min(max(amt, 0.1), 1.0)
     if "dlss5" in still_cfg:
         # The same strict-bool rule as film_grain and de_shine (10.5).
         if not isinstance(still_cfg["dlss5"], bool):
@@ -20933,8 +21394,69 @@ async def style_sampler(req):
         # so these are what the card offers - measured on this box for H3,
         # published by RES4LYF for Krea 2, and each one says which it is.
         "presets": sampler_presets(base_id, model) if seat else [],
+        # The shelf the card's arrows walk (2026-09-02): pairs you starred,
+        # then the community table's graphic-quality ranking. Same filter as
+        # the presets, so an arrow can never land on a name this seat refuses.
+        "combos": sampler_combos(base_id, model) if seat else [],
         "reason": "" if seat else fixed_schedule_reason(base_id, model),
     })
+
+
+async def _combo_request(req, body):
+    """The three things every combo write needs, or an error response.
+
+    Both routes take the PAIR rather than a row id: a RES4LYF sampler name
+    carries a slash (multistep/res_2m) and that does not survive a URL path.
+    The pair is checked against the seat here, so the file can only ever hold
+    pairs this machine can actually run - the card stars what is on screen,
+    which may be a community row, a recipe default, or two Pickers set by hand,
+    and none of those have been through sampler_combos' filter.
+    """
+    base_id = str(body.get("base") or "")
+    model = str(body.get("model") or "")
+    sampler_name = str(body.get("sampler_name") or "").strip()
+    scheduler = str(body.get("scheduler") or "").strip()
+    if base_id not in STYLE_BASE_IDS:
+        return None, web.json_response(
+            {"ok": False, "error": f"unknown base recipe: {base_id or '(missing)'}"},
+            status=400)
+    await refresh_comfy_nodes()
+    seat, spec = sampler_seat(base_id, model), RECIPE_SPECS.get(base_id)
+    if not seat or not spec:
+        return None, web.json_response(
+            {"ok": False, "error": "this recipe has no tunable sampler"}, status=400)
+    if not (sampler_name and scheduler):
+        return None, web.json_response(
+            {"ok": False, "error": "a combo is a sampler AND a scheduler"}, status=400)
+    choices = seat_choices(seat) or {}
+    for key, value in (("sampler_name", sampler_name), ("scheduler", scheduler)):
+        allowed = choices.get(key)
+        if allowed and value not in allowed:
+            return None, web.json_response(
+                {"ok": False, "error": f"this recipe cannot run {key} {value}"},
+                status=400)
+    return (base_id, model, spec["family"], sampler_name, scheduler), None
+
+
+async def sampler_combo_star(req):
+    """Keep the pair the sampler card is on."""
+    ctx, err = await _combo_request(req, await req.json())
+    if err:
+        return err
+    base_id, model, family, sampler_name, scheduler = ctx
+    star_combo(family, sampler_name, scheduler)
+    return web.json_response({"ok": True, "combos": sampler_combos(base_id, model)})
+
+
+async def sampler_combo_forget(req):
+    """Drop a starred pair. A community row is not in the file and simply has
+    nothing to drop, so this is idempotent by construction."""
+    ctx, err = await _combo_request(req, await req.json())
+    if err:
+        return err
+    base_id, model, family, sampler_name, scheduler = ctx
+    unstar_combo(family, sampler_name, scheduler)
+    return web.json_response({"ok": True, "combos": sampler_combos(base_id, model)})
 
 
 async def characters_get_one(req):
@@ -25351,6 +25873,10 @@ def main():
     app.router.add_post("/api/styles/from-image", style_from_image)
     # Before the {style_id} route: "sampler" is a verb, not an id.
     app.router.add_get("/api/styles/sampler", style_sampler)
+    # The sampler card's star. Both are POSTs taking the pair itself, not a
+    # row id - see _combo_request for why an id cannot ride in the path.
+    app.router.add_post("/api/sampler/combos/star", sampler_combo_star)
+    app.router.add_post("/api/sampler/combos/forget", sampler_combo_forget)
     app.router.add_delete("/api/styles/{style_id}", styles_delete)
     app.router.add_post("/api/characters", characters_post)
     # Before the {character_id} routes: "preview" is a verb, not an id, and the

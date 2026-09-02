@@ -39,11 +39,37 @@ ICON = PIXAL / "web" / "icons" / "pixal-block.ico"
 SECRETS = ("config.json", "history.jsonl", "_lora_titles.json")
 
 # Committed but internal - planning briefs, working docs, the marketing site,
-# brand experiments. No secrets in them (scanned 2026-08-19), but an installer
-# anyone can unzip is a publication, and these were never written for one.
+# brand experiments. No secrets in them, but an installer anyone can unzip is a
+# publication, and these were never written for one.
+#
+# THIS IS THE ONE PRUNE LIST. `release.py` imports it for the public source zip
+# and the tree it publishes to pixal-releases, so the installer and the public
+# repo cannot disagree about what "internal" means. It lives HERE rather than in
+# release.py because release.py is itself pruned: a stranger who clones the
+# published source still has this file and can still build the installer.
+#
+# It used to be two lists, and they drifted (found 2026-09-02, cutting 1.2.0b).
+# release.py's copy grew RELEASING.md, release.py, MORNING.md, DESIGN.md,
+# PORTING.md and the agent-skill folders; this one never did - so every 1.1.x
+# installer shipped Pixal's release runbook and the Netlify site id inside it.
+# Nothing looked wrong, because the public source tree was correct.
+#
+# If you add a working note to the repo root, add it HERE, or the next release
+# publishes it - twice.
 INTERNAL = ("briefs", "docs", "site", "brand", ".github",
             "SOL_PLAN.md", "PRODUCT_NOTES.md", "pixal-dm-ssot.md",
-            "scratch_prompt.txt", "PACKAGING.md")
+            "scratch_prompt.txt", "PACKAGING.md", "MORNING.md",
+            # Names the Netlify site id in prose; release.py carries it in code.
+            "RELEASING.md", "release.py",
+            "DESIGN.md", "PORTING.md",
+            # Superseded landing-page drafts (v2/v3/v4). They sit outside the
+            # deployed `site/` folder so nothing serves them, but they still
+            # advertise a 1.0.0b download link, and they rode both publications
+            # as dead weight until 1.2.0b.
+            "site-archive",
+            # Installed agent skills (transitions.dev) are third-party docs for
+            # the tooling, not Pixal - they go to neither publication.
+            ".agents", ".claude", "skills-lock.json")
 
 PY_VER = "3.12.10"
 PY_ZIP = f"python-{PY_VER}-embed-amd64.zip"

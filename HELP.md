@@ -761,6 +761,18 @@ Default is "stock Z-Image VAE (recommended)". The tip: Z-Image and Flux
 share a VAE, so sharper drop-ins exist; it applies to Z-Image renders only,
 and the clear-anime profile keeps its own matched VAE either way.
 
+**Special decoders** — two rows. **Decoder** (default Off) replaces the
+last step of a render, the VAE decode, with a drop-in decoder for the
+Wan 2.1 / Qwen-Image latent. The one shipped is the **Wan 2.1 2× VAE**
+(spacepxl's Wan2.1-VAE-upscale2x): it decodes twice the pixels straight
+from the sampler's latent, so the decode is the upscale — one pass,
+nothing repainted, and the render lands at double its canvas. It needs
+the `ComfyUI-VAE-Utils` node pack and the VAE file under
+`models\vae\Wan`; the picker says which is missing. By default it applies
+to the Krea 2 still recipes only. **Force compatible models** widens it
+to every lane whose VAE lives in that latent — Qwen Image, Anima, the
+edit and identity lanes. The job card records the decoder it ran.
+
 **Edit model** — two lanes, two pickers. "Runs instruction edits." plus both
 counts ("3 whole-frame, 2 masked compatible installed."). **Whole frame**
 runs when there is no mask; **Masked area** runs when a mask is painted.
@@ -834,10 +846,17 @@ upscale):
   way negative film behaves. Seeded from the render, so a re-render lands
   identically. One dial when on; 1.6 is the judged default. Always the
   last touch.
-- **Shine removal** — pulls specular highlights on skin toward the tone
-  around them: the hot spots on foreheads, cheeks and chests. It only
-  darkens, eyes and teeth fall outside the skin range, and it runs on the
-  finished frame before any upscale. Nothing to install.
+- **Shine removal** — pulls specular highlights on the face toward the
+  tone around them: the hot spots on foreheads, cheeks and noses. A face
+  detector (the `Face.pt` under `ComfyUI\models\ultralytics\bbox`, run
+  through ComfyUI's own Python) keeps the pass inside the face, so arms,
+  hands and chests keep their light, and a frame with no face in it is
+  left alone. Without that model file the pass falls back to every patch
+  of skin in the frame, the way it first shipped. It only darkens, eyes
+  and teeth fall outside the skin range, and it runs on the finished
+  frame before any upscale. One dial when on: how far the highlights are
+  pulled toward the skin around them, 0.1 to 1; 0.85 is the judged
+  default.
 
 **Upscaler** — "Model enlarges; PiD repaints." plus the installed count. The
 still-frame mode (Model / PiD, the 4× as a chip) and the upscale model picker are walked in
@@ -1266,7 +1285,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.1.9b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.2.0b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

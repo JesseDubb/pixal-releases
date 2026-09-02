@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowCounterClockwise, CaretDown, CaretLeft, CaretRight, CaretUp, Cube, DotsSixVertical,
   FilmSlate, ImageSquare, Lightning, LockSimple, MagnifyingGlass, Monitor, Palette, PencilSimple, Plus,
-  Sparkle, SlidersHorizontal, Stack, TagSimple, Trash, TShirt, UserCircle, UserCircleCheck,
+  Sparkle, SlidersHorizontal, Stack, Star, TagSimple, Trash, TShirt, UserCircle, UserCircleCheck,
   UserCircleDashed, UserCirclePlus, UserFocus, X,
 } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW } from "../lib/design-tokens.js";
@@ -25,7 +25,8 @@ import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Picker } from "../lib/Picker.jsx";
 import { familyName, tuningLine, variantName } from "../lib/names.js";
-import { inputImages, inputImgUrl, setInputRefType, styleFromImage, styleSampler, upload } from "../transport.js";
+import { forgetCombo, inputImages, inputImgUrl, setInputRefType, starCombo, styleFromImage,
+         styleSampler, upload } from "../transport.js";
 
 const REF_KINDS = [
   { key: "identity", label: "identity", Icon: UserFocus },
@@ -985,9 +986,108 @@ const LORA_PICKER_GROUPS_KEY = "pixal.loraPicker.groups.v1";
 const TUNE_STEPS = { min: 1, max: 40, step: 1 };
 const TUNE_CFG = { min: 1, max: 10, step: 0.5 };
 const TUNE_ETA = { min: 0, max: 1, step: 0.05 };
+// The Picker's value must always name a row it holds, so a pair that is not on
+// the shelf rides in under this id rather than falling back to a placeholder.
+const COMBO_OFF_SHELF = "__pixal_off_shelf__";
+
+// ── the combo shelf ──────────────────────────────────────────────────────────
+// Jesse, 2026-09-02: "make it easy to save combos of sampler scheduler you like
+// right in the panel / sampler card ... I want these loaded up and a little
+// arrow left right to select the combo presets."
+//
+// The bar is NOT a second selection state. It reads the pair that will actually
+// render - the same two values the Pickers under it show - and the arrows walk a
+// shelf to change it. So a community row, the recipe's own pair and two Pickers
+// set by hand all read the same way, there is nothing to keep in sync, and the
+// star keeps whichever one you are on. The counter reads "–" when the current
+// pair is off the shelf, which is a state, not an error.
+//
+// MotionDirector's `Stepper` is the nearest shared control and does not fit: it
+// walks an integer between a min and a max with dead ends at both, this walks a
+// wrapping list of named rows and carries provenance and a keep action. Same
+// family though - if a third arrow-stepper turns up, that is the one to lift
+// into web/src/lib/ and delete both.
+// The control family's VALUE PILL, square: 24px, bg3, pill radius - the same
+// body as the Picker between them, so the bar reads as one control and not as
+// two ghost buttons flanking a real one.
+const COMBO_BTN = {
+  width: 24, height: 24, padding: 0, flexShrink: 0,
+  display: "inline-flex", alignItems: "center", justifyContent: "center",
+  border: "1px solid var(--border)", borderRadius: RADIUS.pill,
+  background: "var(--bg3)",
+  // Colour only. A hover that resized this would move it out from under the
+  // cursor at 239 Hz and oscillate (DESIGN.md).
+  transition: `color ${MOTION.hover}, border-color ${MOTION.hover}, background ${MOTION.hover}`,
+};
+const ComboShelf = ({ options, value, note, error, saved, busy, canStar,
+                      onStep, onPick, onStar }) => {
+  const steppable = options.length > 1;
+  const arrow = (dir, Icon, label) => (
+    <button type="button" disabled={!steppable} onClick={() => onStep(dir)}
+      aria-label={label}
+      title={steppable ? label : "nothing to step through on this recipe yet"}
+      style={{ ...COMBO_BTN, cursor: steppable ? "pointer" : "default",
+               background: steppable ? "var(--bg3)" : "transparent",
+               color: steppable ? "var(--textSec)" : "var(--textMut)" }}>
+      <Icon size={11} weight="bold" />
+    </button>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+      {/* Arrows adjacent rather than bracketing the value: auditioning is a lot
+          of alternating clicks, and one spot to aim at beats two. Both stay the
+          same 24px as the Picker beside them so the row has one rhythm. */}
+      <div role="group" aria-label="sampler combos"
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();          // never let the arrows scroll the panel too
+          if (steppable) onStep(e.key === "ArrowRight" ? 1 : -1);
+        }}
+        style={{ display: "flex", alignItems: "center", gap: SPACE[6] }}>
+        {arrow(-1, CaretLeft, "previous combo")}
+        {arrow(1, CaretRight, "next combo")}
+        {/* The list under it is the whole shelf, grouped and searchable, so
+            walking twenty rows one arrow at a time is a choice, not the only
+            way through. No position counter: the group and the rank in the
+            line below already say where this pair sits. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Picker label="combo" value={value} options={options} onChange={onPick} />
+        </div>
+        <button type="button" onClick={onStar} disabled={busy || !canStar}
+          aria-pressed={saved}
+          aria-label={saved ? "forget this combo" : "keep this combo"}
+          title={!canStar ? "pick a sampler and a scheduler first"
+                 : saved ? "Forget this combo" : "Keep this combo"}
+          style={{ ...COMBO_BTN,
+                   cursor: busy || !canStar ? "default" : "pointer",
+                   opacity: busy ? 0.5 : 1,
+                   borderColor: saved ? "var(--accent)" : "var(--border)",
+                   background: saved ? "var(--accentMut)"
+                             : canStar ? "var(--bg3)" : "transparent",
+                   color: saved ? "var(--accent)"
+                        : canStar ? "var(--textTer)" : "var(--textMut)" }}>
+          <Star size={12} weight={saved ? "fill" : "regular"} />
+        </button>
+      </div>
+      {/* One line, always present: where this pair came from, or why the last
+          click did not take. Starring must not reflow the card. */}
+      <span aria-live="polite" title={error || note} style={{
+        fontSize: TYPE.micro, lineHeight: 1.4, minHeight: 14, overflow: "hidden",
+        textOverflow: "ellipsis", whiteSpace: "nowrap",
+        color: error ? "var(--error)" : "var(--textMut)" }}>
+        {error || note}
+      </span>
+    </div>
+  );
+};
 const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase,
                       open, onToggle }) => {
   const [seat, setSeat] = useState(null);
+  // Both belong to the combo shelf's star and both must be declared BEFORE the
+  // early return below - a hook after a conditional return is a hook that stops
+  // being called the moment the seat goes away.
+  const [comboBusy, setComboBusy] = useState(false);
+  const [comboErr, setComboErr] = useState(null);
   useEffect(() => {
     let live = true;
     if (!recipeId) { setSeat(null); return undefined; }
@@ -996,6 +1096,8 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
       .catch(() => { if (live) setSeat(null); });
     return () => { live = false; };
   }, [recipeId, model]);
+  // A stale "could not save that" must not outlive the recipe it was about.
+  useEffect(() => { setComboErr(null); }, [recipeId, model]);
   if (!seat?.tunable) return null;
   const keys = seat.keys || [];
   const has = (k) => keys.includes(k);
@@ -1026,6 +1128,71 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
   const applyPreset = (p) => {
     for (const [k, v] of Object.entries(p.tuning))
       if (keys.includes(k)) change(k, v);
+  };
+  // The shelf (2026-09-02). Its position is DERIVED from the pair that will
+  // render, never stored: whatever set sampler_name and scheduler - an arrow, a
+  // preset pill, a Picker, the recipe itself - the bar says the same thing.
+  const shelf = seat.combos || [];
+  const canShelf = has("sampler_name") && has("scheduler");
+  const samePair = (t) => !!t && t.sampler_name === resolved.sampler_name
+                          && t.scheduler === resolved.scheduler;
+  const comboIndex = shelf.findIndex((c) => samePair(c.tuning));
+  const onShelf = comboIndex >= 0 ? shelf[comboIndex] : null;
+  const comboSaved = onShelf?.source === "saved";
+  const canStar = !!(resolved.sampler_name && resolved.scheduler);
+  const comboPairKey = `${resolved.sampler_name || ""} ${resolved.scheduler || ""}`;
+  const stepCombo = (dir) => {
+    if (!shelf.length) return;
+    // Off the shelf, forward opens at the top and back opens at the end; on it,
+    // both wrap. Yours are first, so one step back from the top is never a dead
+    // end and the ones you kept are always two clicks away.
+    setComboErr(null);
+    applyPreset(shelf[comboIndex < 0 ? (dir > 0 ? 0 : shelf.length - 1)
+                                     : (comboIndex + dir + shelf.length) % shelf.length]);
+  };
+  const toggleCombo = async () => {
+    if (!canStar || comboBusy) return;
+    setComboBusy(true);
+    setComboErr(null);
+    try {
+      const call = comboSaved ? forgetCombo : starCombo;
+      const d = await call(recipeId, model || "", resolved.sampler_name, resolved.scheduler);
+      // The server answers with the whole shelf rather than the one row, so the
+      // card never has to guess where a new pair landed in the order.
+      if (d?.ok) setSeat((s) => (s ? { ...s, combos: d.combos || [] } : s));
+      else setComboErr({ pair: comboPairKey, message: d?.error || "That pair could not be saved." });
+    } catch {
+      setComboErr({ pair: comboPairKey, message: "Pixal did not answer - the pair was not saved." });
+    } finally {
+      setComboBusy(false);
+    }
+  };
+  // One line under the bar, always present so a star cannot reflow the card.
+  const comboNote = onShelf ? onShelf.note
+    : !canStar ? "Pick a sampler and a scheduler."
+    : !isSet("sampler_name") && !isSet("scheduler") ? "The recipe's own pair."
+    : shelf.length ? "Not on the shelf. The star keeps it."
+    : "Nothing kept yet. The star keeps this pair.";
+  // An error belongs to the pair it was about, so moving off that pair retires
+  // it. Cheaper and more honest than a timer, and it cannot outlive its subject.
+  const comboError = comboErr?.pair === comboPairKey ? comboErr.message : "";
+  // The whole shelf as a list, with the current pair carried in its own group
+  // when it is not on the shelf - the Picker's value must always name a row, or
+  // the trigger falls back to a placeholder and stops saying what will render.
+  const comboOptions = [
+    ...(onShelf || !canStar ? [] : [{
+      id: COMBO_OFF_SHELF, group: "This render", description: comboNote,
+      label: tuningLine({ sampler_name: resolved.sampler_name,
+                          scheduler: resolved.scheduler }) }]),
+    ...shelf.map((c) => ({
+      id: c.id, label: tuningLine(c.tuning), description: c.detail || c.note,
+      group: c.source === "saved" ? "Yours" : "Community" })),
+  ];
+  const pickCombo = (id) => {
+    const row = shelf.find((c) => c.id === id);
+    if (!row) return;                    // "This render" is where you already are
+    setComboErr(null);
+    applyPreset(row);
   };
   const recoActive = !!reco && keys.every((k) => reco[k] === undefined || resolved[k] === reco[k]);
   const labelStyle = { fontSize: TYPE.label, fontWeight: W.label, color: "var(--textSec)",
@@ -1146,6 +1313,26 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                           fontFamily: "ui-monospace, Consolas, monospace",
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               model page · {recoLine}
+            </div>
+          )}
+          {/* Directly above the two Pickers it drives, so pressing an arrow and
+              watching both fields change is one glance, not two. */}
+          {canShelf && (
+            <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+              <span style={{ display: "flex", alignItems: "center", gap: SPACE[6],
+                             fontSize: TYPE.micro, fontWeight: W.heading,
+                             color: "var(--textTer)" }}>
+                Combos
+                <InfoTip size={11} text={"Sampler and scheduler pairs to try, stepped with the "
+                  + "arrows. Yours come first, then the MiniMax H3 community table ranked on "
+                  + "graphic quality - two to five votes a row, so read those as leads to "
+                  + "render, not as measurements. The star keeps the pair you are on, "
+                  + "whatever set it, and keeps it for every recipe on this model family."} />
+              </span>
+              <ComboShelf options={comboOptions} saved={comboSaved}
+                value={onShelf ? onShelf.id : COMBO_OFF_SHELF}
+                note={comboNote} error={comboError} busy={comboBusy} canStar={canStar}
+                onStep={stepCombo} onPick={pickCombo} onStar={toggleCombo} />
             </div>
           )}
           {/* Full width each: RES4LYF's names ("exponential/res_3s_non-monotonic")

@@ -1,6 +1,77 @@
 # Changelog
 
-## 1.1.9b — unreleased
+## 1.2.0b — 2026-09-02
+
+**A shelf of sampler combos, under two arrows.** The Sampler card grows a
+Combos row: a left and right arrow that step the sampler and scheduler
+together, a list that holds the whole shelf grouped and searchable, and a
+star that keeps the pair you are on. It opens loaded with the MiniMax H3
+community report's top twenty by graphic quality, each row carrying its
+rank and its vote count — two to five votes apiece, so they are leads to
+render, not measurements, and the card says so rather than hiding it.
+Starring works on whatever is on screen: a community row, the recipe's own
+pair, or two you picked by hand. A pair that is also in the table keeps its
+ranking after you keep it. Kept pairs live in `sampler_combos.json` beside
+`config.json`, are shared by every recipe on that model family, and are
+filtered against the seat before they are offered — an arrow can never land
+on a name the graph would refuse. The three curated presets beside it are
+unchanged.
+
+**Prompt enhance off means off.** With the writer switched off, short
+prompts, prompts with a question mark in them, iteration words and turns
+with a reference attached were still sent through the chat brain, and its
+prose reply then drew the Generate / Something else pills under a render
+that had already been queued. Now nothing typed with enhance off pays a
+brain round: the words go to the text encoder as written, an accept
+("go") still reaches back to your own last prompt, and the brain's merge
+of a correction into the previous scene is an enhance-on behaviour only.
+
+**Special decoders.** A new pair of rows under Settings › Image. The
+decoder picker swaps the last step of a render, the VAE decode, for a
+drop-in decoder that reads the Wan 2.1 / Qwen-Image latent. The first
+one is spacepxl's Wan 2.1 2× VAE, which decodes twice the pixels straight
+from the sampler's latent: the decode becomes the upscale, one pass, no
+second model inventing texture. It runs through the ComfyUI-VAE-Utils
+node pack and applies to the Krea 2 still recipes by default; the force
+switch widens it to every lane in that latent space. Encoders keep their
+own VAE, and the job card names the decoder that ran.
+
+**Shine removal stays on the face.** The pass used to key on skin
+colour across the whole frame, so arms, hands, chests and anything tan
+got matted along with the cheek. It now finds the face first — the
+`Face.pt` detector already sitting in ComfyUI's ultralytics folder, run
+through ComfyUI's own Python — and keeps the whole pass inside a soft
+ellipse around it. A frame with no face is left alone; a box with no
+detector falls back to the old whole-frame behaviour. Confined like
+that, the pass can afford the stronger setting from the realism notes
+(0.85 at the 88th percentile), which is now the default, and a
+strength dial rides on the row while the toggle is on, the way the
+grain amount does. The strength that touched a still is recorded on
+its finish chain.
+
+**“Go” fires the draft, mechanically.** When the writer has drafted a
+scene and invited a go, saying go (or render it, show me, yes, or
+pressing Generate under the draft) now queues that draft straight
+away. It no longer takes one more trip through the brain first — the
+trip that cost tokens and seconds, and that could stall on a busy
+provider with nothing left to decide. The draft you read is the
+scene that renders; anything more than a plain yes still goes to the
+writer as a redirect.
+
+**The installer stopped carrying our own notes.** Pixal prunes its
+internal working documents out of everything it publishes — planning
+briefs, design notes, the marketing site, the release runbook. That
+prune list existed twice, once for the public source tree and once for
+the installer, and only the first copy was kept current. So while the
+published source was correct, the downloadable installer had been
+quietly shipping Pixal's own release runbook, its deploy script and a
+handful of working notes since 1.1.0b. No user data and no credentials
+were involved — those have never been tracked — but an installer anyone
+can unzip is a publication, and those files were never written for one.
+There is one list now, in the file that ships, and a test that fails if
+a second one ever appears.
+
+## 1.1.9b — 2026-09-02
 
 **NVIDIA DLSS 5 on finished stills — bring your own DLL.** A still can
 now take a pass through NVIDIA's DLSS 5 neural re-render on its way out:

@@ -62,7 +62,9 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 # option in settings under minimax" - and one gate covering the section is the
 # better shape anyway: the three rows land together or not at all.)
 GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 2,
-         "vae": 1, "pidCfg": 1, "upd": 1,
+         # vae owns two since 1.2.0b: the Z-Image decoder row and the Special
+         # decoders group (one gate swaps both of its rows together).
+         "vae": 2, "pidCfg": 1, "upd": 1,
          # 1.1.4b: the still finish. Its own slot rather than a videoCfg key -
          # it is an image setting and it lands on the Image tab. 2026-09-01:
          # the dlss 5 and finishing groups merged into one "post processing"

@@ -1536,6 +1536,47 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Field>
         </Rows>
+        <GroupLabel>Special decoders</GroupLabel>
+        {/* One gate for the group: both rows land together or not at all. */}
+        {vae ? (
+        <Rows>
+          <Field className="px-ghost-in" label={<>Decoder <InfoTip maxWidth={320} text="Replaces the last step of a render, the VAE decode, with a drop-in decoder for the Wan 2.1 / Qwen-Image latent. The Wan 2.1 2× VAE (spacepxl) decodes twice the pixels straight from the sampler's latent — the decode is the upscale, one pass, nothing repainted. Needs the ComfyUI-VAE-Utils node pack. Off leaves every recipe on its own VAE." /></>}
+                 hint="Krea 2 stills by default.">
+            <Picker hug label="Special decoder"
+              value={vae.special || ""}
+              placeholder="Off"
+              options={[
+                { id: "", label: "Off" },
+                ...(vae.special_decoders || []).map((d) => ({
+                  id: d.id,
+                  label: d.label + (!d.file_installed ? " — VAE file missing"
+                                    : !d.available ? " — install ComfyUI-VAE-Utils" : ""),
+                })),
+              ]}
+              onChange={(id) => {
+                setVae({ ...vae, special: id });
+                apply({ vae: { special: id } },
+                      id ? "special decoder applied" : "stock decoders restored");
+              }} />
+          </Field>
+          <Field className="px-ghost-in" label={<>Force compatible models <InfoTip text="Every lane whose VAE lives in the Wan 2.1 / Qwen-Image latent — Qwen Image, Anima, the edit and identity lanes — decodes through the special decoder too, not only the Krea 2 still recipes." /></>}
+                 hint="All Wan/Qwen-latent lanes, not only Krea 2.">
+            <Switch label="Force"
+              on={!!vae.special_force}
+              disabled={!vae.special}
+              onChange={(on) => {
+                setVae({ ...vae, special_force: on });
+                apply({ vae: { special_force: on } },
+                      on ? "forced on every compatible lane" : "Krea 2 stills only");
+              }} />
+          </Field>
+        </Rows>
+        ) : (
+        <Rows>
+          <Field label="Decoder"><PickerGhost /></Field>
+          <Field label="Force compatible models"><SwitchGhost /></Field>
+        </Rows>
+        )}
         <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}
                  gloss={editCfg ? (
                    <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
@@ -1807,15 +1848,37 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 on the delivered frame, nothing to install. Label + tip,
                 no gloss and no hint - the budget sat at 149/150
                 (tests/test_settings_copy.py). */}
-            <Field className="px-ghost-in" label={<>Shine removal <InfoTip size={12} text="Lowers specular highlights on skin toward the tone around them — the shiny hotspots on foreheads, cheeks and chests. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
-              <Switch label="Shine removal"
-                on={stillCfg.de_shine}
-                title="Specular highlights pulled toward local skin tone."
-                onChange={(on) => {
-                  setStillCfg((s) => ({ ...(s || {}), de_shine: on }));
-                  apply({ still: { de_shine: on } },
-                        on ? "shine removal on" : "shine removal off");
-                }} />
+            <Field className="px-ghost-in" label={<>Shine removal <InfoTip size={12} text="Lowers specular highlights on the face toward the tone around them — the shiny hotspots on foreheads, cheeks and noses. A face detector from ComfyUI's ultralytics folder keeps the pass inside the face, so arms, hands and chests keep their light; a frame with no face is left alone. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
+              {/* 10.9: the strength dial rides inline like grain's amount -
+                  only while the toggle is on, the same 34px beat. */}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {stillCfg.de_shine ? (
+                  <input type="number" step="0.05" min="0.1" max="1"
+                    value={stillCfg.de_shine_strength ?? 0.85}
+                    aria-label="Shine removal strength"
+                    title="How far highlights are pulled toward the skin around them. 0.85 is the judged default; 1 is all the way."
+                    style={{ width: 52, height: 24, padding: "0 8px",
+                             background: "var(--bg3)",
+                             border: "1px solid var(--border)",
+                             borderRadius: RADIUS.pill, color: "var(--text)",
+                             fontFamily: FONT, fontSize: TYPE.label,
+                             fontWeight: W.nav, textAlign: "center" }}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      setStillCfg((s) => ({ ...(s || {}), de_shine_strength: v }));
+                      apply({ still: { de_shine_strength: v } }, "shine removal strength");
+                    }} />
+                ) : null}
+                <Switch label="Shine removal"
+                  on={stillCfg.de_shine}
+                  title="Specular highlights pulled toward local skin tone."
+                  onChange={(on) => {
+                    setStillCfg((s) => ({ ...(s || {}), de_shine: on }));
+                    apply({ still: { de_shine: on } },
+                          on ? "shine removal on" : "shine removal off");
+                  }} />
+              </span>
             </Field>
             </>
           ) : (
@@ -1861,7 +1924,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                             : "model upscaler applied");
                   }}
                   options={[
-                    { v: "model", label: "Upscale" },
+                    { v: "model", label: "Model" },
                     { v: "pid", label: "PiD", chip: "4×", Icon: NvidiaAccent,
                       disabled: upscale.pid_available === false,
                       title: upscale.pid_available === false

@@ -813,7 +813,9 @@ class ConversationIntentTests(unittest.IsolatedAsyncioTestCase):
         submit.assert_awaited_once()
         self.assertEqual(submit.await_args.args[3], "a silver fox in rain")
 
-    async def test_prompt_enhance_off_retains_prefixed_reference_description(self):
+    async def test_prompt_enhance_off_ignores_the_reference_and_never_calls_the_brain(self):
+        # 10.10: with enhance OFF an attached reference no longer buys a brain
+        # round to describe it - the typed words go to the encoder as typed.
         prompt = "a red fox in snow"
         described = (prompt + "\nReference clothing: a cropped indigo denim jacket "
                      "with brass shank buttons and cream shearling cuffs.")
@@ -841,9 +843,9 @@ class ConversationIntentTests(unittest.IsolatedAsyncioTestCase):
                 })
 
         submit.assert_awaited_once()
-        self.assertEqual(submit.await_args.args[3], described)
-        first_request = llm.await_args_list[0].args[0]
-        self.assertNotIn("[entropy:", json.dumps(first_request[-1]))
+        self.assertEqual(submit.await_args.args[3], prompt)
+        self.assertTrue(submit.await_args.kwargs.get("verbatim"))
+        llm.assert_not_awaited()
 
     async def test_prompt_enhance_off_rejects_rewritten_reference_scene(self):
         prompt = "a silver fox in rain"

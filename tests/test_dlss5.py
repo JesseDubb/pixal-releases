@@ -157,11 +157,22 @@ class DefaultsAndResolversTests(unittest.TestCase):
                                  f"{stored!r}")
 
     def test_the_fixed_node_inputs_are_the_briefs_constants(self):
+        """Every input the node declares, pinned - including the dead ones.
+
+        `intensity` measured pixel-identical across 0.4/1.0/2.0 (see
+        docs/2026-09-03-dlss5-dials.md), so it stopped being a Settings dial.
+        It could NOT stop being sent: /object_info lists it under `required`,
+        alongside `preset` and `skin`, which are equally dead. A required input
+        missing from the prompt is a queue-time validation error, so dropping
+        it took the whole finisher down rather than tidying it up. Dead dials
+        stay pinned at their default here; only the live ones (style, tone,
+        structure) are resolved per render.
+        """
         self.assertEqual(server.DLSS5_NODE, "DLSS5NeuralRendering")
         self.assertEqual(server.DLSS5_STYLES, ("default", "natural",
                                                "cinematic"))
         self.assertEqual(server.DLSS5_FIXED,
-                         {"preset": 3, "structure": 1.0,
+                         {"preset": 3, "intensity": 1.0, "structure": 1.0,
                           "skin": -1.0, "auto_mask": False,
                           "batch_mode": "still images", "gpu_index": 0,
                           "channel_order": "auto"})

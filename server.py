@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.2.1b"
+PIXAL_VERSION = "1.2.2b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -1635,6 +1635,41 @@ ZIMAGE_VAE_CANDIDATES = (
 )
 ZIMAGE_ANIME_VAE = "ZImage\\zImageClearVae_natural.safetensors"
 
+# Z-Image BASE is the one variant in this family that is NOT distilled: it
+# samples at cfg 4, which means every step pushes the image away from whatever
+# the negative conditioning says. Pixal sent an EMPTY string there on every
+# base render, so cfg 4 had nothing to push against - the flat, plastic frames
+# Jesse rejected on 2026-09-03 ("Zimage recipes are completely broken"). The
+# base guide is blunt about it: "The negative prompt matters a lot with z-image
+# base." Turbo and clear-anime are distilled, zero their negative out, and
+# never reach this.
+#
+# Split in two on purpose. The quality half is medium-agnostic. The realism
+# half negates drawn and rendered media, which is exactly the medium `fantasy`
+# ASKS for - putting it on the painterly recipe would fight the D&D LoRA the
+# recipe exists to run. So realism-only, by recipe id, never by family.
+ZIMAGE_BASE_NEGATIVE_QUALITY = (
+    "text, writing, subtitle, watermark, logo, blurry, low quality, "
+    "jpeg, artifacts")
+# Verbatim from the Z-Image base realism guide (nsfwVariant, r/StableDiffusion),
+# minus the shared quality tail above. Kept word-for-word rather than tidied:
+# an untested edit to a negative that somebody else measured is how the
+# res_multistep default got here in the first place.
+ZIMAGE_BASE_NEGATIVE_REALISM = (
+    "3D, ai generated, semi realistic, illustrated, drawing, comic, "
+    "digital painting, 3D model, blender, video game screenshot, screenshot, "
+    "render, high-fidelity, smooth textures, CGI, masterpiece, grainy")
+
+
+def zimage_base_negative(recipe_id):
+    """The negative a cfg-4 Z-Image Base render should carry, by recipe.
+
+    Empty for a recipe whose medium is not photographic - see the split above.
+    """
+    if recipe_id == "zimage":
+        return f"{ZIMAGE_BASE_NEGATIVE_REALISM}, {ZIMAGE_BASE_NEGATIVE_QUALITY}"
+    return ZIMAGE_BASE_NEGATIVE_QUALITY
+
 # Anima: a 2B Cosmos-Predict2-derived anime model on a Qwen3-0.6B BASE text
 # encoder and the Qwen-Image VAE. Every value below is ported from ComfyUI's own
 # shipped blueprint, "Text to Image (Anima Base 1.0)" - it is a natively
@@ -2047,12 +2082,20 @@ QWEN_IMAGE_CFG = 4.0
 QWEN_IMAGE_STEPS = 20
 
 ZIMAGE_EXECUTION_PROFILES = {
+    # Re-sourced 2026-09-03. What was here - res_multistep / simple / 25 steps
+    # / shift 3 - was one CivitAI card (ZiB_unstableRevolution) generalised to
+    # all five installed base checkpoints, and only half-transcribed: that card
+    # says "Scheduler: Bong Tangent" and Pixal wrote `simple`. Two independent
+    # community grids then rated res_multistep RED against every scheduler on
+    # this architecture. These numbers are the Z-Image base realism guide's own
+    # stage-1 block instead, which is at least a set somebody rendered together.
+    # Still not measured on this box - see docs/2026-09-03-zimage-recipes.md.
     "zimage_base": {
         "clip_candidates": ZIMAGE_CLIP_CANDIDATES, "clip_type": "lumina2",
         "vae_candidates": ZIMAGE_VAE_CANDIDATES,
-        "sampler_graph": "ksampler", "steps": 25,
-        "cfg": 4.0, "sampler": "res_multistep", "scheduler": "simple",
-        "shift": 3.0, "zero_negative": False,
+        "sampler_graph": "ksampler", "steps": 22,
+        "cfg": 4.0, "sampler": "res_2s", "scheduler": "beta",
+        "shift": 1.0, "zero_negative": False,
     },
     "zimage_turbo_v4": {
         "clip_candidates": ZIMAGE_CLIP_CANDIDATES, "clip_type": "lumina2",
@@ -2068,6 +2111,14 @@ ZIMAGE_EXECUTION_PROFILES = {
         "shift": 6.0, "zero_negative": True,
     },
 }
+# The profiles the Z-Image realism presets actually speak for.
+#
+# Not turbo: Amazing v4 has no KSampler and therefore no scheduler and no
+# shift, so a sampler/scheduler PAIR is not a thing that graph can run.
+# Not clear_anime either, though it does have a KSampler - it is a distilled
+# merge at 12 steps / cfg 1 with its own matched VAE, and the grid these
+# numbers come from rendered photographic subjects only.
+ZIMAGE_REALISM_PROFILES = ("zimage_base",)
 
 # MiniMax H3's fl2va transformers render stills natively (brief 9.58): the
 # h3_still recipe drives the video model prompt-only at its 5-frame floor and
@@ -3774,23 +3825,78 @@ SAMPLER_PRESETS = {
                  "against 8.1 for the still default, on the same clip.",
          "tuning": {"sampler_name": "er_sde", "scheduler": "sgm_uniform"}},
     ),
+    # Re-sourced 2026-09-03. Jesse: "our krea 2 recipes were a bit gritty, I did
+    # find some good ones I think I saved." He had - the first three rows are
+    # lifted from styles he saved on 09-01 after looking at the frames, which is
+    # a stronger claim than anything published and is the A/B that
+    # docs/2026-08-31-sampler-presets.md has listed as open since it was written.
+    #
+    # eta is the grit: how much fresh noise an SDE sampler re-injects each step.
+    # The old "Max detail" row sat at 0.5 and led the shelf on look; both of
+    # Jesse's realism keepers sit at 0.3 or below, so the quiet ones lead now
+    # and the two published rows moved to the back with their provenance intact.
     "krea2": (
-        {"id": "recommended", "label": "Recommended",
-         "note": "RES4LYF's published setting for the Qwen-Image family Krea 2 "
-                 "belongs to: res_2m with beta57. Not measured here.",
-         "tuning": {"sampler_name": "multistep/res_2m", "scheduler": "beta57",
-                    "steps": 12, "eta": 0.3}},
+        {"id": "organic", "label": "Organic soft",
+         "note": "Jesse's, saved 2026-09-01 as \u201cRealism Organic Soft\u201d. "
+                 "No re-injected noise at all, which is what takes the grit out.",
+         "tuning": {"sampler_name": "linear/euler", "scheduler": "simple",
+                    "steps": 14, "eta": 0.0}},
+        {"id": "realism", "label": "Realism",
+         "note": "Jesse's, saved 2026-09-01 as \u201cRealism er_sde normal "
+                 "SoLordZ\u201d - 10 steps at eta 0.3.",
+         "tuning": {"sampler_name": "er_sde", "scheduler": "normal",
+                    "steps": 10, "eta": 0.3}},
         {"id": "fast", "label": "Fast",
          "note": "The turbo build's own schedule, and what every Krea 2 recipe "
                  "runs at untouched.",
          "tuning": {"sampler_name": "linear/euler", "scheduler": "simple",
                     "steps": 8, "eta": 0.0}},
+        {"id": "recommended", "label": "Published",
+         "note": "RES4LYF's published setting for the Qwen-Image family Krea 2 "
+                 "belongs to: res_2m with beta57. Not measured here.",
+         "tuning": {"sampler_name": "multistep/res_2m", "scheduler": "beta57",
+                    "steps": 12, "eta": 0.3}},
         {"id": "quality", "label": "Max detail",
          "note": "RES4LYF's author's own starting point - res_2s at eta 0.5 - "
-                 "held to the 4-15 steps that family is documented for. More "
-                 "model calls per step, so slower. Not measured here.",
+                 "held to the 4-15 steps that family is documented for. Two "
+                 "model calls a step, so slower, and the grittiest row here. "
+                 "Not measured here.",
          "tuning": {"sampler_name": "exponential/res_2s", "scheduler": "beta57",
                     "steps": 15, "eta": 0.5}},
+    ),
+    # Z-Image had no row here at all until 2026-09-03, so every Z-Image build
+    # showed an empty preset shelf while the seat offered 63 sampler names.
+    #
+    # `profiles` is why these are base-only. Turbo runs the Amazing v4 sigma
+    # chain, whose seat carries no scheduler at all - offering it a pair would
+    # silently drop the scheduler half and apply a combo nobody measured. The
+    # community grid these come from was run on a PLAIN KSampler, so it does
+    # not describe the v4 graph either way. docs/2026-09-03-zimage-recipes.md
+    # has the turbo gap written up; it needs an A/B before anything flips.
+    "zimage": (
+        {"id": "guide", "label": "Base guide", "profiles": ZIMAGE_REALISM_PROFILES,
+         "note": "The Z-Image base realism guide's own stage-1 block, and what "
+                 "the base recipes now ship at. Not measured here.",
+         "tuning": {"sampler_name": "res_2s", "scheduler": "beta", "steps": 22}},
+        {"id": "seeds", "label": "Seeds 2", "profiles": ZIMAGE_REALISM_PROFILES,
+         "note": "Top row of a 992-image community grid - green against every "
+                 "scheduler but karras and exponential. Not measured here.",
+         "tuning": {"sampler_name": "seeds_2", "scheduler": "beta", "steps": 22}},
+        {"id": "ancestral", "label": "Euler ancestral",
+         "profiles": ZIMAGE_REALISM_PROFILES,
+         "note": "Called best overall by two independent testers on that grid, "
+                 "and one model call per step. Not measured here.",
+         "tuning": {"sampler_name": "euler_ancestral", "scheduler": "beta",
+                    "steps": 22}},
+        {"id": "sde", "label": "DPM++ SDE", "profiles": ZIMAGE_REALISM_PROFILES,
+         "note": "The grid author's own pick. Second order - two model calls a "
+                 "step - so the steps are halved to match. Not measured here.",
+         "tuning": {"sampler_name": "dpmpp_sde_gpu", "scheduler": "ddim_uniform",
+                    "steps": 11}},
+        {"id": "cheap", "label": "Euler", "profiles": ZIMAGE_REALISM_PROFILES,
+         "note": "The cheapest arm that still rates green, on a photorealism "
+                 "tester's preferred scheduler. Not measured here.",
+         "tuning": {"sampler_name": "euler", "scheduler": "beta57", "steps": 22}},
     ),
 }
 
@@ -3801,17 +3907,29 @@ def sampler_presets(base_id, model=None):
     A preset survives only if the seat carries every key it sets AND offers
     every enum value it names. cfg is never in a preset: the families that have
     presets are all distilled, and cfg_locked already pins it at 1.
+
+    Three filters, narrowest last. `lanes` is by recipe id - H3 stills and H3
+    video were A/B'd separately and disagreed. `profiles` is by the MODEL's
+    execution profile, which is what separates a Z-Image build that has a
+    scheduler from one that does not; without it a pair would be offered to the
+    Amazing v4 seat, silently lose its scheduler on the way through the key
+    filter below, and apply a combo nobody ever rendered.
     """
     seat = sampler_seat(base_id, model)
     spec = RECIPE_SPECS.get(base_id)
     if not seat or not spec:
         return []
+    entry = resolve_model_entry(model) if model else None
+    profile = (entry or {}).get("execution_profile")
     keys = set(seat_tuning_keys(seat))
     choices = seat_choices(seat) or {}
     out = []
     for p in SAMPLER_PRESETS.get(spec["family"], ()):
         lanes = p.get("lanes")
         if lanes and base_id not in lanes:
+            continue
+        profiles = p.get("profiles")
+        if profiles and profile not in profiles:
             continue
         tuning = {}
         for k, v in p["tuning"].items():
@@ -3847,37 +3965,83 @@ def sampler_presets(base_id, model=None):
 # verdicts. The InfoTip on the card says so; every row carries its own vote count
 # so nothing has to be taken on trust.
 #
-# Rank order is the report's, kept verbatim. Row 20 came off the paste without a
-# score (it sorts below 4.50 and that is all that is known), so it says that
-# rather than borrowing a number from its neighbour.
+# Trimmed to five a family on 2026-09-03. Jesse: "drop the extra 10 presets
+# from minimax h3, the bottom of that list had terrible combos" ... "shoot for
+# 5 excellent combos per model type." The H3 shelf was the report's top twenty
+# kept verbatim, and twelve of those were 5.00 scores standing on ONE or TWO
+# votes - an ordering that is mostly noise, walked one arrow-press at a time.
+# What survives is what has a reason: our own A/Bs first, then the rows with
+# the largest samples behind them.
+#
+# Each row now carries its OWN provenance sentence instead of a score the
+# reader has to interpret. That is what lets a family whose combos came from
+# somewhere else - Jesse's saved recipes, on Krea 2 - sit in the same shelf
+# without the card calling them community votes.
 H3_COMMUNITY_COMBOS = (
-    ("dpmpp_2m_sde",           "simple",           5.00, 2),
-    ("dpmpp_2s_ancestral",     "beta",             5.00, 2),
-    ("dpmpp_sde",              "linear_quadratic", 5.00, 1),
-    ("dpmpp_sde",              "normal",           5.00, 1),
-    ("er_sde",                 "simple",           5.00, 1),
-    ("euler_ancestral",        "normal",           5.00, 1),
-    ("euler",                  "beta",             5.00, 2),
-    ("euler_cfg_pp",           "beta",             5.00, 1),
-    ("euler_cfg_pp",           "simple",           5.00, 2),
-    ("exp_heun_2_x0_sde",      "normal",           5.00, 1),
-    ("heunpp2",                "linear_quadratic", 5.00, 1),
-    ("ipndm",                  "sgm_uniform",      5.00, 1),
-    ("dpmpp_sde_gpu",          "ddim_uniform",     4.67, 3),
-    ("euler",                  "simple",           4.67, 3),
-    ("sa_solver",              "normal",           4.67, 3),
-    ("dpmpp_2m_sde_gpu",       "beta",             4.60, 5),
-    ("dpmpp_2m_sde_gpu",       "simple",           4.50, 2),
-    ("dpmpp_2s_ancestral",     "normal",           4.50, 2),
-    ("dpmpp_sde_gpu",          "beta",             4.50, 2),
-    ("euler_ancestral_cfg_pp", "beta",             None, None),
+    ("dpmpp_sde_gpu", "beta",
+     "Measured here: +74% mean fine detail over six frames against the "
+     "community pick. ~104 s. The shipped still default."),
+    ("res_multistep", "simple",
+     "Measured here: ~35% faster at 68 s with less fine detail - and the pair "
+     "that produced the sets Jesse called amazing."),
+    ("er_sde", "sgm_uniform",
+     "Jesse's pick for video across two rounds - 4.3 min against 8.1 for the "
+     "still default, on the same clip."),
+    ("dpmpp_2m_sde_gpu", "beta",
+     "The community report's best-supported row: 4.60 on 5 votes, the largest "
+     "sample in it. A lead to render, not a measurement."),
+    ("dpmpp_sde_gpu", "ddim_uniform",
+     "Graphic quality 4.67 on 3 votes in the report. A lead to render."),
 )
 
-# Keyed by family so a second table can arrive without touching the reader. The
-# community report rated MiniMax H3 and nothing else; Krea 2's shelf is whatever
-# Jesse stars on it, which is the honest answer until somebody runs the A/B that
-# docs/2026-08-31-sampler-presets.md still lists as open.
-COMMUNITY_COMBOS = {"minimax_h3": H3_COMMUNITY_COMBOS}
+# Krea 2's shelf is Jesse's own, lifted from the styles he saved after looking
+# at the frames - which is a better claim than anything published, and the
+# answer docs/2026-08-31-sampler-presets.md has been asking for. He judged the
+# shipped pairs "a bit gritty" on 2026-09-03; eta is the grit dial (how much
+# noise an SDE sampler re-injects each step), and both of his keepers sit at
+# 0.3 or below.
+KREA2_COMBOS = (
+    ("er_sde", "normal",
+     "Jesse's, saved 2026-09-01 as “Realism er_sde normal SoLordZ” - "
+     "10 steps at eta 0.3."),
+    ("linear/euler", "simple",
+     "Jesse's, saved 2026-09-01 as “Realism Organic Soft” - 14 steps "
+     "at eta 0.0, and the family's shipped schedule."),
+    ("fully_implicit/gauss-legendre_2s", "simple",
+     "Jesse's, saved as “Ultra Realism” - 5 steps at eta 0.75. Fully "
+     "implicit, so it is slow per step."),
+    ("multistep/res_2m", "beta57",
+     "RES4LYF's published pair for the Qwen-Image family Krea 2 belongs to. "
+     "Not measured here."),
+    ("exponential/res_2s", "beta57",
+     "RES4LYF's author's own starting point. Two model calls a step, so halve "
+     "the steps. Not measured here."),
+)
+
+# Z-Image, from a 992-image community grid run on z_image_turbo at shift 3,
+# 10 steps, cfg 1. karras and exponential are red down the entire column and
+# so is the whole res_multistep family - none appear here, and a test says so.
+ZIMAGE_COMBOS = (
+    ("res_2s", "beta",
+     "The Z-Image base realism guide's own stage-1 pair, and what the base "
+     "recipes ship at. Not measured here."),
+    ("seeds_2", "beta",
+     "Top row of the community grid - green against every scheduler except "
+     "karras and exponential. Not measured here."),
+    ("euler_ancestral", "beta",
+     "Called best overall by two independent testers on that grid, at one "
+     "model call per step. Not measured here."),
+    ("dpmpp_sde_gpu", "ddim_uniform",
+     "The grid author's own named pair. Second order - halve the steps. "
+     "Not measured here."),
+    ("euler", "beta57",
+     "The cheapest arm that still rates green, on a photorealism tester's "
+     "preferred scheduler. Not measured here."),
+)
+
+COMMUNITY_COMBOS = {"minimax_h3": H3_COMMUNITY_COMBOS,
+                    "krea2": KREA2_COMBOS,
+                    "zimage": ZIMAGE_COMBOS}
 
 # Your own pairs live beside config.json rather than inside it. config.json's
 # merge is a whitelist and an unreadable one falls back to defaults, which then
@@ -3978,20 +4142,13 @@ def sampler_combos(base_id, model=None):
                 return False
         return True
 
-    # Rank first, so a starred pair that IS a community row keeps its ranking
-    # instead of losing it the moment you keep it - star #7 and the card should
-    # go on saying it was #7.
-    table = {(s, c): (rank, score, votes) for rank, (s, c, score, votes)
+    # Each row states where it came from, so a shelf mixing our own A/Bs with
+    # somebody's published pair with Jesse's saved styles cannot flatten the
+    # three into one claim. Position is still meaningful - the tables are
+    # ordered best-supported first - so the rank rides along as #N of 5.
+    table = {(s, c): (rank, note) for rank, (s, c, note)
              in enumerate(COMMUNITY_COMBOS.get(family, ()), start=1)}
-
-    def ranking(pair):
-        """(#7, "5.00 from 2 votes") - the rank and the sample size, apart, so
-        the two copy registers below can each read as a sentence."""
-        rank, score, votes = table[pair]
-        if score is None:
-            return f"#{rank}", "score not captured"
-        return (f"#{rank}",
-                f"{score:.2f} from {votes} vote{'' if votes == 1 else 's'}")
+    total = len(table)
 
     # Two strings on purpose. `note` stands alone under the bar, where nothing
     # else says where the pair came from; `detail` sits inside the list, under a
@@ -4004,25 +4161,24 @@ def sampler_combos(base_id, model=None):
         if pair in seen or not runnable(*pair):
             continue
         seen.add(pair)
-        # A starred pair that IS a community row keeps its ranking rather than
-        # losing it the moment you keep it: star #7 and the card goes on saying
-        # #7, which is most of what made it worth keeping.
-        rank, rated = ranking(pair) if pair in table else ("", "")
+        # A starred pair that IS a table row keeps its provenance rather than
+        # losing it the moment you keep it: star #3 and the card goes on saying
+        # #3, which is most of what made it worth keeping.
+        rank, note = table.get(pair, (None, ""))
         out.append({"id": _combo_id("saved", family, *pair), "source": "saved",
-                    "note": f"Yours. Community graphic quality {rank}, {rated}."
+                    "note": f"Yours. #{rank} of {total} - {note}"
                             if rank else "Yours - starred here.",
-                    "detail": f"Starred - community {rank}, {rated}"
+                    "detail": f"Starred - #{rank} of {total}"
                               if rank else "Starred here",
                     "tuning": {"sampler_name": pair[0], "scheduler": pair[1]}})
-    for pair in table:
+    for pair, (rank, note) in table.items():
         if pair in seen or not runnable(*pair):
             continue
         seen.add(pair)
-        rank, rated = ranking(pair)
         out.append({"id": _combo_id("community", family, *pair),
                     "source": "community",
-                    "note": f"Community graphic quality {rank}, {rated}.",
-                    "detail": f"Graphic quality {rank}, {rated}",
+                    "note": f"#{rank} of {total} - {note}",
+                    "detail": note,
                     "tuning": {"sampler_name": pair[0], "scheduler": pair[1]}})
     return out
 
@@ -6401,7 +6557,7 @@ def set_clip_loader(graph, node_id, name, clip_type):
 
 def _build_zimage(recipe_id, scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                   character=None, lora_plan=None):
+                   character=None, lora_plan=None, negative=None):
     g = json.loads(json.dumps(TEMPLATES["zimage"]))
     model_entry = pick_recipe_model(model, recipe_id)
     set_unet_loader(g, "1", model_entry)
@@ -6420,11 +6576,17 @@ def _build_zimage(recipe_id, scene, seed, width=None, height=None, loras=(), ove
         cap = "anime, Japanese anime, " + cap
     g["4"]["inputs"]["text"] = cap
     if settings["zero_negative"]:
+        # Distilled: guidance is baked in and the official Turbo pipeline does
+        # not read a negative at all. Zeroing it is the documented behaviour.
         g["5"] = {"class_type": "ConditioningZeroOut",
                   "inputs": {"conditioning": ["4", 0]}}
     else:
+        # A saved preset may carry its own. Until 2026-09-03 this builder took
+        # no `negative` at all, so a style that set one had it dropped by the
+        # kwarg filter in the chat path and silently rendered without it.
         g["5"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": ["2", 0], "text": ""}}
+                  "inputs": {"clip": ["2", 0],
+                             "text": negative or zimage_base_negative(recipe_id)}}
 
     if aspect and not (width and height):
         width, height = dims_for(aspect, mp or RECIPE_SPECS[recipe_id]["mp"])
@@ -6477,6 +6639,12 @@ def _build_zimage(recipe_id, scene, seed, width=None, height=None, loras=(), ove
             **lora_job_info(entries, dropped),
             "size": f"{g['6']['inputs']['width']}x{g['6']['inputs']['height']}",
             "character": ch["name"] if ch else None}
+    # Read back off the graph, not off the argument: on a distilled profile the
+    # branch above zeroes the negative whatever was asked for, and the ledger
+    # should say what RAN. The recipe rule - info is what ran, the plan is what
+    # you asked for - is the same one the LoRA stack already follows.
+    if g["5"]["class_type"] == "CLIPTextEncode":
+        info["negative"] = g["5"]["inputs"]["text"]
     return g, cap, info
 
 
@@ -7532,23 +7700,26 @@ def build_h3_ref_still_2x(scene, seed, width=None, height=None, loras=(),
 
 def build_zimage(scene, seed, width=None, height=None, loras=(), overrides=(),
                  standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                 character=None, lora_plan=None):
+                 character=None, lora_plan=None, negative=None):
     return _build_zimage("zimage", scene, seed, width, height, loras, overrides,
-                         standing, nsfw, model, aspect, mp, character, lora_plan)
+                         standing, nsfw, model, aspect, mp, character, lora_plan,
+                         negative)
 
 
 def build_fantasy(scene, seed, width=None, height=None, loras=(), overrides=(),
                   standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                  character=None, lora_plan=None):
+                  character=None, lora_plan=None, negative=None):
     return _build_zimage("fantasy", scene, seed, width, height, loras, overrides,
-                         standing, nsfw, model, aspect, mp, character, lora_plan)
+                         standing, nsfw, model, aspect, mp, character, lora_plan,
+                         negative)
 
 
 def build_anime(scene, seed, width=None, height=None, loras=(), overrides=(),
                 standing=True, nsfw=False, model=None, aspect=None, mp=None,
-                character=None, lora_plan=None):
+                character=None, lora_plan=None, negative=None):
     return _build_zimage("anime", scene, seed, width, height, loras, overrides,
-                         standing, nsfw, model, aspect, mp, character, lora_plan)
+                         standing, nsfw, model, aspect, mp, character, lora_plan,
+                         negative)
 
 
 # Animate model picks. Ero10/Sulphur are NON-distilled LTX 2.3 finetunes (NSFW) -
@@ -8007,7 +8178,12 @@ DLSS5_TIMEOUT = 30.0    # ~0.4-1.9 s per 3 MP frame; the cap is for a busy box
 # 9.00 / 9.04 / 9.00 at 1.0 / 1.5 / 2.0 - so it is an amount knob that
 # saturates, and a slider dead over half its travel is the bug this release
 # removes. preset and skin measured NO pixel change at all, like intensity.
-DLSS5_FIXED = {"preset": 3, "structure": 1.0, "skin": -1.0,
+# intensity is pinned rather than dropped: the node IGNORES it (see
+# still_dlss5_tone) but still declares it REQUIRED, so a graph without it is
+# refused at validation - "Required input is missing: intensity", HTTP 400 -
+# and _dlss5_delivered swallows that as a silent no-op. Found 2026-09-03: a
+# whole batch finished de-shine-only with DLSS 5 never running.
+DLSS5_FIXED = {"preset": 3, "intensity": 1.0, "structure": 1.0, "skin": -1.0,
                "auto_mask": False, "batch_mode": "still images",
                "gpu_index": 0, "channel_order": "auto"}
 

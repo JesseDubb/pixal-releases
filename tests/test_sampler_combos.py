@@ -49,61 +49,77 @@ class _Isolated(unittest.TestCase):
 class TableTests(unittest.TestCase):
     """The seeded rows."""
 
-    def test_the_pasted_top_twenty_is_all_there(self):
-        self.assertEqual(len(server.H3_COMMUNITY_COMBOS), 20)
+    def test_five_a_family_and_no_more(self):
+        """Jesse, 2026-09-03: "drop the extra 10 presets from minimax h3, the
+        bottom of that list had terrible combos" ... "shoot for 5 excellent
+        combos per model type." Twelve of the old twenty were 5.00 scores
+        standing on one or two votes - an ordering that is mostly noise, and it
+        was being walked one blind arrow-press at a time."""
+        for family, rows in server.COMMUNITY_COMBOS.items():
+            with self.subTest(family=family):
+                self.assertEqual(len(rows), 5)
 
     def test_no_pair_appears_twice(self):
         """A duplicate pair would be two shelf positions that do the same
         thing, and the second could never be reached by the star."""
-        pairs = [(s, c) for s, c, _score, _votes in server.H3_COMMUNITY_COMBOS]
-        self.assertEqual(len(pairs), len(set(pairs)))
+        for family, rows in server.COMMUNITY_COMBOS.items():
+            pairs = [(s, c) for s, c, _note in rows]
+            with self.subTest(family=family):
+                self.assertEqual(len(pairs), len(set(pairs)))
 
-    def test_every_row_carries_its_own_sample_size(self):
-        """A 5.00 from one vote and a 4.60 from five are not the same claim,
-        and the shelf shows the difference on every row rather than in a
-        footnote nobody reads."""
-        for sampler, scheduler, score, votes in server.H3_COMMUNITY_COMBOS:
-            with self.subTest(pair=(sampler, scheduler)):
-                if score is None:
-                    self.assertIsNone(votes)      # the truncated row, and it says so
-                else:
-                    self.assertGreaterEqual(votes, 1)
+    def test_every_row_says_where_it_came_from(self):
+        """A shelf mixing our own A/Bs with somebody's published pair with
+        Jesse's saved styles cannot flatten the three into one claim - so the
+        provenance rides on the row, not in a footnote nobody reads."""
+        for family, rows in server.COMMUNITY_COMBOS.items():
+            for sampler, scheduler, note in rows:
+                with self.subTest(family=family, pair=(sampler, scheduler)):
+                    self.assertTrue(note.strip())
+                    self.assertRegex(
+                        note,
+                        r"Measured here|Jesse|Not measured here"
+                        r"|not a measurement|lead to render|RES4LYF")
 
-    def test_the_ranking_is_kept_in_the_report_s_order(self):
-        """Rank is the row's position, so a re-sort here would silently
-        renumber every note. Scored rows descend; the unscored one is last."""
-        scored = [s for _n, _c, s, _v in server.H3_COMMUNITY_COMBOS if s is not None]
-        self.assertEqual(scored, sorted(scored, reverse=True))
-        self.assertIsNone(server.H3_COMMUNITY_COMBOS[-1][2])
+    def test_what_we_measured_ourselves_leads_the_h3_shelf(self):
+        """Position is the only ranking left, so the rows with a real A/B
+        behind them have to be the ones the arrows reach first."""
+        for _s, _c, note in server.H3_COMMUNITY_COMBOS[:2]:
+            self.assertIn("Measured here", note)
 
     def test_no_row_names_a_scheduler_h3_measured_as_dead(self):
         """karras, exponential and kl_optimal scored 1.1-1.2 stars over
         hundreds of community votes on H3. A 5.00-from-one-vote row naming one
         of them would be the shelf handing over its own worst case."""
         dead = {"karras", "exponential", "kl_optimal"}
-        for _sampler, scheduler, _score, _votes in server.H3_COMMUNITY_COMBOS:
+        for _sampler, scheduler, _note in server.H3_COMMUNITY_COMBOS:
             self.assertNotIn(scheduler, dead)
 
-    def test_only_the_family_the_report_rated_gets_a_table(self):
-        """The report is MiniMax H3. Krea 2's shelf is whatever gets starred on
-        it until somebody runs the A/B docs/2026-08-31 still lists as open."""
-        self.assertEqual(set(server.COMMUNITY_COMBOS), {H3_FAMILY})
+    def test_no_zimage_row_names_something_that_family_rates_dead(self):
+        """karras and exponential are red down the entire column of a
+        992-image Z-Image grid, and so is the whole res_multistep family."""
+        for sampler, scheduler, _note in server.ZIMAGE_COMBOS:
+            self.assertNotIn(scheduler, {"karras", "exponential"})
+            self.assertNotIn("res_multistep", sampler)
+
+    def test_the_three_families_with_a_shelf_are_the_three_in_use(self):
+        self.assertEqual(set(server.COMMUNITY_COMBOS),
+                         {H3_FAMILY, "krea2", "zimage"})
 
 
 class ShelfTests(_Isolated):
     """What the card's arrows are handed."""
 
-    def test_the_community_rows_are_offered_on_h3(self):
+    def test_the_table_rows_are_offered_on_h3(self):
         with patch.object(server, "seat_choices", return_value={}):
             got = server.sampler_combos(H3_STILL, "")
-        self.assertEqual(len(got), 20)
+        self.assertEqual(len(got), 5)
         self.assertTrue(all(c["source"] == "community" for c in got))
 
-    def test_a_row_says_its_rank_and_its_votes(self):
+    def test_a_row_says_its_position_and_its_provenance(self):
         with patch.object(server, "seat_choices", return_value={}):
             first = server.sampler_combos(H3_STILL, "")[0]
-        self.assertIn("#1", first["note"])
-        self.assertIn("2 votes", first["note"])
+        self.assertIn("#1 of 5", first["note"])
+        self.assertIn("Measured here", first["note"])
 
     def test_every_row_carries_both_copy_registers(self):
         """`note` stands alone under the bar; `detail` sits in the list under a
@@ -117,33 +133,22 @@ class ShelfTests(_Isolated):
                 self.assertTrue(c["detail"].strip())
                 self.assertNotIn("Community", c["detail"])
 
-    def test_one_vote_is_not_pluralised(self):
-        with patch.object(server, "seat_choices", return_value={}):
-            notes = [c["note"] for c in server.sampler_combos(H3_STILL, "")]
-        self.assertTrue(any("from 1 vote." in n for n in notes))
-        self.assertFalse(any("1 votes" in n for n in notes))
-
-    def test_the_row_that_came_off_the_paste_without_a_score_says_so(self):
-        with patch.object(server, "seat_choices", return_value={}):
-            notes = [c["note"] for c in server.sampler_combos(H3_STILL, "")]
-        self.assertTrue(any("score not captured" in n for n in notes))
-
     def test_a_value_the_seat_does_not_offer_drops_the_pair(self):
         """The whole point of the arrows is that you can hold one down without
         reading. Nothing they land on may be a name the graph would refuse."""
         with patch.object(server, "seat_choices",
-                          return_value={"sampler_name": ["euler", "dpmpp_2m_sde"],
+                          return_value={"sampler_name": ["res_multistep"],
                                         "scheduler": ["simple"]}):
             got = server.sampler_combos(H3_STILL, "")
         self.assertEqual([(c["tuning"]["sampler_name"], c["tuning"]["scheduler"])
                           for c in got],
-                         [("dpmpp_2m_sde", "simple"), ("euler", "simple")])
+                         [("res_multistep", "simple")])
 
     def test_an_unprobed_comfy_filters_nothing_rather_than_everything(self):
         """sampler_choices answers {} before ComfyUI has been probed. Reading
         that as "no valid values" would empty the shelf on a cold boot."""
         with patch.object(server, "sampler_choices", return_value={}):
-            self.assertEqual(len(server.sampler_combos(H3_STILL, "")), 20)
+            self.assertEqual(len(server.sampler_combos(H3_STILL, "")), 5)
 
     def test_a_seat_without_both_halves_gets_no_shelf(self):
         """A pair needs a sampler AND a scheduler to mean anything."""
@@ -153,45 +158,51 @@ class ShelfTests(_Isolated):
     def test_an_unknown_recipe_yields_nothing_rather_than_raising(self):
         self.assertEqual(server.sampler_combos("no_such_recipe", ""), [])
 
-    def test_krea_starts_empty_but_is_still_a_shelf(self):
-        """No community table for it - so the star is the only way anything
-        gets there, and the card must still draw the control or it never can."""
+    def test_krea_has_its_own_shelf_now(self):
+        """It had no table, so the star was the only way anything got there.
+        Jesse, 2026-09-03: the shipped Krea pairs were "a bit gritty" and he
+        had already saved better ones - those are the shelf."""
         with patch.object(server, "seat_choices", return_value={}):
-            self.assertEqual(server.sampler_combos(KREA, ""), [])
+            got = server.sampler_combos(KREA, "")
+        self.assertEqual(len(got), 5)
+        self.assertIn("Jesse's", got[0]["note"])
+
+    def test_a_krea_star_still_leads_its_own_shelf(self):
+        with patch.object(server, "seat_choices", return_value={}):
             server.star_combo("krea2", "multistep/res_2m", "beta57")
             got = server.sampler_combos(KREA, "")
-        self.assertEqual(len(got), 1)
         self.assertEqual(got[0]["source"], "saved")
+        self.assertEqual(len(got), 5)        # a table row, so no duplicate
 
 
 class StarTests(_Isolated):
     """Keeping one, and dropping it again."""
 
-    def test_a_starred_community_pair_keeps_its_ranking(self):
-        """euler x beta is community #7. Keeping it must not cost it the rank
-        that made it worth keeping."""
+    def test_a_starred_table_pair_keeps_its_position(self):
+        """dpmpp_sde_gpu x ddim_uniform is #5 of 5. Keeping it must not cost it
+        the standing that made it worth keeping."""
         with patch.object(server, "seat_choices", return_value={}):
-            server.star_combo(H3_FAMILY, "euler", "beta")
+            server.star_combo(H3_FAMILY, "dpmpp_sde_gpu", "ddim_uniform")
             row = server.sampler_combos(H3_STILL, "")[0]
         self.assertEqual(row["source"], "saved")
-        self.assertIn("#7", row["note"])
-        self.assertIn("#7", row["detail"])
+        self.assertIn("#5 of 5", row["note"])
+        self.assertIn("#5 of 5", row["detail"])
 
     def test_a_starred_pair_the_table_never_rated_says_only_that(self):
         with patch.object(server, "seat_choices", return_value={}):
-            server.star_combo(H3_FAMILY, "res_multistep", "simple")
+            server.star_combo(H3_FAMILY, "euler", "beta")
             row = server.sampler_combos(H3_STILL, "")[0]
         self.assertNotIn("#", row["note"])
         self.assertIn("Yours", row["note"])
 
     def test_a_starred_pair_leads_the_shelf(self):
         with patch.object(server, "seat_choices", return_value={}):
-            server.star_combo(H3_FAMILY, "res_multistep", "simple")
+            server.star_combo(H3_FAMILY, "euler", "beta")
             got = server.sampler_combos(H3_STILL, "")
         self.assertEqual(got[0]["source"], "saved")
         self.assertEqual(got[0]["tuning"],
-                         {"sampler_name": "res_multistep", "scheduler": "simple"})
-        self.assertEqual(len(got), 21)
+                         {"sampler_name": "euler", "scheduler": "beta"})
+        self.assertEqual(len(got), 6)
 
     def test_starring_the_same_pair_twice_does_not_mint_a_duplicate(self):
         server.star_combo(H3_FAMILY, "euler", "beta")
@@ -199,17 +210,18 @@ class StarTests(_Isolated):
         self.assertEqual(len(server.load_saved_combos()), 1)
 
     def test_a_starred_community_pair_appears_once_and_as_yours(self):
-        """euler x beta is community #7. Starring it must not put the same pair
+        """dpmpp_sde_gpu x beta is #1. Starring it must not put the same pair
         on the shelf twice - two positions that do the same thing, one of which
         the star could never reach."""
         with patch.object(server, "seat_choices", return_value={}):
-            server.star_combo(H3_FAMILY, "euler", "beta")
+            server.star_combo(H3_FAMILY, "dpmpp_sde_gpu", "beta")
             got = server.sampler_combos(H3_STILL, "")
         rows = [c for c in got
-                if c["tuning"] == {"sampler_name": "euler", "scheduler": "beta"}]
+                if c["tuning"] == {"sampler_name": "dpmpp_sde_gpu",
+                                   "scheduler": "beta"}]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "saved")
-        self.assertEqual(len(got), 20)
+        self.assertEqual(len(got), 5)
 
     def test_the_newest_star_is_the_first_one_back(self):
         server.star_combo(H3_FAMILY, "euler", "beta")

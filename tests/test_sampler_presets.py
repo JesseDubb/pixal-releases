@@ -12,6 +12,7 @@ as more gets measured - but the two properties that make them safe: a preset
 is never offered to a seat that cannot run it, and it never claims a
 measurement it does not have.
 """
+import re
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -48,14 +49,48 @@ class TableTests(unittest.TestCase):
                     self.assertTrue(p.get("label", "").strip())
                     self.assertTrue(p.get("tuning"))
 
-    def test_the_krea_presets_do_not_claim_to_be_measured(self):
-        """They are RES4LYF's published figures for the Qwen-Image family, and
-        the note says so. Only H3's were rendered on this box."""
-        for p in server.SAMPLER_PRESETS["krea2"]:
-            if p["id"] == "fast":
-                continue        # the shipped default, not a claim about quality
-            with self.subTest(preset=p["id"]):
-                self.assertIn("not measured here", p["note"].lower())
+    # The rule is not "Krea 2 is borrowed" - that was only true until
+    # 2026-09-03, when two of its rows became Jesse's own saved styles. The rule
+    # is that a preset never claims a measurement it does not have, so every
+    # note has to land in exactly one of three registers.
+    _MEASURED = re.compile(r"measured here", re.I)
+    _BORROWED = re.compile(r"not measured here", re.I)
+    _OURS = re.compile(r"jesse's|jesse,", re.I)
+
+    def test_no_preset_claims_a_measurement_it_does_not_have(self):
+        """Every note says where its numbers came from: rendered on this box,
+        read off somebody's documentation, or lifted from a style Jesse saved
+        after looking at the frames. A note in none of those registers is one
+        that gets trusted too hard."""
+        for family, presets in server.SAMPLER_PRESETS.items():
+            for p in presets:
+                if p["id"] == "fast":
+                    continue    # the shipped default, not a claim about quality
+                note = p["note"]
+                with self.subTest(family=family, preset=p["id"]):
+                    borrowed = bool(self._BORROWED.search(note))
+                    ours = bool(self._OURS.search(note))
+                    measured = bool(self._MEASURED.search(note)) and not borrowed
+                    self.assertTrue(
+                        borrowed or ours or measured,
+                        f"{family}/{p['id']} says nothing about its source")
+
+    def test_a_borrowed_preset_never_reads_as_one_of_ours(self):
+        """The two registers differ by one word - "not measured here" against
+        "measured here" - and mean opposite things, so no note may claim both."""
+        for family, presets in server.SAMPLER_PRESETS.items():
+            for p in presets:
+                note = p["note"]
+                with self.subTest(family=family, preset=p["id"]):
+                    if self._BORROWED.search(note):
+                        self.assertNotRegex(note, r"[Mm]easured here:")
+
+    def test_the_krea_rows_jesse_saved_lead_the_borrowed_ones(self):
+        """Jesse, 2026-09-03: the shipped pairs were "a bit gritty" and he had
+        already saved better ones. His come first; RES4LYF's move behind them."""
+        ids = [p["id"] for p in server.SAMPLER_PRESETS["krea2"]]
+        self.assertLess(ids.index("organic"), ids.index("recommended"))
+        self.assertLess(ids.index("realism"), ids.index("quality"))
 
     def test_no_preset_sets_cfg(self):
         """Both families are distilled and cfg_locked pins cfg at 1. A preset

@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.2.2b — 2026-09-03
+
+**DLSS 5 was not running at all.** Last night's release took the `intensity`
+slider off the Settings card, because it measures nothing — 0.4, 1.0 and 2.0
+produce files identical to the pixel. That part was right. What went with it
+was the value Pixal *sends* the node, and the node lists `intensity` as a
+required input, so every enhanced frame was refused before it started. The
+refusal is quiet by design, so the render finished, the file appeared, and it
+had simply never been through DLSS 5. If you turned it on in 1.2.1b and thought
+it looked like nothing changed, that is because nothing did. Fixed, with the
+dead-but-required inputs pinned where the node wants them.
+
+**Z-Image realism was being guided against nothing.** Z-Image comes in two
+kinds and Pixal was treating them as one. Turbo is distilled — no negative
+prompt, guidance baked in, eight steps — and it was close to right. Base is not
+distilled: it runs at guidance 4, which means every step pushes the picture
+*away* from whatever the negative says, and Pixal was sending an empty one.
+That is most of the flat, plastic look, and it took a while to find because
+nothing about it is visible in the settings.
+
+The rest of the Base recipe turned out to be one model's download page,
+copied onto all five. Its author suggested Res Multistep with the Bong Tangent
+scheduler at 25 steps; Pixal shipped Res Multistep with **Simple** — half the
+advice — to every Z-Image checkpoint, and two large community tests since have
+rated that sampler worst-in-class on this architecture. Base now runs the
+schedule from the Z-Image realism guide, with a proper negative behind it.
+Side by side on the same seed, the new one puts both hands on the mug the
+prompt asked for, resolves the things on the counter, and drops a haze that had
+been sitting over the whole frame.
+
+**Five sampler combos per model, instead of twenty.** The MiniMax H3 shelf was
+a community ranking pasted in whole. Twelve of its twenty rows were perfect
+scores standing on one or two votes, which is noise — and it was noise you
+walked through one arrow-press at a time. It is five now: the two we timed
+here, the video pair that won on sight across two rounds, and the two
+rows with real sample sizes.
+
+**Krea 2 and Z-Image have that shelf now too.** Krea 2's suggestions used to be
+someone else's published numbers for a related model family. They have been
+replaced with the ones we kept after looking at the frames — and since the
+old set read a little gritty, the two settings that inject the least noise lead
+it now. Every row says where it came from, so a number we measured and a number
+we read somewhere never look alike.
+
+**New installs get the right text encoder.** The Z-Image lane asks for
+Qwen3-4B, but it would accept an uncensored community rebuild of it as a
+substitute — and those cost real image quality, which the model's own guide
+warns about. It asks for the proper one now.
+
 ## 1.2.1b — 2026-09-03
 
 **The MiniMax H3 picture lanes were walled by a video number.** H3 stills

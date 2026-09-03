@@ -732,9 +732,18 @@ class RecipeTests(unittest.TestCase):
         with assets(entry):
             graph, caption, info = server.build_fantasy("a knight at the gate", 7,
                                                          width=512, height=512)
-        self.assertEqual(graph["8"]["inputs"]["steps"], 25)
+        self.assertEqual(graph["8"]["inputs"]["steps"], 22)
         self.assertEqual(graph["8"]["inputs"]["cfg"], 4.0)
+        self.assertEqual(graph["8"]["inputs"]["sampler_name"], "res_2s")
+        self.assertEqual(graph["8"]["inputs"]["scheduler"], "beta")
+        self.assertEqual(graph["7"]["inputs"]["shift"], 1.0)
         self.assertEqual(graph["5"]["class_type"], "CLIPTextEncode")
+        # Fantasy is painterly: it gets the quality half of the negative and
+        # NOT the realism half, which negates the medium this recipe asks for.
+        neg = graph["5"]["inputs"]["text"]
+        self.assertEqual(neg, server.ZIMAGE_BASE_NEGATIVE_QUALITY)
+        self.assertNotIn("digital painting", neg)
+        self.assertNotIn("illustrated", neg)
         self.assertTrue(caption.startswith("D&D Painterly,"))
         self.assertEqual(graph["z:lora0"]["inputs"]["strength_model"], 0.9)
         self.assertIn("DnDPainterlyCleanZBase@0.9", info["loras"])

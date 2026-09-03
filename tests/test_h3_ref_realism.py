@@ -34,13 +34,19 @@ What these tests pin:
                   ref2va when nothing was asked for, b30-49 by name; an
                   explicit pick always wins; no hybrid changes nothing.
   EndContract   - the three points the shared craft block was quietly
-                  winning: the caption budget, the fixture in the shot, and
+                  winning: the sentence length, the fixture in the shot, and
                   naming shoes in a waist-up frame. Restated last, where a
                   small model actually reads them, for the H3 still recipes
                   only and only when prompt enhance is on.
   Director      - SYSTEM_LOCAL's h3_ref_still line carries the corrected
                   lighting rule (9.80's lamps-in-frame half was retracted
-                  the same day), the word budget and the sign rule.
+                  the same day), the sentence rule and the sign rule.
+  BigBrainCraft - SYSTEM carries the same lane, which it had none of: the
+                  Templates rows that route it (and warn h3_still off an
+                  anchored ask), the eight measured rules from 2026-09-02,
+                  every one phrased positively, sited after the realism
+                  craft block so it is last on its subject and outside the
+                  seam official prompting swaps.
 
 Same sanctioned simulation as every sibling file: stubbed catalog, stubbed
 character, no generation, no ComfyUI, no GPU.
@@ -534,13 +540,133 @@ class DirectorLineTests(unittest.TestCase):
 
     def test_it_carries_the_measured_writing_rules(self):
         line = self.line()
-        self.assertIn("About 45 words", line)
+        # 2026-09-02: a word budget was the wrong axis - see the comment
+        # over _H3_STILL_END_CONTRACT for the 50-caption measurement.
+        self.assertIn("Short sentences of about fifteen words", line)
+        self.assertNotIn("About 45 words", line)
         self.assertIn("ONE thing she is in the middle of", line)
         self.assertIn("Write the moment, not the expression", line)
         self.assertIn("spell its words in capitals", line)
         self.assertIn("the label is turned away", line)
         # 9.80's hands rule survived the rewrite.
         self.assertIn("clear of her face", line)
+
+
+class BigBrainCraftTests(unittest.TestCase):
+    """The same lane, for the writer that had none of it.
+
+    SYSTEM's Templates list documented seven recipes and none of the four H3
+    still rows, so the remote brain met this lane with the Krea-2-shaped photo
+    craft plus the three-point end contract and nothing else. Everything
+    DirectorLineTests pins for the local writer lived only in SYSTEM_LOCAL.
+    """
+
+    # The heading, not the Templates entry's "follow the H3
+    # reference-still craft below" pointer at it.
+    HEAD = "H3 reference-still SKELETON (h3_ref_still and h3_ref_still_2x)"
+
+    def block(self):
+        text = server.SYSTEM
+        at = text.index(self.HEAD)
+        return text[at:text.index("\n\nNSFW:", at)]
+
+    def test_the_templates_list_routes_the_lane(self):
+        templates = server.SYSTEM.split("Templates:")[1].split("\n\n")[0]
+        self.assertIn("- h3_ref_still:", templates)
+        self.assertIn("- h3_still / h3_still_2x:", templates)
+        # The four-hour trap of 2026-09-02: h3_still wires no reference at
+        # all, so an anchored ask sent there comes back a stranger.
+        self.assertIn("no reference input at all", templates)
+
+    def test_the_skeleton_has_its_four_sections_in_order(self):
+        block = self.block()
+        at = [block.index(s) for s in ("FACE", "SHOT", "REALITY", "WARDROBE")]
+        self.assertEqual(at, sorted(at), "the four sections fell out of order")
+        # Twelve numbered sentences, and the wardrobe closes the caption.
+        for n in range(1, 13):
+            with self.subTest(sentence=n):
+                self.assertIn(f"\n{n}. ", block)
+        self.assertIn("CLOSES the caption with nothing after it", block)
+
+    def test_the_age_sentence_is_written_out_in_full(self):
+        """The cure for the one Jesse named on 2026-09-02, "a 30 year old
+        bimbo": the lane drops the card's age and the reference does not
+        carry it against a written caption. Giving the writer the rule
+        produced captions without it; giving it the SENTENCE is the fix."""
+        block = self.block()
+        self.assertIn("She is 19 years old and she looks it", block)
+        self.assertIn("Write it EVERY TIME", block)
+
+    def test_her_features_never_reach_the_caption(self):
+        """2026-09-03, measured on one seed: "the two front teeth a touch
+        larger than the rest" - true of her, copied off her own card -
+        rendered as buck teeth. A named feature is read as an instruction to
+        PERFORM it, not as identification. Three caption variants on that
+        seed produced the same face, so the words move nothing anyway."""
+        block = self.block()
+        self.assertIn("NEVER HER FEATURES", block)
+        for feature in ("nose", "teeth", "chin", "cheekbones", "jaw"):
+            with self.subTest(feature=feature):
+                self.assertIn(feature, block)
+        # Age is the stated exception, and it is the one thing that measured.
+        self.assertIn("category", block)
+
+    def test_the_reality_block_is_supplied_verbatim(self):
+        """Five of the seventeen sentences in a keeper caption are this
+        block, near enough word for word, and the chat writer had never
+        produced any of it - which is most of what "plastic" was."""
+        block = self.block()
+        for line in ("This is a photograph of reality.",
+                     "every pore catches its own tiny highlight",
+                     "Fine peach fuzz along her jaw glows",
+                     "lit the way skin is actually lit"):
+            with self.subTest(line=line[:36]):
+                self.assertIn(line, block)
+
+    def test_it_carries_the_measured_rules(self):
+        block = self.block()
+        for rule in ("REAL BEATS STAGED", "WHO IS HOLDING THE CAMERA",
+                     "THE LIGHT IS THE REALISM LEVER",
+                     "GIVE HER AN ACTION", "WAIST-UP OR CLOSER",
+                     "POSES ARE PLANTED"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, block)
+        # Length is not the constraint, clause depth is: the keepers run
+        # 240-330 words as sixteen short sentences.
+        self.assertIn("clause six", block)
+        self.assertNotIn("forty-five words", block)
+        # Two expressions at once is what produced the tongue-and-lip-bite
+        # face that rendered as neither.
+        self.assertIn("ONE thing", block)
+
+    def test_every_rule_is_phrased_positively(self):
+        """The 2026-08-31 finding, applied here: a prohibition a writer can
+        copy WILL be copied, and it reaches the sampler as a negation - the
+        one form this model family has no representation of. Rules about the
+        caption's own construction are exempt; rules about what is in the
+        frame are not."""
+        for line in self.block().splitlines():
+            if not (line.startswith("- ") or line[:1].isdigit()):
+                continue
+            with self.subTest(line=line[:48]):
+                self.assertNotRegex(line, r"\bno\s+(?:lamp|bulb|neon|sign)\b")
+                self.assertNotRegex(line, r"\bnever\s+(?:name|write|say|show)\b")
+
+    def test_it_is_last_on_its_subject_and_survives_official_prompting(self):
+        # The craft block official prompting swaps out is the realism one, so
+        # this sits after it (last on its subject, per 9.65) and outside the
+        # seam - a model maker's expansion prompt must not take the lane's
+        # own rules with it.
+        text = server.SYSTEM
+        self.assertLess(text.index("Photo craft for realism and realism_ii:"),
+                        text.index(self.HEAD))
+        with patch.object(server, "_OFFICIAL_PROMPTS",
+                          {"krea2": "Official craft goes here."}), \
+             patch.object(server, "load_config",
+                          return_value={"llm": {"official_prompting": True}}):
+            swapped = server.writer_system_prompt(False, True, "realism")
+        self.assertIn("Official craft goes here.", swapped)
+        self.assertIn(self.HEAD, swapped)
 
 
 class EndContractTests(unittest.TestCase):
@@ -637,7 +763,10 @@ class EndContractTests(unittest.TestCase):
         self.assertIn("ONE named light source with a direction", craft)
         self.assertIn("top, bottom, shoes", craft)
         contract = server._H3_STILL_END_CONTRACT
-        self.assertIn("about forty-five words", contract)
+        # The contract no longer argues about WORD COUNT - it argues about
+        # SENTENCE length, the axis the 2026-09-02 keeper measurement says
+        # actually moves the render.
+        self.assertIn("Short sentences", contract)
         self.assertIn("light comes from outside the frame", contract)
         self.assertIn("Waist-up or closer", contract)
 

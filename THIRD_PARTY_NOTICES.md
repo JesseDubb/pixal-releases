@@ -99,7 +99,7 @@ Section 3(d) of that license — which forbids removing or altering attribution
 recoloured or repurposed to suggest a relationship that does not exist.
 
 If you own one of these marks and would prefer it removed, changed or
-attributed differently, write to jesse.dubberke@gmail.com and it will be
+attributed differently, write to hello@getpixal.com and it will be
 done.
 
 ## Fonts

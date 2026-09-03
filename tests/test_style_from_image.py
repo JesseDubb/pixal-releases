@@ -48,10 +48,14 @@ KREA_REL = "Krea 2\\test_krea.safetensors"
 LORA_REL = "ZImage\\teststyle.safetensors"
 SCENE = "a red barn at dusk, cinematic"
 
+H3_REL = "Minimax H3\\minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors"
+
 CATALOG = [
     {"kind": "diffusion_models", "root": "X", "rel": MODEL_REL,
      "mtime": 0, "size": 0},
     {"kind": "diffusion_models", "root": "X", "rel": KREA_REL,
+     "mtime": 0, "size": 0},
+    {"kind": "diffusion_models", "root": "X", "rel": H3_REL,
      "mtime": 0, "size": 0},
 ]
 LORAS = [
@@ -224,6 +228,74 @@ class BaseHintTests(unittest.TestCase):
         self.assertEqual(style["aspect"], "9:16 (Portrait Widescreen)")
         self.assertEqual(result["scene"], SCENE)
         self.assertEqual(result["unmapped"], [])
+
+    def h3_ref_graph(self, conditioning):
+        """The h3_ref_still spine: node 6 is the reference conditioning node,
+        and it carries the canvas the sampler renders."""
+        return {
+            "1": {"class_type": "UNETLoader", "inputs": {
+                "unet_name": H3_REL, "weight_dtype": "default"}},
+            "2": {"class_type": "CLIPLoader", "inputs": {
+                "clip_name": "qwen3vl.safetensors", "type": "minimax"}},
+            "3": {"class_type": "VAELoader", "inputs": {
+                "vae_name": "minimax_h3_t1_image_vae.safetensors"}},
+            "5": {"class_type": "LoadImage", "inputs": {
+                "image": "pixal_exp_zara_g02.png"}},
+            "6": {"class_type": conditioning, "inputs": {
+                "width": 2304, "height": 3456, "prompt": SCENE,
+                "ref_image_size": "match"}},
+            "7": {"class_type": "KSamplerSelect", "inputs": {
+                "sampler_name": "er_sde"}},
+            "8": {"class_type": "BasicScheduler", "inputs": {
+                "model": ["1", 0], "scheduler": "simple", "steps": 20,
+                "denoise": 1.0}},
+            "9": {"class_type": "BasicGuider", "inputs": {"model": ["1", 0]}},
+            "10": {"class_type": "RandomNoise", "inputs": {
+                "noise_seed": 2058371946628501}},
+            "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+                "noise": ["10", 0], "guider": ["9", 0], "sampler": ["7", 0],
+                "sigmas": ["8", 0], "latent_image": ["6", 0]}},
+            "12": {"class_type": "VAEDecode", "inputs": {
+                "samples": ["11", 0], "vae": ["3", 0]}},
+            "14": {"class_type": "SaveImage", "inputs": {
+                "images": ["12", 0], "filename_prefix": "pixal_dm/x"}},
+        }
+
+    def test_the_reference_conditioning_node_means_h3_ref_still(self):
+        # Both spellings: the lane emits the one-frame node when the pack and
+        # the T1 image VAE are installed, MiniMaxH3ReferenceToVideo when not.
+        # Before this the ref graph matched no signature at all and fell
+        # through to the default-model coincidence, drafting h3_still - the
+        # lane that wires NO reference, so the style rendered a stranger.
+        for conditioning in (server.H3_ONE_FRAME_NODE,
+                             "MiniMaxH3ReferenceToVideo"):
+            with self.subTest(conditioning=conditioning):
+                result = from_graph(self.h3_ref_graph(conditioning),
+                                    "sf1_tailgate.png")
+                self.assertTrue(result["ok"], result)
+                style = result["style"]
+                self.assertEqual(style["base"], "h3_ref_still")
+                self.assertEqual(style["model"], H3_REL)
+                self.assertEqual(style["tuning"], {
+                    "steps": 20, "sampler_name": "er_sde",
+                    "scheduler": "simple"})
+                self.assertEqual(style["aspect"], "2:3 (Portrait Photo)")
+                # 2304x3456 is the composer ladder's 8 MP rung at 2:3, which
+                # only became reachable when the picture lane got its own cap.
+                self.assertEqual(style["mp"], 8.0)
+                # The recipe's own conditioning node is furniture, not a
+                # third-party node the draft has to confess to.
+                self.assertEqual(result["unmapped"], [])
+
+    def test_the_refine_row_still_wins_over_the_single_pass_hint(self):
+        graph = self.h3_ref_graph("MiniMaxH3ReferenceToVideo")
+        graph["h3:up:param"] = {"class_type": "MMH3LatentUpscaleWithModelParams",
+                                "inputs": {"scale": 2.0}}
+        graph["h3:up:sample"] = {"class_type": "MMH3UltimateUpscale",
+                                 "inputs": {"steps": 6, "denoise": 0.22}}
+        result = from_graph(graph, "sf1_tailgate_2x.png")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["style"]["base"], "h3_ref_still_2x")
 
 
 class A1111Tests(unittest.TestCase):

@@ -1285,7 +1285,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.2.0b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.2.1b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

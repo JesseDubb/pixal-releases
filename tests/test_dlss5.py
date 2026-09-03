@@ -13,14 +13,14 @@ settings - exposing them waits on a judged reason.
 
 What these tests pin:
 
-  Defaults     - a fresh config is off / "default" / 1.0, and a config
+  Defaults     - a fresh config is off / "default" / 1.5, and a config
                  written before the keys existed reads the same way.
-  Resolvers    - intensity clamps 0-2 with nan refused; an unknown style
+  Resolvers    - tone clamps 0-2 with nan refused; an unknown style
                  reads as "default"; the ledger token is dlss5@default with
-                 intensity only when it left 1.0.
+                 tone only when it left 1.5.
   Settings     - strict-bool dlss5, strict-enum dlss5_style (the numeric
                  experimental arms 400 by name), strict-number
-                 dlss5_intensity - all 400 without saving on garbage; a
+                 dlss5_tone - all 400 without saving on garbage; a
                  valid write round-trips; GET publishes the three keys plus
                  dlss5_available, which is False on a cold ComfyUI, on an
                  empty object_info, and when the runtime DLL is missing.
@@ -127,14 +127,14 @@ class DefaultsAndResolversTests(unittest.TestCase):
             still = server.load_config()["still"]
             self.assertFalse(still["dlss5"])
             self.assertEqual(still["dlss5_style"], "default")
-            self.assertEqual(still["dlss5_intensity"], 1.0)
+            self.assertEqual(still["dlss5_tone"], 1.5)
 
     def test_a_legacy_config_reads_as_the_defaults(self):
         with patch.object(server, "load_config",
                           return_value={"still": {"film_grain": True}}):
             self.assertFalse(server.still_dlss5_active())
             self.assertEqual(server.still_dlss5_style(), "default")
-            self.assertEqual(server.still_dlss5_intensity(), 1.0)
+            self.assertEqual(server.still_dlss5_tone(), 1.5)
 
     def test_the_style_resolver_refuses_the_experimental_arms(self):
         for stored in ("3", "6", "cinematic ", "", 3, None):
@@ -147,13 +147,13 @@ class DefaultsAndResolversTests(unittest.TestCase):
                     "still": {"dlss5_style": stored}}):
                 self.assertEqual(server.still_dlss5_style(), stored)
 
-    def test_the_intensity_resolver_clamps_corruption(self):
+    def test_the_tone_resolver_clamps_corruption(self):
         for stored, want in ((1.0, 1.0), (0.0, 0.0), (99.0, 2.0), (-1.0, 0.0),
-                             (float("nan"), 1.0), ("x", 1.0), (None, 1.0),
+                             (float("nan"), 1.5), ("x", 1.5), (None, 1.5),
                              (1.5, 1.5)):
             with patch.object(server, "load_config", return_value={
-                    "still": {"dlss5": True, "dlss5_intensity": stored}}):
-                self.assertEqual(server.still_dlss5_intensity(), want,
+                    "still": {"dlss5": True, "dlss5_tone": stored}}):
+                self.assertEqual(server.still_dlss5_tone(), want,
                                  f"{stored!r}")
 
     def test_the_fixed_node_inputs_are_the_briefs_constants(self):
@@ -161,17 +161,20 @@ class DefaultsAndResolversTests(unittest.TestCase):
         self.assertEqual(server.DLSS5_STYLES, ("default", "natural",
                                                "cinematic"))
         self.assertEqual(server.DLSS5_FIXED,
-                         {"preset": 3, "tone": 1.0, "structure": 1.0,
+                         {"preset": 3, "structure": 1.0,
                           "skin": -1.0, "auto_mask": False,
                           "batch_mode": "still images", "gpu_index": 0,
                           "channel_order": "auto"})
 
-    def test_the_finish_tag_carries_intensity_only_off_default(self):
-        self.assertEqual(server.dlss5_finish_tag("default", 1.0),
-                         "dlss5@default")
+    def test_the_finish_tag_carries_tone_only_off_default(self):
         self.assertEqual(server.dlss5_finish_tag("default", 1.5),
-                         "dlss5@default:1.5")
-        self.assertEqual(server.dlss5_finish_tag("cinematic", 1.0),
+                         "dlss5@default")
+        self.assertEqual(server.dlss5_finish_tag("default", 0.5),
+                         "dlss5@default:0.5")
+        # 1.0 was the old default and is now an ordinary off-default value
+        self.assertEqual(server.dlss5_finish_tag("default", 1.0),
+                         "dlss5@default:1")
+        self.assertEqual(server.dlss5_finish_tag("cinematic", 1.5),
                          "dlss5@cinematic")
 
     def test_the_finish_chain_joins_in_run_order(self):
@@ -393,7 +396,7 @@ class FinisherTests(unittest.TestCase):
             with patch.object(server, "CDIR", root), \
                  patch.object(server, "_dlss5_http", side_effect=comfy):
                 self.assertTrue(
-                    server._dlss5_delivered(src, "cinematic", 1.5))
+                    server._dlss5_delivered(src, "cinematic", 0.5))
             self.assertNotEqual(src.read_bytes(), before)
             with Image.open(src) as out:
                 self.assertEqual(out.info.get("prompt"),
@@ -401,14 +404,14 @@ class FinisherTests(unittest.TestCase):
                 self.assertTrue((np.asarray(out) == 255).all(),
                                 "the delivered pixels are the node's output")
             # the graph went to the FRONT of the queue, with the brief's
-            # fixed inputs and the caller's style/intensity
+            # fixed inputs and the caller's style/tone
             post = comfy.posts[0]
             self.assertIs(post.get("front"), True)
             inputs = post["prompt"]["2"]["inputs"]
             self.assertEqual(post["prompt"]["2"]["class_type"],
                              "DLSS5NeuralRendering")
             self.assertEqual(inputs["style"], "cinematic")
-            self.assertEqual(inputs["intensity"], 1.5)
+            self.assertEqual(inputs["tone"], 0.5)
             for key, want in server.DLSS5_FIXED.items():
                 self.assertEqual(inputs[key], want, key)
             self.assertEqual(post["prompt"]["1"]["class_type"], "LoadImage")
@@ -458,16 +461,16 @@ class ChainOrderTests(unittest.TestCase):
             self.assertEqual(job["info"]["finish"],
                              "dlss5@default+deshine@0.85+grain@1.6")
 
-    def test_the_tag_records_the_style_and_a_non_default_intensity(self):
+    def test_the_tag_records_the_style_and_a_non_default_tone(self):
         with TemporaryDirectory() as td:
             root = Path(td)
             (root / "output").mkdir()
             _write_png(root / "output" / "still.png", _frame())
             cfg = {"still": {"dlss5": True, "dlss5_style": "cinematic",
-                             "dlss5_intensity": 1.5}}
+                             "dlss5_tone": 0.5}}
             with patch.object(server, "_dlss5_delivered", return_value=True):
                 job = self.deliver(root, "realism", cfg)
-            self.assertEqual(job["info"]["finish"], "dlss5@cinematic:1.5")
+            self.assertEqual(job["info"]["finish"], "dlss5@cinematic:0.5")
 
     def test_upscale_image_deliveries_are_exempt(self):
         with TemporaryDirectory() as td:
@@ -564,18 +567,18 @@ class SettingsTests(unittest.TestCase):
         cfg = full_cfg()
         response, saved = self.post(
             {"still": {"dlss5": True, "dlss5_style": "cinematic",
-                       "dlss5_intensity": 1.5}}, cfg)
+                       "dlss5_tone": 1.5}}, cfg)
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(response.text), {"ok": True})
         self.assertIs(saved[0]["still"]["dlss5"], True)
         self.assertEqual(saved[0]["still"]["dlss5_style"], "cinematic")
-        self.assertEqual(saved[0]["still"]["dlss5_intensity"], 1.5)
+        self.assertEqual(saved[0]["still"]["dlss5_tone"], 1.5)
 
-    def test_the_intensity_write_clamps_like_the_resolver(self):
+    def test_the_tone_write_clamps_like_the_resolver(self):
         cfg = full_cfg()
-        response, saved = self.post({"still": {"dlss5_intensity": 9.5}}, cfg)
+        response, saved = self.post({"still": {"dlss5_tone": 9.5}}, cfg)
         self.assertEqual(response.status, 200)
-        self.assertEqual(saved[0]["still"]["dlss5_intensity"], 2.0)
+        self.assertEqual(saved[0]["still"]["dlss5_tone"], 2.0)
 
     def test_settings_post_rejects_a_non_bool(self):
         for bad in ("true", 1, 0, None, [True]):
@@ -593,11 +596,11 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(response.status, 400)
                 self.assertEqual(saved, [])
 
-    def test_settings_post_rejects_a_non_number_intensity(self):
+    def test_settings_post_rejects_a_non_number_tone(self):
         for bad in ("high", None, [1.0], float("nan")):
             with self.subTest(bad=bad):
                 response, saved = self.post(
-                    {"still": {"dlss5_intensity": bad}}, full_cfg())
+                    {"still": {"dlss5_tone": bad}}, full_cfg())
                 self.assertEqual(response.status, 400)
                 self.assertEqual(saved, [])
 
@@ -605,7 +608,7 @@ class SettingsTests(unittest.TestCase):
         still = self.get(full_cfg({"skin_finish": True}))
         self.assertIs(still["dlss5"], False)
         self.assertEqual(still["dlss5_style"], "default")
-        self.assertEqual(still["dlss5_intensity"], 1.0)
+        self.assertEqual(still["dlss5_tone"], 1.5)
 
     def test_settings_get_publishes_availability(self):
         with TemporaryDirectory() as td:

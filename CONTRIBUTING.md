@@ -113,4 +113,4 @@ the value.
 
 ## Questions
 
-Open an issue, or reach Jesse at jesse.dubberke@gmail.com.
+Open an issue, or write to hello@getpixal.com.

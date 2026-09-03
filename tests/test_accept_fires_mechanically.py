@@ -31,9 +31,13 @@ DRAFT = ("She squats low on her haunches, elbows on knees, directly in "
          "Say go and I'll fire it.")
 
 
-def run_turn(user_text, convo, enhance=True):
+def run_turn(user_text, convo, enhance=True, official=False):
     """One turn with the GPU and the brain replaced by capture stubs.
-    Returns (scenes submitted, brain calls made, lane texts)."""
+
+    Returns (scenes submitted, brain calls made, lane texts). `official` pins
+    llm.official_prompting rather than letting the live config decide it - see
+    the comment below.
+    """
     submitted, brain_calls, said = [], [], []
 
     async def fake_submit(cid, src, template, scene, spec, count=1,
@@ -49,6 +53,12 @@ def run_turn(user_text, convo, enhance=True):
 
     cfg = json.loads(json.dumps(server.load_config()))
     cfg["llm"]["base_url"] = "https://api.moonshot.example/v1"
+    # Pin every setting the assertions read, or the fixture inherits whatever
+    # config.json this machine happens to carry. official_prompting decides the
+    # writer tag ("official" vs "pixal") and ships defaulting to True, while the
+    # box this was written on has it off - so the tag assertion below passed
+    # here and failed on every runner, where there is no config.json at all.
+    cfg["llm"]["official_prompting"] = official
     real = (server.HUB.submit, server.llm_call, server.HUB.broadcast)
     server.HUB.submit, server.llm_call = fake_submit, fake_llm
     server.HUB.broadcast = lambda **kw: (
@@ -90,6 +100,14 @@ class APureAcceptFiresWithoutTheBrain(unittest.TestCase):
         self.assertEqual(submitted[0]["scene"], expected)
         self.assertEqual(submitted[0]["template"], "realism")
         self.assertEqual(submitted[0]["spec"].get("_writer"), "pixal")
+
+    def test_the_writer_tag_follows_the_setting_and_not_the_machine(self):
+        """The tag above is only meaningful because run_turn pins
+        official_prompting. Assert the other branch too, so the pin cannot be
+        dropped without something going red - it read the live config once, and
+        the whole suite then passed on one box and failed everywhere else."""
+        submitted, _, _ = run_turn("go", drafted(), official=True)
+        self.assertEqual(submitted[0]["spec"].get("_writer"), "official")
 
     def test_every_accept_phrase_fires(self):
         for phrase in ("go", "render it", "show me", "yes", "do it"):

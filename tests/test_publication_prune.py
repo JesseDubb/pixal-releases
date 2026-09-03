@@ -80,12 +80,42 @@ class OnePruneListTests(unittest.TestCase):
             with self.subTest(path=name):
                 self.assertIn(name, self.installer.INTERNAL)
 
-    def test_every_pruned_path_is_real(self):
-        """A typo prunes nothing and reads as protection."""
+    def test_applying_the_list_leaves_no_internal_file_behind(self):
+        """Membership is not protection: a typo'd entry sits on the list and
+        prunes nothing, which reads exactly like it is working.
+
+        So apply the list the way both publications do - against `git ls-files`,
+        which is what `git archive HEAD` lays down - and check the survivors. It
+        has to be the tracked set and not the working directory: half these
+        entries (`briefs`, `docs`, `SOL_PLAN.md`, `scratch_prompt.txt`) are
+        gitignored working notes that exist on one machine and in no checkout,
+        so asserting they are present passes here and fails in CI, which is
+        precisely how this test failed the first time it ran on a runner."""
+        survivors = [f for f in tracked()
+                     if not any(f == i or f.startswith(i + "/")
+                                for i in self.installer.INTERNAL)]
+        for name in ("RELEASING.md", "release.py", "MORNING.md", "DESIGN.md",
+                     "PORTING.md", "PACKAGING.md", "skills-lock.json"):
+            with self.subTest(path=name):
+                self.assertNotIn(name, survivors)
+        for prefix in (".claude/", ".agents/", "site/", "brand/",
+                       "site-archive/", ".github/"):
+            with self.subTest(prefix=prefix):
+                self.assertEqual([f for f in survivors if f.startswith(prefix)], [])
+
+    def test_a_pruned_path_is_either_tracked_or_a_local_working_note(self):
+        """The inert entries are deliberate belt-and-braces, not typos - but a
+        NEW one that matches nothing anywhere is worth catching, so the list
+        names the ones that are allowed to match no tracked file."""
+        inert = {"briefs", "docs", "SOL_PLAN.md", "PRODUCT_NOTES.md",
+                 "pixal-dm-ssot.md", "scratch_prompt.txt"}
+        files = tracked()
         for name in self.installer.INTERNAL:
             with self.subTest(path=name):
-                self.assertTrue((_ROOT / name).exists(),
-                                f"{name} is on the prune list but not in the tree")
+                matches = any(f == name or f.startswith(name + "/") for f in files)
+                self.assertTrue(matches or name in inert,
+                                f"{name} prunes nothing and is not a known "
+                                f"working note - typo, or a stale entry?")
 
 
 class NothingSensitiveIsTrackedTests(unittest.TestCase):

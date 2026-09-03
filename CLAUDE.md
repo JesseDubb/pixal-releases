@@ -175,6 +175,31 @@ opinion about should carry its checkpoint, steps, sampler, scheduler and LoRAs
 than from what you meant to send. A day of verdicts was once invalidated by
 one LoRA strength nobody could see.
 
+**Fetch models with `huggingface_hub`, never `curl`.** Given a Hugging Face
+link, download it from Python with ComfyUI's `python_embeded` interpreter —
+that environment already carries `huggingface_hub` with **hf_xet** and
+**hf_transfer**, which pull in parallel chunks:
+
+```python
+import os; os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+from huggingface_hub import hf_hub_download
+p = hf_hub_download(repo_id="<owner>/<repo>", filename="<file>.safetensors",
+                    local_dir=r"<comfy_root>\_hf_staging")
+```
+
+Measured on a 21 GB checkpoint: **76 MiB/s**, against 11 MB/s for the best a
+single-stream `curl` ever managed on the same file. Worse than slow, that curl
+then wedged at 0.7 KB/s after 582 MB — a dead socket that reads exactly like a
+slow mirror, and a resume will not notice. The `hf` CLI in that interpreter is
+broken (`Typer.__init__() got an unexpected keyword argument
+'suggest_commands'`, a Typer version mismatch); the library under it is fine,
+so call it from Python rather than the shell.
+
+Stage to a folder on the **same volume** and move the finished file into
+`models\...` — a `.incomplete` sitting where ComfyUI scans reads as a corrupt
+model, and a same-volume move costs nothing. Check free space first: these
+files are 20 GB and up.
+
 ---
 
 ## Writing a caption that renders
@@ -184,10 +209,15 @@ Hard-won, on the MiniMax H3 reference lane, and most of it generalises.
 in your copy, it was pruned from the installer as internal, and the summary
 here is the whole of it.
 
-- **About 45 words.** Adherence is finite. A drink described as "turned away,
-  mostly hidden behind her fingers" rendered label-out because that was clause
-  six of a ninety-word sentence. Anything that must land gets its own short
-  sentence.
+- **Short sentences, about fifteen words each — as many as the shot needs.**
+  Adherence is finite PER SENTENCE, not per caption. A drink described as
+  "turned away, mostly hidden behind her fingers" rendered label-out because
+  that was clause six of a ninety-word sentence. Anything that must land gets
+  its own short sentence. This read "about 45 words" until 2026-09-02, when
+  the day's four keeper sets were measured back out of the PNGs: the frames
+  that hold up run 240–330 words as a median of sixteen sentences, longest 47.
+  A budget on the caption bought long sentences to fit it, which is the one
+  thing that actually breaks.
 - **The last clause is the strongest position.** On this model family, the
   final thing it reads decides whether the subject stays dressed. Nothing may
   follow the wardrobe clause — not a framing note, not a freeze instruction,

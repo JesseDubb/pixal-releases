@@ -76,7 +76,7 @@ STOCK = server.H3_MODEL
 FINETUNE = "Minimax H3\\10eros_max_fl2va_beta2.safetensors"
 REF2VA = server.H3_REF2V_MODEL
 LTX = "LTX2\\ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-MAX_PIXELS = 1536 * 2048
+MAX_PIXELS = server.H3_STILL_MAX_PIXELS   # the picture lane, not the video Max tier
 
 
 def h3_entries(root, *, encoder=True):
@@ -163,7 +163,7 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(spec["default_model"], STOCK)
         self.assertEqual(spec["aspect"], "3:4 (Portrait Standard)")
         self.assertEqual(spec["mp"], 3.1)
-        self.assertEqual(spec["mp_cap"], 3.15)
+        self.assertEqual(spec["mp_cap"], server.H3_STILL_MP_CAP)
         self.assertEqual(spec["required_text_encoders"], [server.H3_CLIP])
         self.assertEqual(spec["required_vaes"], [server.H3_VIDEO_VAE])
         self.assertNotIn("h3_still", server.VIDEO_TEMPLATES)
@@ -264,28 +264,36 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(info["size"], "1536x2048")
         self.assertAlmostEqual(info["canvas_mp"], 3.15, delta=0.01)
 
-    def test_an_8mp_ask_clamps_to_the_ceiling_on_the_32_grid(self):
+    def test_the_8mp_rung_renders_at_8mp(self):
+        # 1.2.1b: the picture lane no longer borrows the VIDEO Max tier's
+        # 1536x2048, so the composer ladder's top rung reaches the canvas the
+        # button names instead of silently landing back on the default.
         g, _cap, info = self.build(mp=8)
         width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
         self.assertEqual((width % 32, height % 32), (0, 0))
         self.assertLessEqual(width * height, MAX_PIXELS)
-        self.assertEqual((width, height), (1536, 2048))
+        self.assertEqual((width, height), (2464, 3296))
         self.assertEqual(info["canvas_mp"], width * height / 1e6)
 
     def test_a_wide_aspect_never_exceeds_the_ceiling(self):
-        # dims_for alone overshoots the cap on wide aspects (2368x1344 at
-        # 3.15 MP): the builder walks the long edge back under it.
-        g, _cap, info = self.build(aspect="16:9 (Widescreen)", mp=3.15)
+        # dims_for alone overshoots the cap on wide aspects (3808x2144 at
+        # 8.15 MP): the builder walks the long edge back under it.
+        g, _cap, info = self.build(aspect="16:9 (Widescreen)",
+                                   mp=server.H3_STILL_MP_CAP)
         width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
         self.assertEqual((width % 32, height % 32), (0, 0))
         self.assertLessEqual(width * height, MAX_PIXELS)
         self.assertEqual(info["canvas_mp"], width * height / 1e6)
 
     def test_an_explicit_canvas_is_snapped_and_clamped(self):
-        g, _cap, info = self.build(width=2000, height=2000)
+        # Off-grid AND over the ceiling: 4010 snaps to 4000, then the walk
+        # takes a step off whichever edge is longer - which on a square
+        # alternates, so both come down together.
+        g, _cap, info = self.build(width=4010, height=4010)
         width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
         self.assertEqual((width % 32, height % 32), (0, 0))
         self.assertLessEqual(width * height, MAX_PIXELS)
+        self.assertEqual((width, height), (2848, 2848))
         self.assertEqual(info["size"], f"{width}x{height}")
 
     def test_a_finetune_build_runs_and_is_attested(self):
@@ -393,7 +401,7 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(recipe["default_model"], STOCK)
         self.assertEqual(recipe["family"], "minimax_h3")
         self.assertEqual(recipe["variants"], ["fl2va"])
-        self.assertEqual(recipe["mp_cap"], 3.15)
+        self.assertEqual(recipe["mp_cap"], server.H3_STILL_MP_CAP)
         # The composer's defaults row carries the recipe's own canvas.
         self.assertEqual(options["defaults"]["h3_still"]["mp"], 3.1)
         self.assertEqual(options["defaults"]["h3_still"]["aspect"],

@@ -78,7 +78,7 @@ COMPOSER = (WEB / "components" / "Composer.jsx").read_text(encoding="utf-8")
 STOCK = server.H3_MODEL
 FINETUNE = "Minimax H3\\10eros_max_fl2va_beta2.safetensors"
 REF2VA = server.H3_REF2V_MODEL
-MAX_PIXELS = 1536 * 2048
+MAX_PIXELS = server.H3_STILL_MAX_PIXELS   # the picture lane, not the video Max tier
 
 
 def h3_entries(root, *, encoder=True, audio_vae=True):
@@ -134,7 +134,7 @@ class RecipeRowTests(unittest.TestCase):
         self.assertTrue(spec["needs_character"])
         self.assertEqual(spec["aspect"], "3:4 (Portrait Standard)")
         self.assertEqual(spec["mp"], 3.1)
-        self.assertEqual(spec["mp_cap"], 3.15)
+        self.assertEqual(spec["mp_cap"], server.H3_STILL_MP_CAP)
         self.assertEqual(spec["required_text_encoders"], [server.H3_CLIP])
         # The ReferenceToVideo node takes audio_vae even with no audio
         # decoded, so the audio VAE is a real requirement (unlike h3_still).
@@ -325,12 +325,15 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(info["size"], "1536x2048")
         self.assertAlmostEqual(info["canvas_mp"], 3.15, delta=0.01)
 
-    def test_an_8mp_ask_clamps_to_the_ceiling_on_the_32_grid(self):
+    def test_the_8mp_rung_renders_at_8mp(self):
+        # 1.2.1b: the reference lane is the one the 2026-09-02 lookdev ran
+        # above 2K all day (1984x2976), so the ladder's top rung has to
+        # reach the canvas the button names.
         g, _cap, info = self.build(mp=8)
         width, height = g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]
         self.assertEqual((width % 32, height % 32), (0, 0))
         self.assertLessEqual(width * height, MAX_PIXELS)
-        self.assertEqual((width, height), (1536, 2048))
+        self.assertEqual((width, height), (2464, 3296))
         self.assertEqual(info["canvas_mp"], width * height / 1e6)
 
     def test_info_names_the_stack_and_no_loras_ran(self):
@@ -536,7 +539,7 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(recipe["family"], "minimax_h3")
         self.assertEqual(recipe["variants"], ["ref2va"])
         self.assertTrue(recipe["needs_character"])
-        self.assertEqual(recipe["mp_cap"], 3.15)
+        self.assertEqual(recipe["mp_cap"], server.H3_STILL_MP_CAP)
         self.assertEqual(options["defaults"]["h3_ref_still"]["mp"], 3.1)
 
     def test_a_stub_without_the_audio_vae_names_it(self):

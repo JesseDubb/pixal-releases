@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.2.1b — 2026-09-03
+
+**The MiniMax H3 picture lanes were walled by a video number.** H3 stills
+clamped to 1536×2048 — a ceiling priced for video, where the shimmer band past
+a 1344px long edge and frames × megapixels on the card are what bite. A single
+frame pays neither. The still lanes now have their own ceiling and the canvas
+ladder runs all the way to its top rung, so 4, 6 and 8 MP are live on **MiniMax
+H3** and **MiniMax H3 Ref**. The two 2× rows keep the native-2K first pass on
+purpose: their refine multiplies it by four, so 3.1 MP sampled is already
+3072×4096 delivered. The VRAM butler still prices every job and shrinks-and-
+retries once on an out-of-memory, which is the layer that answers for a smaller
+card.
+
+**Dropping a reference render on "import from image" built the wrong recipe.**
+The translator did not recognise the node that *is* the reference lane, so it
+reported "no Pixal equivalent" and then fell back to guessing from the model —
+which on a hybrid build picks the prompt-only still lane. That lane wires no
+reference at all, so the imported style would have rendered a stranger and
+looked like a prompting problem. Reference renders now import as **MiniMax H3
+Ref**, with nothing unmapped.
+
+**DLSS 5 had one dial and it was the broken one.** The node advertises an
+`intensity` input, accepts it, range-checks it — and ignores it completely:
+0.4, 1.0 and 2.0 produce files identical to the pixel across all 5.9 million of
+them. `skin` and `preset` are dead the same way. The control is now **Tone**,
+which is the input that actually moves the image: lower is punchier and more
+saturated, higher is flatter and cooler, and it shifts about nine pixels in
+ten. It ships at 1.5, because taking contrast and saturation down slightly is
+what pulls the plastic sheen off skin. Existing settings files are untouched;
+the old value is simply no longer read.
+
+**The chat writer had never been told how this lane works.** Every rule Pixal
+knows about writing a MiniMax H3 reference still lived in the prompt for the
+small local model, and the remote brain — the one most people are using — met
+the lane with a photo-caption register written for a different renderer. It now
+carries the same craft, rebuilt as the shape the best frames actually have:
+where the camera is and who is holding it, one hard light source with a stated
+direction, the room's clutter named, a pose the framing can hold, and the
+skin-under-light lines that stop a face reading as plastic.
+
+Two things that were measured rather than assumed, and both reversed a rule
+that had been in the prompt for days. Caption length was never the constraint —
+sentence length is, and the old word budget was quietly buying long sentences
+to fit inside it. And a subject's facial features do not belong in a caption at
+all: naming one does not identify her, it instructs the model to perform it.
+
+**Fixed:** the H3 still recipes no longer share the video resolution ceiling ·
+`h3_ref_still` graphs import as themselves · a dead Settings control replaced
+by a working one · MiniMax H3 rows documented for the remote writer.
+
 ## 1.2.0b — 2026-09-02
 
 **A shelf of sampler combos, under two arrows.** The Sampler card grows a

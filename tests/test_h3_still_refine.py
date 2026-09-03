@@ -11,7 +11,7 @@ refine on an H3 build - no new control, no new word.
 What these tests pin:
 
   Recipe      - the spec sits right after h3_still with its own label/tag
-                and the same family/variants/default_model/aspect/mp/mp_cap
+                and the same family/variants/default_model/aspect/mp
                 and LoRA fields; an image template, never in VIDEO_TEMPLATES;
                 registered in BUILDERS and SIGS; the brain's tool enum and
                 description carry the one clause.
@@ -131,14 +131,22 @@ class RecipeSpecTests(unittest.TestCase):
         base = server.RECIPE_SPECS["h3_still"]
         self.assertEqual(spec["label"], "MiniMax H3 2x")
         self.assertEqual(spec["tag"], "2K still + 2x latent refine · ~3 min")
-        # aspect/mp/mp_cap are the FIRST pass's - the refine doubles on top.
+        # aspect/mp are the FIRST pass's - the refine doubles on top.
         # lora_variants too: the 2x builder re-keys its plan to h3_still
         # (9.74), which is only sound while the two rows' lanes are identical.
         for key in ("family", "variants", "lora_variants", "default_model",
-                    "aspect", "mp", "mp_cap", "required_text_encoders",
+                    "aspect", "mp", "required_text_encoders",
                     "required_vaes", "lora_stack_revision", "lora_boundary",
                     "lora_stages"):
             self.assertEqual(spec[key], base[key], key)
+        # mp_cap is the one spec field that legitimately differs (1.2.1b).
+        # The single-pass lane runs to the composer ladder's top rung; the
+        # refine MULTIPLIES its first pass by four, so this row keeps the
+        # native-2K canvas the pair was measured at - 3.1 MP sampled is
+        # already 3072x4096 delivered.
+        self.assertEqual(base["mp_cap"], server.H3_STILL_MP_CAP)
+        self.assertEqual(spec["mp_cap"], server.H3_STILL_2X_MP_CAP)
+        self.assertLess(spec["mp_cap"], base["mp_cap"])
 
     def test_the_recipe_is_an_image_template_everywhere(self):
         self.assertNotIn("h3_still_2x", server.VIDEO_TEMPLATES)
@@ -354,7 +362,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(recipe["default_model"], STOCK)
         self.assertEqual(recipe["family"], "minimax_h3")
         self.assertEqual(recipe["variants"], ["fl2va"])
-        self.assertEqual(recipe["mp_cap"], 3.15)
+        self.assertEqual(recipe["mp_cap"], server.H3_STILL_2X_MP_CAP)
         # the composer's defaults row carries the recipe's own (first-pass)
         # canvas
         self.assertEqual(options["defaults"]["h3_still_2x"]["mp"], 3.1)

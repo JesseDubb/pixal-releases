@@ -1772,10 +1772,15 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       <option value="natural">natural</option>
                       <option value="cinematic">cinematic</option>
                     </select>
+                    {/* Tone, not intensity. The node declares an `intensity`
+                        input and ignores it - 0.4, 1.0 and 2.0 render files
+                        identical to the pixel - so that control was dead from
+                        the day it shipped. `tone` is the one that moves:
+                        0 is punchy and saturated, 2 is flat and cool. */}
                     <input type="number" step="0.05" min="0" max="2"
-                      value={stillCfg.dlss5_intensity ?? 1.0}
-                      aria-label="DLSS 5 intensity"
-                      title="Re-render strength. 1.0 is the shipped default."
+                      value={stillCfg.dlss5_tone ?? 1.5}
+                      aria-label="DLSS 5 tone"
+                      title="Contrast and saturation of the re-render. Lower is punchier, higher is flatter. 1.5 is the shipped default."
                       style={{ width: 52, height: 24, padding: "0 8px",
                                background: "var(--bg3)",
                                border: "1px solid var(--border)",
@@ -1785,8 +1790,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       onChange={(e) => {
                         const v = parseFloat(e.target.value);
                         if (!Number.isFinite(v)) return;
-                        setStillCfg((s) => ({ ...(s || {}), dlss5_intensity: v }));
-                        apply({ still: { dlss5_intensity: v } }, "DLSS 5 intensity");
+                        setStillCfg((s) => ({ ...(s || {}), dlss5_tone: v }));
+                        apply({ still: { dlss5_tone: v } }, "DLSS 5 tone");
                       }} />
                   </>
                 ) : null}

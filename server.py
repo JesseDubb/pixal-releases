@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.2.0b"
+PIXAL_VERSION = "1.2.1b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -635,7 +635,7 @@ def load_config():
                      # neural re-render through the ComfyUI-DLSS5-NR node. Same
                      # doctrine as grain: fresh installs render untouched.
                      "dlss5": False, "dlss5_style": "default",
-                     "dlss5_intensity": 1.0},
+                     "dlss5_tone": 1.5},
            "extra_model_roots": [],
            "comfy_url": "",
            "comfy_root": "",
@@ -2180,6 +2180,30 @@ H3_STILL_LORA_STAGES = [
      "active_by_default": False},
 ]
 
+# The PICTURE lane's own pixel ceiling (1.2.1b). Until now the stills borrowed
+# the video Max tier's 1536x2048, which is a VIDEO number: H3's video canvas is
+# walled by the shimmer band past a 1344px long edge and by frames x mp on the
+# card. A still pays neither - it is one frame, and the 2026-09-02 lookdev ran
+# the reference lane at 1984x2976 (5.90 MP) all day on a 32 GB card with
+# 1.5-2.5 GiB free, then at 8 MP without trouble. So the still lanes get the
+# composer ladder's top rung instead, and the video tiers are left alone.
+#
+# 8.12 MP, not a round 8: dims_for scores aspect over area, and the ladder's
+# 8 MP rung at the recipe's own 3:4 lands on 2464x3296 = 8,121,344. A ceiling
+# of exactly 8e6 would walk that back a step and hand the composer a canvas
+# one rung short of the button the user pressed.
+#
+# Two things this is NOT. It is not a promise the card can hold it: the VRAM
+# butler prices every job on info["canvas_mp"] and shrinks-and-retries once on
+# an OOM, which is the layer that answers for a 12 GB card. And it is not the
+# 2x lanes' cap - the refine DOUBLES this canvas, so those keep the native-2K
+# first pass they were measured on (see build_h3_still_2x).
+H3_STILL_MAX_PIXELS = 2464 * 3296
+H3_STILL_MP_CAP = 8.15
+# The refine lanes' first pass, unchanged: the delivered canvas is already 4x
+# this (3072x4096, ~12.6 MP) and the reference row measures ~6 min at it.
+H3_STILL_2X_MP_CAP = 3.15
+
 # Public creative recipes are deliberately separate from runtime graph families.
 # "anime" is a creative direction; "zimage" is the compatible execution stack.
 # That separation prevents the old failure mode where any selected UNET was
@@ -2393,14 +2417,15 @@ RECIPE_SPECS = {
     # Animate lanes' speed-mode property) while compatible_recipes keeps
     # gating MODELS on variants. The one editable stage pins a known-good
     # style LoRA, OFF by default so an untouched plan renders exactly the
-    # pre-9.74 graph. mp_cap is the Max tier's 1536x2048; the composer's MP
-    # ladder dims its rungs above it.
+    # pre-9.74 graph. mp_cap is the picture lane's own ceiling (1.2.1b), so
+    # the composer's MP ladder runs to its top rung; `mp` stays the native-2K
+    # default, which is what the tag prices.
     "h3_still": {
         "label": "MiniMax H3", "tag": "2K still · 20 steps · ~1 min",
         "family": "minimax_h3", "variants": ["fl2va"],
         "lora_variants": ["any"],
         "default_model": H3_MODEL,
-        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": H3_STILL_MP_CAP,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE],
         # revision 2 (9.74): the editable style lane joined, so plans saved
@@ -2419,7 +2444,7 @@ RECIPE_SPECS = {
         "family": "minimax_h3", "variants": ["fl2va"],
         "lora_variants": ["any"],
         "default_model": H3_MODEL,
-        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": H3_STILL_2X_MP_CAP,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE],
         # h3_still's 9.74 lane, same revision and stage: the style rides the
@@ -2441,7 +2466,7 @@ RECIPE_SPECS = {
         "family": "minimax_h3", "variants": ["ref2va"],
         "lora_variants": ["any"],
         "default_model": H3_REF2V_MODEL,
-        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": H3_STILL_MP_CAP,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE, H3_AUDIO_VAE],
         "needs_character": True,
@@ -2466,7 +2491,7 @@ RECIPE_SPECS = {
         "family": "minimax_h3", "variants": ["ref2va"],
         "lora_variants": ["any"],
         "default_model": H3_REF2V_MODEL,
-        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": 3.15,
+        "aspect": "3:4 (Portrait Standard)", "mp": 3.1, "mp_cap": H3_STILL_2X_MP_CAP,
         "required_text_encoders": [H3_CLIP],
         "required_vaes": [H3_VIDEO_VAE, H3_AUDIO_VAE],
         "needs_character": True,
@@ -4394,6 +4419,10 @@ _KNOWN_CLASSES = frozenset(
     "ClownOptions_DetailBoost_Beta", "ColorCorrect", "UltimateSDUpscale",
     "MMH3LatentUpscaleWithModelParams", "MMH3SpatialSplitParams",
     "MMH3UltimateUpscale", "EmptyHunyuanLatentVideo",
+    # The reference lane's own conditioning nodes. Absent here they read as
+    # third-party nodes and every ref render imported with "no Pixal
+    # equivalent" against the one node that IS the recipe.
+    "MiniMaxH3ReferenceToVideo", H3_ONE_FRAME_NODE,
     "H3SLAAttention", "LTX2MemoryEfficientSageAttentionPatch",
     "VHS_VideoCombine", "VHS_LoadVideoPath", "VHS_VideoInfoLoaded",
     "VAEDecodeAudio", "LTXVAudioVAEDecode", "LTXVAudioVAEEncode",
@@ -4431,6 +4460,16 @@ _GRAPH_BASE_HINTS = (
      "h3_ref_still_2x", frozenset(("MiniMaxH3ReferenceToVideo",))),
     (frozenset(("MMH3UltimateUpscale", "MMH3LatentUpscaleWithModelParams")),
      "h3_still_2x"),
+    # The single-pass reference lane, tested after both refine rows so a 2x
+    # graph still takes the more specific match. Without it a ref render fell
+    # through to the default-model coincidence and drafted as h3_still - the
+    # lane that wires NO reference at all, so the imported style would have
+    # rendered a stranger and looked like a prompting problem. Either
+    # conditioning node counts: the ref lane emits the one-frame node when
+    # the pack and the T1 image VAE are installed and MiniMaxH3ReferenceToVideo
+    # when they are not (and always, on the refine row).
+    (frozenset(("MiniMaxH3ReferenceToVideo", H3_ONE_FRAME_NODE)),
+     "h3_ref_still"),
 )
 
 # A1111 sampler names -> the ComfyUI sampler_name for the same algorithm.
@@ -6499,12 +6538,28 @@ def build_anima(scene, seed, width=None, height=None, loras=(), overrides=(),
     return g, cap, info
 
 
-def _h3_still_clamp(width, height):
+def _h3_still_clamp(width, height, ceiling=None):
     """Snap a canvas to H3's 32 grid, then walk the long edge down under the
-    Max-tier pixel ceiling. dims_for scores aspect over area and can overshoot
-    the cap a step on wide aspects; h3_adapt_canvas walks the same way."""
+    picture lane's pixel ceiling. dims_for scores aspect over area and can
+    overshoot the cap a step on wide aspects; h3_adapt_canvas walks the same
+    way.
+
+    `ceiling` is the 2x lanes' opt-out: their refine doubles whatever the
+    first pass samples, so they clamp to their own cap rather than the
+    single-pass one (H3_STILL_MAX_PIXELS)."""
     step = H3_CANVAS_MULTIPLE
-    ceiling = H3_RESOLUTIONS["max"]["max_pixels"]
+    ceiling = int(ceiling or H3_STILL_MAX_PIXELS)
+    # Scale the WHOLE canvas first when the overshoot is more than a step.
+    # The walk below takes a step off whichever edge is longer, which is right
+    # for the step-or-two dims_for overshoots it was written for and wrong for
+    # a big one: it converges on a SQUARE, so a 3:4 ask handed to a lower
+    # ceiling (the 2x lanes) came back 1:1. Scaling by area keeps the ratio,
+    # and the walk still runs afterwards because the snap can round back over.
+    width, height = float(width), float(height)
+    area = width * height
+    if area > ceiling * 1.05:
+        k = (ceiling / area) ** 0.5
+        width, height = width * k, height * k
     width = max(step, int(math.floor(width / step + 0.5)) * step)
     height = max(step, int(math.floor(height / step + 0.5)) * step)
     while width * height > ceiling:
@@ -6515,6 +6570,25 @@ def _h3_still_clamp(width, height):
         else:
             break
     return width, height
+
+
+def _h3_refine_first_pass(width, height, mp):
+    """(width, height, mp) held to the 2x lanes' first-pass cap.
+
+    Both refine builders delegate to their single-pass sibling, which prices
+    the canvas off ITS OWN recipe spec - so once the single-pass lanes were
+    unlocked to the composer ladder's top (1.2.1b) the refine lanes inherited
+    a ceiling whose 4x delivered canvas is 32 MP. The composer already gates
+    on h3_still_2x's mp_cap; this is the same wall on the builder, which is
+    what an explicit width/height (a saved style, /api/chat, a script) meets
+    instead."""
+    cap = H3_STILL_2X_MP_CAP
+    if width and height:
+        width, height = _h3_still_clamp(width, height,
+                                        ceiling=int(cap * 1_000_000))
+    elif mp:
+        mp = min(float(mp), cap)
+    return width, height, mp
 
 
 def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
@@ -6704,6 +6778,7 @@ def build_h3_still_2x(scene, seed, width=None, height=None, loras=(), overrides=
     # executes it. Re-key the plan to the recipe that runs the first pass.
     if lora_plan is not None:
         lora_plan = {**lora_plan, "recipe": "h3_still"}
+    width, height, mp = _h3_refine_first_pass(width, height, mp)
     g, cap, info = build_h3_still(scene, seed, width, height, loras, overrides,
                                   standing, nsfw, model, aspect, mp, character,
                                   lora_plan)
@@ -7433,6 +7508,7 @@ def build_h3_ref_still_2x(scene, seed, width=None, height=None, loras=(),
     # actually executes the first pass.
     if lora_plan is not None:
         lora_plan = {**lora_plan, "recipe": "h3_ref_still"}
+    width, height, mp = _h3_refine_first_pass(width, height, mp)
     # one_frame=False, deliberately: MMH3LatentUpscaleWithModelParams is a 3D
     # latent upscaler and the refine was proven against the 5-frame temporal
     # chunk, so the refine lane keeps the spine it was measured on. The skin
@@ -7926,7 +8002,12 @@ DLSS5_TIMEOUT = 30.0    # ~0.4-1.9 s per 3 MP frame; the cap is for a busy box
 # preset 3, neutral tone/structure, skin mask off (the de-shine pass owns
 # skin), per-still batch, the card the render ran on, channel order auto -
 # verified correct on the user-supplied runtime DLL.
-DLSS5_FIXED = {"preset": 3, "tone": 1.0, "structure": 1.0, "skin": -1.0,
+# structure stays pinned at 1.0: swept 0-2 on one frame (2026-09-03) it moves
+# almost nothing above 1.0 - contrast 67.33 / 67.12 / 67.45 and edge energy
+# 9.00 / 9.04 / 9.00 at 1.0 / 1.5 / 2.0 - so it is an amount knob that
+# saturates, and a slider dead over half its travel is the bug this release
+# removes. preset and skin measured NO pixel change at all, like intensity.
+DLSS5_FIXED = {"preset": 3, "structure": 1.0, "skin": -1.0,
                "auto_mask": False, "batch_mode": "still images",
                "gpu_index": 0, "channel_order": "auto"}
 
@@ -7988,15 +8069,25 @@ def still_dlss5_style():
     return style if style in DLSS5_STYLES else "default"
 
 
-def still_dlss5_intensity():
+def still_dlss5_tone():
     """0-2, the film_grain_amount rule: clamped so a corrupt config cannot
-    cook a frame; nan refused the same way."""
+    cook a frame; nan refused the same way.
+
+    This replaced dlss5_intensity in 1.2.1b. The node declares `intensity` as
+    a FLOAT 0.0-2.0 step 0.05 and then ignores it completely - 0.4, 1.0 and
+    2.0 produced files identical to the pixel across all 5,904,384 of them -
+    so Pixal was wiring a real advertised input into a dead socket. `tone` is
+    the input that actually moves: swept 0-2 it walks contrast 70.41 -> 66.32
+    and saturation 81.8 -> 75.7, monotonically, which makes it a contrast and
+    saturation control whatever its name says. 1.5 is the default because
+    taking both down slightly is what pulls the plastic sheen off skin -
+    Jesse's pick out of a 14-arm sweep, 2026-09-03."""
     try:
-        v = float(load_config()["still"]["dlss5_intensity"])
+        v = float(load_config()["still"]["dlss5_tone"])
     except (KeyError, TypeError, ValueError):
-        return 1.0
+        return 1.5
     if not math.isfinite(v):
-        return 1.0
+        return 1.5
     return min(max(v, 0.0), 2.0)
 
 
@@ -8012,11 +8103,14 @@ def dlss5_available():
     return (dlss5_runtime_dir() / DLSS5_DLL_NAME).is_file()
 
 
-def dlss5_finish_tag(style, intensity):
-    """The ledger token: dlss5@default, intensity only when it left 1.0."""
+def dlss5_finish_tag(style, tone):
+    """The ledger token: dlss5@default, tone only when it left the 1.5
+    default. Rows written before 1.2.1b carry an intensity suffix that meant
+    nothing - the node ignored that input - so an old ":2" is noise rather
+    than a setting anyone chose."""
     tag = f"dlss5@{style}"
-    if intensity != 1.0:
-        tag += f":{intensity:g}"
+    if tone != 1.5:
+        tag += f":{tone:g}"
     return tag
 
 
@@ -8041,7 +8135,7 @@ def _dlss5_http(url, payload=None, timeout=10.0):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _dlss5_delivered(path, style, intensity, timeout=DLSS5_TIMEOUT,
+def _dlss5_delivered(path, style, tone, timeout=DLSS5_TIMEOUT,
                      interval=0.5):
     """Run one delivered still through the DLSS 5 node, in place.
 
@@ -8075,7 +8169,7 @@ def _dlss5_delivered(path, style, intensity, timeout=DLSS5_TIMEOUT,
                       "inputs": {"image": staged}},
                 "2": {"class_type": DLSS5_NODE,
                       "inputs": {"image": ["1", 0], "style": style,
-                                 "intensity": intensity, **DLSS5_FIXED}},
+                                 "tone": tone, **DLSS5_FIXED}},
                 "3": {"class_type": "SaveImage",
                       "inputs": {"images": ["2", 0],
                                  "filename_prefix": prefix}},
@@ -8159,7 +8253,7 @@ def _dlss5_delivered(path, style, intensity, timeout=DLSS5_TIMEOUT,
                 keep = {k: meta[k] for k in ("exif",) if k in meta}
                 im.save(path, **keep)
             print(f"[pixal] dlss5 {path.name} (style {style}, "
-                  f"intensity {intensity:g})", flush=True)
+                  f"tone {tone:g})", flush=True)
             return True
         finally:
             for tmp in (staged_path, out_path):
@@ -12951,10 +13045,10 @@ class Hub:
             # upscale_image exemption is the double-apply rule: the
             # pre-upscale file already carries it, so the upscale lane's
             # own output must not be re-rendered again.
-            style, intensity = still_dlss5_style(), still_dlss5_intensity()
+            style, tone = still_dlss5_style(), still_dlss5_tone()
             if _dlss5_delivered(CDIR / "output" / (img.get("subfolder") or "")
-                                / img["filename"], style, intensity):
-                _record_finish(job, dlss5_finish_tag(style, intensity))
+                                / img["filename"], style, tone):
+                _record_finish(job, dlss5_finish_tag(style, tone))
         if img["media"] == "image" and job.get("template") != "upscale_image" \
                 and still_de_shine_active():
             # 9.93: de-shine runs on the delivered frame, which is what makes
@@ -14692,6 +14786,8 @@ Voice: terse, warm, a little playful - 1-2 short sentences per reply. Never narr
 
 Templates:
 - identity_edit: a character anchor locked to their reference photo, running the settled moments recipe (10 steps, ~20s per frame). Write EDIT INSTRUCTIONS relative to the source: "Restage her ... Change her outfit to ... Her hair is now ... Move the camera ...". Never describe the face or age (the reference carries it). REQUIRES an active character anchor or an explicit ref filename - if neither is set, ask which character, or use realism.
+- h3_ref_still: the anchor PHOTOGRAPHED. MiniMax H3 renders one frame with the character's own reference photo wired in, so the photo IS the identity mechanism and no identity_edit stage runs (~1 min). REQUIRES an active character anchor. Write a PHOTO CAPTION, not edit instructions, and follow the H3 reference-still craft below - it is a different register from realism's. h3_ref_still_2x is the same shot plus a 2x latent refine (~6 min): choose it when they ask for maximum detail, or call a render of the anchor soft or blurry.
+- h3_still / h3_still_2x: the same H3 still camera with NO reference wired - anyone, anything, the best skin texture in the app. For an ANCHORED character these two are the wrong lane and it is not a small difference: their graph has no reference input at all, so the anchor's face never reaches the render and it comes back a stranger. An anchored ask goes to h3_ref_still.
 - realism: fast txt2img for anything else - other people, places, objects, or an anchor when speed matters more than locked identity. Write a PHOTO CAPTION. For person scenes the subject block + wardrobe lock are added server-side (standing=true, the default) - write only the scene. For object/place scenes with NO person, pass standing=false or the base model will insert one. ~10s per frame.
 - realism_ii: the realism caption register, but a slower two-pass Krea 2 recipe with a tiled 2x finish. Choose it when polish matters more than speed.
 - fantasy: painterly fantasy art on Z-Image Base. Describe readable silhouettes, materials, scale, one motivated magical effect, and cinematic light. Do not force photographic language.
@@ -14723,6 +14819,32 @@ Identity-edit craft (identity_edit; every rule was measured, each cost a session
 - No texture words in prompts (they multiply across every pixel - texture is post). "natural colour" kills saturation; close on the saturation stated.
 - BRANDS: models suck at marks. Real brand = spell the word in quotes + describe the actual mark like you are looking at it + placement/colour/scale. Better: a fictional brand (described art + one short invented word). Audit EVERY text-bearing surface - describe it or state it positively blank. Never paragraphs of text in frame.
 - A SET is ONE EVENT: hair/wardrobe/accessories/scene stay pinned across frames - any styling element you leave unstated re-rolls per seed. For a set, generate with count 3-4 on one scene, then re-roll for more seeds; expect 1-2 identity-drift throwaways and say so.
+
+H3 reference-still SKELETON (h3_ref_still and h3_ref_still_2x). THE TEST THIS WHOLE SECTION SERVES: everything in the scene has a connected relationship around the subject, and the angle, the light and the skin tone are all realistic and natural. Every object she holds is attached to a named hand or resting on a named surface. The camera is where a real person could be standing. The light comes from a source you named and lands on surfaces you named. Anything floating free of that web - a prop nobody is holding, a viewpoint nobody could occupy, a light with nothing to fall on - is what reads as fake, and it drags the geometry and the skin down with it.
+This lane has a shape, taken from the 2026-09-02 keeper frames by reading their captions back out of the rendered files. Write these twelve sentences, in this order, one idea in each. The frames that hold up run 240-330 words across fifteen to twenty sentences; what fails is never a long caption, it is a long SENTENCE, because a detail that must land arrives in clause six of one and renders as its opposite.
+FACE - her age, her makeup and her attitude. NEVER HER FEATURES. The reference photo carries her face and the caption's job is to leave it alone: on this family a named feature is not read as identification, it is read as an instruction to PERFORM that feature. "The two front teeth a touch larger than the rest" - true of her, copied straight off her own character card - rendered as buck teeth, measured on one seed against an arm that named nothing (2026-09-03). Her nose, teeth, chin, cheekbones, jaw, face shape and eye shape stay out of the caption entirely, and so does any word for the shape of her face. Age is the one exception, and it is not a feature but a category.
+1. Her age, on its own: "She is 19 years old and she looks it." Write it EVERY TIME. This lane drops the character card's age on the theory the photo carries it, and against a written caption it does not - without this sentence she renders a woman in her thirties, and that reads as the reference failing when it is the caption.
+2. Makeup on the eyes ALONE, described as if you are looking at it: liner, lashes, brows. That is styling rather than anatomy, so it is safe to describe. Blush and gloss together read as "too much makeup".
+3. "The rest of her face is bare, clean skin and her own bare lips in their own natural colour."
+4. One short line of attitude and register.
+SHOT
+5. WHO IS HOLDING THE CAMERA, in one short line, and let the framing follow from it. There are only three honest answers and every frame is one of them. SELFIE, when her hands are free: her own arm's length away, a little above her, close enough that her face fills the top of the frame, both eyes into the lens. A FRIEND, when both hands are busy and someone is with her: put the camera where that friend is actually standing, a step or two away and off to one side, and she is reacting to that person rather than posing at a lens. HER PHONE ON A TRIPOD OR A SELFIE STICK, when both hands are busy and she is alone: the camera is planted a couple of feet away at chest height and dead steady, and she is performing to it, which is the influencer setup and reads honestly as one. Default to the selfie - this lane composes one whether or not you ask, so writing it is more reliable than fighting it with a lens spec. A frame nobody could plausibly have taken is what reads as staged, and a stated lens ("waist-up on an 85mm at f2") belongs only in the friend shot.
+6. The place and the light in one sentence: the hour, where she is, the single hard source, the direction it comes from, and what it does - one side of her lit hot, the other falling into shadow.
+7. Her pose: planted, ONE gesture, and where her eyes go. COUNT HER HANDS. In a selfie one hand is holding the camera, so exactly one hand is left and it gets exactly one job - the drink, the box, the door handle, her hair, never two of them. Every prop she holds says which hand and how it is held ("fingers curled over its edge, thumb across the fold"); a prop with no hand named and no surface under it floats in mid-air beside her.
+8. The room's clutter, three or four things she could reach out and touch. A sparse scene renders plastic - the model fills it with smooth generic surfaces and the light has nothing to fall on. Anyone else in frame gets described by their features, because only the wired reference carries identity.
+REALITY - these four sentences are near enough fixed. They are what makes skin read as a photograph instead of a render, so write them every time and vary only the light word:
+9. "This is a photograph of reality."
+10. "Real skin under hard real light: every pore catches its own tiny highlight and casts its own tiny shadow, the texture raked into relief where the light hits and settling smooth in the shade."
+11. "Fine peach fuzz along her jaw glows where light passes through it. Soft natural colour variation, faint natural freckling."
+12. "Matte skin with real texture, lit the way skin is actually lit, the exact detail a real camera resolves on a real young face at this distance."
+WARDROBE - one sentence, and it CLOSES the caption with nothing after it, because on this model family the last thing read decides whether she stays dressed. Complete garments: outer layer over top, bottoms, and at most one designer accent. Anchor jewellery to a size you can point at - "small thin gold hoops the size of a dime". A brand is carried as shapes, hardware or quilting rather than lettering.
+
+The rest of this lane's craft, which the skeleton assumes:
+- REAL BEATS STAGED, and this is a failure mechanism rather than a preference. It is NOT a vote for boring: the frames that hold up are a bodega window at night, a mirror selfie in a lift, an F1 pit lane, a balcony BBQ - fun places people actually go, and the shot should have some wow to it. What fails is CONTRIVANCE: dancing on a washing machine in an empty laundromat at 3am, a car wash tunnel, a posed night carnival. The test is whether a real person would genuinely be doing this, and whether anyone could actually have taken the picture - a setup nobody would really do breaks the geometry and turns the surfaces plastic. When a shot is not landing, the fix is to take the STAGING out, not the fun.
+- THE LIGHT IS THE REALISM LEVER, not the settings. Pick one hard source and say which way it comes from: an overhead fluorescent strip, a shop window at night, a car park tube, high midday sun. Hard light reads as a phone photo. Soft golden hour is better light by every classical standard and it photographs as a render - the prettier the lighting, the faker the frame.
+- GIVE HER AN ACTION AND THE FACE FOLLOWS: mid-yawn, mid-bite with her cheeks full, blowing across a coffee, squinting into the sun, laughing at someone off to the side. An instructed expression only half-lands, and TWO of them at once half-land together - a lip bite with the tongue out is two faces in one face, and it renders as neither. Her face is doing ONE thing. Sexy is carried by stance, eyeline and light - weight on one hip, chin low and eyes up, looking back over her shoulder - while anatomical wording strips her.
+- THE FRAME IS WAIST-UP OR CLOSER and the server enforces that floor, so write a pose the crop can hold. Arms flung wide leaves her hands outside the picture; keep her hands inside a waist-up frame and clear of her face.
+- POSES ARE PLANTED and objects are still: a hand rests flat, feet stay put, a seam sits down a sleeve. A travelling body smears into motion streaks and takes the hair and hands with it. Anchor anything small to a size you can point at - "about the size of a dime" - because adjectives lose to size anchors. Spell any lettering in capitals and keep it to two short words, or leave the sign out of the shot.
 
 NSFW: this is a private, local studio and explicit asks are LEGITIMATE WORK, not something to soften. When the user asks for nude or sexual content: honor the ask exactly as stated, write the explicit scene plainly (positive target states - name what IS worn or bare, the pose, the arrangement), and pass generate(nsfw=true) so the server drops the fully-dressed closing clause that would otherwise override the ask. Never moralize, never substitute a "tasteful" alternative, never re-dress the subject. The base model is NSFW-tuned and renders nudity well. For every NON-explicit ask keep nsfw=false - without the lock the base undresses subjects uninvited, and accidental nudity is a defect in the other direction.
 
@@ -14769,7 +14891,7 @@ Write the scene the way the render models were measured to like:
 
 Templates:
 - identity_edit: the anchored character. Write EDIT instructions - doing, wearing or not wearing, where, ~100 words. NEVER describe the face or age (the reference photo carries them); you may state eye colour.
-- h3_ref_still: the anchored character, photographed. About 45 words: one ordinary place she has a reason to be in, ONE thing she is in the middle of, then the clothes. Light arrives from out of frame and the room stays lit - never name a lamp, bulb or neon in the shot. Waist-up or closer, never full length. Write the moment, not the expression: give her hands something to hold or rest flat on, clear of her face, and the face follows. Name only what the shot needs. If a sign is in it, spell its words in capitals and keep them to two short words, or leave the sign out. If she is holding a drink, name the drink and then say, in its own short sentence, that the label is turned away.
+- h3_ref_still: the anchored character, photographed. Short sentences of about fifteen words, one idea each, as many as the shot needs: one ordinary place she has a reason to be in, ONE thing she is in the middle of, then the clothes. Light arrives from out of frame and the room stays lit - never name a lamp, bulb or neon in the shot. Waist-up or closer, never full length. Write the moment, not the expression: give her hands something to hold or rest flat on, clear of her face, and the face follows. Name only what the shot needs. If a sign is in it, spell its words in capitals and keep them to two short words, or leave the sign out. If she is holding a drink, name the drink and then say, in its own short sentence, that the label is turned away.
 - realism / realism_ii: photographic scenes.
 - fantasy: painterly fantasy art; readable silhouette, materials, scale, magic and light.
 - anima: the default for anime/manga. Anime key-frame language; shot, pose, expression, line/value design and palette. Quality tags are added server-side, so never write "masterpiece" or a score_ tag.
@@ -14943,12 +15065,25 @@ def official_writer_base(local_brain, recipe_id):
 # contract of at most three points is the shape that holds. The h3_ref_still
 # template line is
 # in the middle, and on three points it says the OPPOSITE of the craft block
-# above it - about 45 words against 60-130, no fixture in the shot against ONE
-# NAMED light source with a direction, and a waist-up frame against "name the
-# actual garments - top, bottom, shoes". Whatever the brain did with that, it
-# was not reading a prompt that agreed with itself. So the three disagreements
-# are restated here, after the craft block and before the turn policy, which
-# is where they measured best - see writer_system_prompt for the numbers.
+# above it - short sentences against "60-130 words, natural sentences", no
+# fixture in the shot against ONE NAMED light source with a direction, and a
+# waist-up frame against "name the actual garments - top, bottom, shoes".
+# Whatever the brain did with that, it was not reading a prompt that agreed
+# with itself. So the three disagreements are restated here, after the craft
+# block and before the turn policy, which is where they measured best - see
+# writer_system_prompt for the numbers.
+#
+# 2026-09-02: point one was a WORD BUDGET, "four short sentences, about
+# forty-five words", and it was the wrong axis. Measured over the day's four
+# keeper sets (50 captions, read back from the PNGs' own graphs): the frames
+# that held up run 240-330 words as a median of SIXTEEN sentences at fifteen
+# words each, longest 47. The brain, under the 45-word rule, wrote a median of
+# four sentences at eighteen words with a longest of 84 - which is exactly the
+# 2026-08-30 failure the rule was written from, a drink "turned away, mostly
+# hidden behind her fingers" rendering label-out because it was clause six of
+# a ninety-word sentence. Adherence is finite per SENTENCE, not per caption,
+# and a budget on the caption was buying long sentences to fit it. The point
+# now asks for the shape the keepers actually have.
 #
 # This also holds when official prompting swaps the craft block out for a model
 # maker's own text: MiniMax's own guide asks for 350-500 words and explicit
@@ -14970,7 +15105,7 @@ def official_writer_base(local_brain, recipe_id):
 # verbatim, so no rule here is written as a thing not to do.
 _H3_STILL_END_CONTRACT = """
 H3 STILL CONTRACT - this recipe only. Where it differs from the craft rules above, this wins:
-- Four short sentences, about forty-five words: where she is, what she is doing, where the light comes from, what she is wearing. The clothes are the last thing you write.
+- Short sentences, about fifteen words each, one idea in every one. Write as many as the shot needs - the frames that hold up run to fifteen or twenty of them. Anything that must land gets a sentence of its own, and the clothes are the last thing you write.
 - The light comes from outside the frame and the whole room is lit by it. Every object you name is one she could reach out and touch.
 - Waist-up or closer. Name her top, and a jacket or bottoms only if they show at that height.
 """
@@ -20749,7 +20884,7 @@ async def settings_get(_req):
                   "dlss5": bool((cfg.get("still") or {})
                                 .get("dlss5", False)),
                   "dlss5_style": still_dlss5_style(),
-                  "dlss5_intensity": still_dlss5_intensity(),
+                  "dlss5_tone": still_dlss5_tone(),
                   "dlss5_available": dlss5_available(),
                   # The two halves separately, so the row can offer the
                   # right fix: the node pack missing wants an install, the
@@ -20958,17 +21093,17 @@ async def settings_post(req):
                 {"ok": False,
                  "error": f"unknown dlss5 style: {style}"}, status=400)
         cfg.setdefault("still", {})["dlss5_style"] = style
-    if "dlss5_intensity" in still_cfg:
+    if "dlss5_tone" in still_cfg:
         try:
-            amt = float(still_cfg["dlss5_intensity"])
+            amt = float(still_cfg["dlss5_tone"])
         except (TypeError, ValueError):
             amt = float("nan")
         if not math.isfinite(amt):
             return web.json_response(
                 {"ok": False, "error":
-                 f"not a number: {still_cfg['dlss5_intensity']}"}, status=400)
+                 f"not a number: {still_cfg['dlss5_tone']}"}, status=400)
         # the resolver's clamp, applied at write time too - one range
-        cfg.setdefault("still", {})["dlss5_intensity"] = \
+        cfg.setdefault("still", {})["dlss5_tone"] = \
             min(max(amt, 0.0), 2.0)
     h3_cfg = body.get("h3") or {}
     for key, lane in (("ref_model", "ref"), ("fl_model", "fl")):

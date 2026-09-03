@@ -63,11 +63,31 @@ PIXAL_CRAFT = "ONE named light source"
 # hashes moved and the remote ones did not.
 # 10.4 (2026-09-01) touched TURN_POLICY itself - the accept-turn fire
 # sentence rides every lane - so all four hashes moved together.
+# 2026-09-02: the mirror image of the 9.80 entry. SYSTEM gained the four H3
+# still template lines and the H3 reference-still craft block; SYSTEM_LOCAL
+# was not touched, so the two remote hashes moved and the two local ones did
+# not - which is itself the check that the edit landed where it was meant to.
+# 2026-09-03: her FEATURES left the FACE block - a named feature is performed,
+# not used as identification, and "the two front teeth a touch larger" rendered
+# as buck teeth. Age stays, as a category. Remote pair only.
+# 2026-09-03: "ordinary beats clever" read as a vote for BORING and the set
+# came back drab - the keepers are a bodega at night and a lift selfie, which
+# are fun. Reframed as REAL BEATS STAGED: contrivance is the failure, not
+# glamour. Remote pair only.
+# 2026-09-03: sentence 5 of the skeleton became CAPTURE LOGIC - who is
+# holding the camera - after a jetski frame with both hands on the bars and
+# the viewpoint floating over open water. Remote pair only.
+# 2026-09-02, third change: the H3 craft block became a twelve-sentence
+# SKELETON taken from the keeper captions, so the two remote hashes moved
+# again and the local pair did not.
+# 2026-09-02, second change of the day: the H3 caption rule stopped being a
+# word budget and became a sentence-length rule, in BOTH writers' lane lines
+# and in the end contract that rides every lane's prompt - so all four moved.
 OFF_SNAPSHOT = {
-    (False, False): "b84b0dab359f2f628df30826cbde982f0f518f915c5df2e29763b299c6554993",
-    (False, True): "7ce187f7d0ece53baa93728f15aef614b0897bfca5c1d287a6e83622e35eed48",
-    (True, False): "eb6e9a9ac333225209081a7b9a44f86f23fd23f4973a15406c783847e5224272",
-    (True, True): "992e3e44f0f9bae1661a4a0361df0797b329429670c221888451890152eb7238",
+    (False, False): "681a80a59cf3420ae0ac39f583c654b72d4d94f38bf78893912c018a8b5d7d4f",
+    (False, True): "1d719f7733a28181bfabe80b9682ef59aab30bce4aa3a2a37a77c02a25055dec",
+    (True, False): "2c62f1122c2e6d94f79e90a159586f3999c96ca1316568ca26af040d2b90d0bb",
+    (True, True): "981b0eb317297474cceede4eef34c07ac413cf451866800a86b461387bd00401",
 }
 
 

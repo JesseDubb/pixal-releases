@@ -8,7 +8,8 @@
 // so the theme toggle previews against the live chat; the fallback is the old
 // bottom-left floating panel budding off the rail's settings button.
 // Local-first: everything persists to pixal_dm/config.json via /api/settings.
-import { Fragment, Children, createContext, useContext, useEffect, useRef, useState } from "react";
+import { Fragment, Children, createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
 import { Lockup } from "../lib/Lockup.jsx";
@@ -23,6 +24,7 @@ import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, SwitchGhost, ValueGhost } from "./Skeleton.jsx";
 import { familyName, prettyModel, prettyTemplate } from "../lib/names.js";
 import { useStore } from "../store.js";
+import { subscribe } from "../transport.js";
 
 const MONO = "ui-monospace, Consolas, monospace";
 
@@ -67,6 +69,7 @@ const CSS = `
 .px-set > .px-set-group:first-child { margin-top: 0; }
 .px-set > .px-set-group + * { margin-top: -24px; }
 .px-set > .px-set-rows--cont { margin-top: -16px; }
+.px-about-update-host > :not(.px-about-update-live) { display: none !important; }
 `;
 
 // ── loading: ghosts, not guesses ─────────────────────────────────────────
@@ -507,6 +510,11 @@ const QUICK_APIS = [
 ];
 const LOCAL_URL = "http://127.0.0.1:8191/v1";
 
+// The last /api/settings payload, shared by every mount of the panel.
+// Stale-while-revalidate: it seeds a remount before first paint, the mount
+// fetch refreshes it, and every successful save refreshes it quietly - so
+// the next mount can never flash pre-save values.
+let settingsCache = null;
 const SETTINGS_TAB_KEY = "pixal.settings.tab";
 // Six rooms (2026-08-22 was three, 9.30 added the library back): the model
 // decisions split by medium when one Models tab grew too crowded to scan.
@@ -633,6 +641,135 @@ const Btn = ({ children, onClick, primary, disabled, title }) => (
     }}>{children}</button>
 );
 
+// 9.24b fills 9.24a's reserved update slot. The slot itself lives inside the
+// About region frozen byte-for-byte by brief 10.0, so SettingsMenu portals
+// this control into that existing host instead of rewriting the later brief's
+// composition. Only the old slot contents are hidden; the credits stay exact.
+const AboutUpdate = ({ upd, install, transferring, pct, amount,
+                       onBegin, onCancel, onLaunch }) => (
+  <div className="px-about-update-live px-ghost-in" style={{ display: "flex",
+    flexDirection: "column", alignItems: "center", gap: SPACE[6] }}>
+    {upd !== null ? (
+      <>
+        {upd.ok && !upd.update && (
+          <span style={{ fontSize: TYPE.label, color: "var(--textMut)" }}>
+            Up to date{upd.latest ? ` — ${upd.latest} is the latest release` : ""}
+          </span>
+        )}
+        {upd.ok && upd.update && (
+          <>
+            <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
+              Pixal {upd.latest} is out
+            </span>
+            {install.phase === "idle" && (
+              <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
+                <Btn primary onClick={onBegin}>Update Pixal</Btn>
+                <a href={upd.url} target="_blank" rel="noreferrer"
+                   style={{ display: "inline-flex", alignItems: "center",
+                            gap: SPACE[4], color: "var(--textTer)",
+                            textDecoration: "none", fontFamily: FONT,
+                            fontSize: TYPE.label }}>
+                  Release notes
+                  <ArrowSquareOut size={12} weight="duotone" />
+                </a>
+              </div>
+            )}
+
+            {transferring && (
+              <>
+                <span style={{ fontFamily: MONO, fontSize: TYPE.label,
+                               color: "var(--textSec)" }}>
+                  {install.phase === "verify"
+                    ? "Verifying download…"
+                    : install.phase === "cancelling"
+                      ? "Stopping download…"
+                      : `Downloading${amount ? ` — ${amount}` : "…"}`}
+                </span>
+                {install.total ? (
+                  <div role="progressbar" aria-label="Update download"
+                       aria-valuemin={0} aria-valuemax={100}
+                       aria-valuenow={install.phase === "verify" ? 100 : pct}
+                       style={{ width: 220, height: 6, overflow: "hidden",
+                                borderRadius: RADIUS.pill,
+                                background: "var(--bg3)" }}>
+                    <div style={{
+                      width: `${install.phase === "verify" ? 100 : pct}%`,
+                      height: "100%", borderRadius: RADIUS.pill,
+                      background: "var(--accent)",
+                      transition: `width ${MOTION.state}`,
+                    }} />
+                  </div>
+                ) : (
+                  <Bar w={220} h={6} />
+                )}
+                {/* The server checks the cancel latch at every chunk and once
+                    more immediately before publishing the verified exe. */}
+                <Btn onClick={onCancel} disabled={install.phase === "cancelling"}>
+                  {install.phase === "cancelling" ? "Stopping…" : "Cancel"}
+                </Btn>
+              </>
+            )}
+
+            {install.phase === "ready" && (
+              <>
+                <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
+                  Download verified.
+                </span>
+                <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
+                               lineHeight: 1.5, maxWidth: 320 }}>
+                  The Windows installer opens next. Pixal will close;
+                  Setup will reopen it when you finish.
+                </span>
+                {install.error && (
+                  <span style={{ fontSize: TYPE.label, color: "var(--error)",
+                                 lineHeight: 1.5, maxWidth: 320 }}>
+                    {install.error}
+                  </span>
+                )}
+                <Btn primary onClick={onLaunch}>Open installer</Btn>
+              </>
+            )}
+            {install.phase === "launching" && (
+              <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
+                Opening installer…
+              </span>
+            )}
+            {install.phase === "handoff" && (
+              <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
+                Installer opened. Pixal is closing…
+              </span>
+            )}
+            {install.phase === "error" && (
+              <>
+                <span style={{ fontSize: TYPE.label, color: "var(--error)",
+                               lineHeight: 1.5, maxWidth: 320 }}>
+                  {install.error || "Update could not continue."}
+                </span>
+                <Btn onClick={onBegin}>Try again</Btn>
+              </>
+            )}
+            {install.phase === "cancelled" && (
+              <>
+                <span style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>
+                  Download cancelled.
+                </span>
+                <Btn onClick={onBegin}>Download again</Btn>
+              </>
+            )}
+            <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
+                           lineHeight: 1.5, maxWidth: 320 }}>
+              Updating replaces only Pixal's own modules — your recipes,
+              characters, styles, settings and history stay untouched.
+            </span>
+          </>
+        )}
+      </>
+    ) : (
+      <Bar w={150} h={11} />
+    )}
+  </div>
+);
+
 export const SettingsMenu = ({ onClose, docked, phone }) => {
   const store = useStore();
   const [cfg, setCfg] = useState(null);
@@ -681,6 +818,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [newRoot, setNewRoot] = useState("");
   const [note, setNote] = useState(null);
   const [upd, setUpd] = useState(null);
+  const [updInstall, setUpdInstall] = useState({
+    phase: "idle", got: 0, total: null, error: null,
+  });
+  const settingsBodyRef = useRef(null);
+  const [aboutUpdateHost, setAboutUpdateHost] = useState(null);
   const [busy, setBusy] = useState(false);
   // The DLSS runtime seat (Jesse, 2026-09-01): Pixal can neither ship nor
   // fetch the DLL (no legal source exists until NVIDIA releases DLSS 5),
@@ -726,6 +868,21 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     try { window.localStorage.setItem(SETTINGS_TAB_KEY, id); }
     catch { /* private mode / storage disabled */ }
   };
+  useLayoutEffect(() => {
+    if (tab !== "about") return undefined;
+    // The frozen About composition's second child is 9.24a's reserved update
+    // slot. A portal lets 9.24b fill that slot while keeping brief 10.0's
+    // byte-identical region intact.
+    const about = settingsBodyRef.current?.lastElementChild;
+    const host = about?.children?.[1];
+    if (!host) return undefined;
+    host.classList.add("px-about-update-host");
+    setAboutUpdateHost(host);
+    return () => {
+      host.classList.remove("px-about-update-host");
+      setAboutUpdateHost((current) => current === host ? null : current);
+    };
+  }, [tab]);
   // The header search (brief 10.0): filters this tab's rows and sections,
   // client-side only - a keystroke never writes config. "/" focuses the
   // field from anywhere but another text field; Escape in the field clears.
@@ -745,8 +902,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   }, []);
   const q = query.trim().toLowerCase();
 
-  useEffect(() => {
-    fetch("/api/settings").then((r) => r.json()).then((d) => {
+  // One payload, applied the same way whether it came off the wire or out
+  // of the module cache below the component's own scope (settingsCache).
+  const applySettings = (d) => {
       setCfg(d);
       setVramProfile((d.vram && d.vram.profile) || "auto");
       const isLocal = d.llm.base_url.includes("127.0.0.1:8191");
@@ -783,6 +941,18 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       setComfyConsole(d.comfy_console === "plain" ? "plain" : "tui");
       setExplicit(["on", "off"].includes(d.explicit) ? d.explicit : "auto");
       setMode(isLocal ? "local" : "api");
+  };
+  // Seed from the cache BEFORE first paint. The panel has two mount sites -
+  // docked in the rail, floating over narrow layouts - so a dock swap or a
+  // wide/narrow crossing remounts it, and every remount painted the full
+  // skeleton and re-paid the fetch (Jesse, 2026-09-03: "settings sometimes
+  // loads and has to load again"). A seeded remount paints real values
+  // immediately; the fetch below only revalidates behind it.
+  useLayoutEffect(() => { if (settingsCache) applySettings(settingsCache); }, []);
+  useEffect(() => {
+    fetch("/api/settings").then((r) => r.json()).then((d) => {
+      settingsCache = d;
+      applySettings(d);
     }).catch(() => setNote({ ok: false, text: "settings endpoint unreachable" }));
   }, []);
 
@@ -796,6 +966,73 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       .catch(() => setUpd({ ok: false }));
   }, []);
 
+  // 9.24b shares the same SSE stream as render and model-fetch progress. The
+  // server is the authority for every phase: only its verified `ready` event
+  // enables the handoff button, never the completion of the fetch request.
+  useEffect(() => subscribe((ev) => {
+    if (ev.type !== "update_fetch") return;
+    setUpdInstall((current) => ({
+      phase: ev.cancelled ? "cancelled"
+        : ev.error ? "error"
+          : ev.done ? "ready"
+            : ev.phase || current.phase,
+      got: ev.got ?? current.got,
+      total: ev.total ?? current.total,
+      error: ev.error || null,
+    }));
+  }), []);
+
+  const beginUpdate = async () => {
+    setUpdInstall({ phase: "download", got: 0, total: null, error: null });
+    try {
+      const response = await fetch("/api/update/download", { method: "POST" });
+      const body = await response.json();
+      if (!body.ok) {
+        setUpdInstall((current) => ({ ...current, phase: "error",
+                                      error: body.error || "download could not start" }));
+      }
+    } catch (error) {
+      setUpdInstall({ phase: "error", got: 0, total: null,
+                      error: error.message });
+    }
+  };
+
+  const cancelUpdate = async () => {
+    setUpdInstall((current) => ({ ...current, phase: "cancelling" }));
+    try {
+      await fetch("/api/update/cancel", { method: "POST" });
+      setUpdInstall({ phase: "cancelled", got: 0, total: null, error: null });
+    } catch (error) {
+      setUpdInstall((current) => ({ ...current, phase: "error",
+                                    error: error.message }));
+    }
+  };
+
+  const launchUpdate = async () => {
+    setUpdInstall((current) => ({ ...current, phase: "launching", error: null }));
+    try {
+      const response = await fetch("/api/update/launch", { method: "POST" });
+      const body = await response.json();
+      if (body.ok) {
+        setUpdInstall((current) => ({ ...current, phase: "handoff" }));
+      } else {
+        setUpdInstall((current) => ({ ...current, phase: "ready",
+                                      error: body.error || "installer could not open" }));
+      }
+    } catch (error) {
+      setUpdInstall((current) => ({ ...current, phase: "ready",
+                                    error: error.message }));
+    }
+  };
+  const updTransferring = ["download", "verify", "cancelling"]
+    .includes(updInstall.phase);
+  const updPct = updInstall.total
+    ? Math.min(100, Math.round((updInstall.got / updInstall.total) * 100))
+    : 0;
+  const updAmount = updInstall.total
+    ? `${(updInstall.got / 1e6).toFixed(1)} of ${(updInstall.total / 1e6).toFixed(1)} MB`
+    : "";
+
   // Auto-apply: every control saves the moment it changes - no Save button.
   const apply = async (partial, okText = "saved") => {
     setBusy(true); setNote(null);
@@ -804,6 +1041,10 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(partial) });
       const d = await r.json();
       setNote(d.ok ? { ok: true, text: okText } : { ok: false, text: d.error || "failed" });
+      // The POST answers ok/error, never the payload - refresh the module
+      // cache quietly so the next mount does not flash pre-save values.
+      if (d.ok) fetch("/api/settings").then((r2) => r2.json())
+        .then((d2) => { settingsCache = d2; }).catch(() => {});
       setBusy(false);
       return d.ok;
     } catch (e) { setNote({ ok: false, text: e.message }); }
@@ -1039,7 +1280,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </div>
         <TabStrip tabs={TABS} value={tab} onChange={pickTab} />
       </div>
-      <div className="px-scroll px-set" style={{
+      <div ref={settingsBodyRef} className="px-scroll px-set" style={{
         flex: 1, minHeight: 0, overflowY: "auto", padding: SPACE[20],
         display: "flex", flexDirection: "column", gap: SPACE[32],
       }}>
@@ -1578,12 +1819,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           <Field label="Force compatible models"><SwitchGhost /></Field>
         </Rows>
         )}
-        <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}
-                 gloss={editCfg ? (
-                   <span className="px-ghost-in">{`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}</span>
-                 ) : (
-                   <>Runs instruction edits. <ValueGhost w={128} /></>
-                 )}>
+        <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}>
           {/* Two named lanes (9.29): whole frame runs when there is no mask,
               masked area when a mask is painted. Until tonight the second one
               was hard-pinned to KLEIN_MODEL and invisible here. The whole-frame
@@ -1599,7 +1835,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               apply payload, same toast. */}
           {editCfg ? (
             <Rows>
-            <Field className="px-ghost-in" label={<>Whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
+            <Field className="px-ghost-in"
+                   label={<>Whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}
+                   hint={`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}>
               <Picker hug label="whole frame edit model"
                 value={editCfg.model || ""}
                 placeholder="recipe default"
@@ -1628,16 +1866,32 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         name ? "masked edit model applied" : "recipe default restored");
                 }} />
             </Field>
+            <Field className="px-ghost-in"
+                   label={<>Inpaint color match <InfoTip size={12} text="The inpainted region can come back desaturated; this matches it to the source before compositing (mkl 0.95)." /></>}
+                   hint="Matches the redrawn area's color to the frame">
+              <Switch label="Inpaint color match"
+                on={!!editCfg.inpaint_color_match}
+                onChange={(on) => {
+                  setEditCfg({ ...editCfg, inpaint_color_match: on });
+                  apply({ edit: { inpaint_color_match: on } },
+                        on ? "inpaint color match on" : "inpaint color match off");
+                }} />
+            </Field>
           </Rows>
           ) : (
             <Rows>
             {/* the ghost IS the control's own box: the 24px value pill
                 (PickerGhost), one per lane */}
-            <Field label="Whole frame">
+            <Field label="Whole frame"
+                   hint={<>Runs instruction edits. <ValueGhost w={128} /></>}>
               <PickerGhost />
             </Field>
             <Field label="Masked area">
               <PickerGhost />
+            </Field>
+            <Field label="Inpaint color match"
+                   hint="Matches the redrawn area's color to the frame">
+              <SwitchGhost />
             </Field>
             </Rows>
           )}
@@ -1781,11 +2035,16 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                     <NumberField step={0.05} min={0} max={2}
                       value={stillCfg.dlss5_tone ?? 1.5}
                       label="DLSS 5 tone"
-                      title="Contrast and saturation of the re-render. Lower is punchier, higher is flatter. 1.5 is the shipped default."
+                      title="Contrast and saturation of the re-render. 1.5 is the default."
                       onCommit={(v) => {
                         setStillCfg((s) => ({ ...(s || {}), dlss5_tone: v }));
                         apply({ still: { dlss5_tone: v } }, "DLSS 5 tone");
                       }} />
+                    {/* An unlabelled number between a dropdown and a toggle
+                        tells a stranger nothing (Jesse, 2026-09-03). Tips are
+                        outside the 150-word visible budget, so the rule lives
+                        here rather than as a subline. */}
+                    <InfoTip size={12} text="Contrast and saturation of the DLSS 5 re-render, 0 to 2. Lower is punchier and more saturated, higher is flatter and cooler. There is no neutral value — it slides continuously, so every setting moves both. 1.5 is the default because taking both down slightly is what pulls the plastic sheen off skin, picked from a 14-arm sweep." />
                   </>
                 ) : null}
                 <Switch label="Nvidia DLSS 5"
@@ -1811,6 +2070,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   appears once the toggle is on - one row, the 34px beat. */}
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {stillCfg.film_grain ? (
+                  <>
                   <NumberField step={0.1} min={0.1} max={8}
                     value={stillCfg.film_grain_amount ?? 1.6}
                     label="Film grain amount"
@@ -1819,6 +2079,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       setStillCfg((s) => ({ ...(s || {}), film_grain_amount: v }));
                       apply({ still: { film_grain_amount: v } }, "film grain amount");
                     }} />
+                  <InfoTip size={12} text="How much grain, 0.1 to 8. It is strongest in the midtones the way negative film behaves, and seeded from the render so a re-render matches. 1.6 is the judged default; past about 3 it reads as noise rather than film." />
+                  </>
                 ) : null}
                 <Switch label="Film grain"
                   on={stillCfg.film_grain}
@@ -1843,6 +2105,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   only while the toggle is on, the same 34px beat. */}
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {stillCfg.de_shine ? (
+                  <>
                   <NumberField step={0.05} min={0.1} max={1}
                     value={stillCfg.de_shine_strength ?? 0.85}
                     label="Shine removal strength"
@@ -1851,6 +2114,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       setStillCfg((s) => ({ ...(s || {}), de_shine_strength: v }));
                       apply({ still: { de_shine_strength: v } }, "shine removal strength");
                     }} />
+                  <InfoTip size={12} text="How far a highlight is pulled toward the skin around it, 0.1 to 1. At 1 the hotspot matches its surroundings completely, which can read flat; 0.85 is the judged default. It only ever darkens, and only inside a detected face." />
+                  </>
                 ) : null}
                 <Switch label="Shine removal"
                   on={stillCfg.de_shine}
@@ -2307,6 +2572,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Rows>
         </>)}
 
+        {tab === "about" && aboutUpdateHost && createPortal(
+          <AboutUpdate upd={upd} install={updInstall}
+            transferring={updTransferring} pct={updPct} amount={updAmount}
+            onBegin={beginUpdate} onCancel={cancelUpdate} onLaunch={launchUpdate} />,
+          aboutUpdateHost
+        )}
         {tab === "about" && (
         /* The credits card. Centered hero composition — wordmark, the human
            behind it, the beer, the shoulders it stands on. Deliberately the
@@ -2552,16 +2823,25 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         // uses, so it goes through the shared shell — centred={false}
         // because these are positioned panels, not centred boxes.
         <ModalShell onClose={onClose} z={OVERLAY.panel} scrim="rgba(0,0,0,0.45)"
+          // HEIGHT, not maxHeight, on both shapes. With a cap alone the
+          // card sizes to its CONTENT, so every tab change resized it -
+          // and both shapes are anchored from the BOTTOM, so the whole
+          // panel jumped on the way to the tab you were aiming at
+          // (Jesse, 2026-09-03: "changes on almost every tab change").
+          // The docked shape never had this because it is height:100%
+          // of its lane; these two hold one height the same way, and
+          // the inner region (flex:1, minHeight:0, overflowY) absorbs
+          // the difference exactly as it already does when docked.
           centred={false} boxStyle={phone ? {
             // Phone: a bottom sheet - full width, hugging the safe-area edge.
             left: 8, right: 8,
-            bottom: "calc(8px + env(safe-area-inset-bottom))", maxHeight: "82dvh",
+            bottom: "calc(8px + env(safe-area-inset-bottom))", height: "82dvh",
             background: "var(--bg1)", border: "1px solid var(--borderHov)",
             borderRadius: 20, boxShadow: SHADOW.xl,
             display: "flex", flexDirection: "column", overflow: "hidden",
           } : {
             // Fallback (narrow viewports): buds off the rail's settings button.
-            left: 84, bottom: 16, width: 400, maxWidth: "92vw", maxHeight: "86vh",
+            left: 84, bottom: 16, width: 400, maxWidth: "92vw", height: "86vh",
             background: "var(--bg1)", border: "1px solid var(--borderHov)",
             borderRadius: 20, boxShadow: SHADOW.xl,
             display: "flex", flexDirection: "column", overflow: "hidden",

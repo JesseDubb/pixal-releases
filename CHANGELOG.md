@@ -1,5 +1,69 @@
 # Changelog
 
+## 1.3.0b — 2026-09-04
+
+**The character page is rebuilt around the face.** A character used to be a
+form: a stack of identical grey boxes with the photo filed among them like one
+more field. It is a casting card now. The photo is a portrait tile down the
+left at the size you actually judge a likeness at, with its filename over the
+bottom of it, and Upload, Edit and Crop directly underneath. The name is set as
+a title rather than typed into a row, the facts that never change — age, race,
+sex — sit under it on one line, and the sentence Pixal will put in front of
+every caption runs along the bottom of the window where you can read it while
+you work. Swapping the reference is a strip of photos under the portrait with a
+search field, instead of a grid that pushed everything else off the screen.
+
+**Cropping has handles.** Both crop tools — the one on a character's photo and
+the one in the edit dialog — opened with an empty frame and expected you to
+drag a perfect rectangle in one go. They now open with the crop already placed,
+eight handles on the corners and edges, and the region draggable as a whole.
+The mask brush was rewritten at the same time: on a high-refresh display it
+reads every mouse position the browser recorded between frames, so a fast
+stroke is a smooth line instead of a row of disconnected dashes.
+
+**Editing a character's photo shows its progress on the photo.** The edit
+sampled quietly in the chat behind the dialog, so the thing you were looking at
+sat unchanged while the work happened somewhere else. The portrait now carries
+the same live generation effect the chat cards use, with the step counter under
+it, and the finished picture replaces the reference when it lands. It no longer
+posts a card into the conversation — one place to watch, not two.
+
+**Pixal opens into the app instead of an empty page.** Everything on screen —
+the greeting, the model and character pills, the LoRA rail — waited on one
+request that had to ask ComfyUI for its full node catalog, twelve megabytes of
+it, whenever a five-minute cache had lapsed. On a full install that was several
+seconds of near-empty window on every open. Pixal now remembers the last
+catalog it saw and draws the whole interface from it immediately, then
+reconciles when the fresh one arrives, and the server answers from what it
+already has while it refreshes in the background. The sampler card and the
+Settings panel got the same treatment: they keep what they loaded instead of
+re-fetching it every time you open them.
+
+**The masked swap has a lever for how hard it holds the original.** Painting a
+mask and asking for a new face gave you one behaviour, and when it moved too
+little there was nothing to turn. There are three settings now — keep the
+region anchored to what is there, drop the anchor entirely, or let the
+reference lead — so a swap that would not land has somewhere to go. Klein's
+masked edits can also colour-match the redrawn patch back to the frame around
+it, which is the fix for a repaint that comes back slightly cooler or flatter
+than the picture it sits in.
+
+**The edit dialog tells you which model will run.** The panel described the
+Qwen lane's habits no matter which lane your settings actually pointed at, so
+its guidance could be quietly wrong. It reads the configured lanes now and says
+what will happen.
+
+**Identity boost can lock to the face.** The dial that strengthens a wired
+identity reference applied to the whole frame, which pulls the reference's
+clothes and background along with its face. It can be confined to the face
+region now, so the likeness sharpens without the rest of the photo following it
+in.
+
+**Settings fixes.** The update button checked for an update and then did
+nothing with what it found. The floating panel resized itself every time you
+switched tabs, moving the controls under your cursor. Three dials sat with no
+labels at all and now say what they do.
+
 ## 1.2.3b — 2026-09-03
 
 **FLUX.2 Klein makes pictures now, not just edits.** Klein is one model that

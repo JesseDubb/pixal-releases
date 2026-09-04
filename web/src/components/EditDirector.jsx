@@ -1,5 +1,5 @@
 // EditDirector.jsx — the dialog behind every Edit click. Two lanes share it:
-// no mask sends the instruction verbatim to Qwen-Image-Edit (whole frame);
+// no mask sends the instruction verbatim to the configured whole-frame lane;
 // painting a mask routes the edit to Klein inpaint, where only the painted
 // pixels resample. The mask is exported at the source's natural resolution as
 // a white-on-black PNG (white = edit here) — the /api/edit contract — and a
@@ -11,6 +11,9 @@ import { ArrowCounterClockwise, ArrowUUpLeft, Crop, Eraser, ImageSquare,
 import { upload } from "../transport.js";
 import { FONT, TYPE, SPACE, RADIUS, MOTION, SHADOW, W } from "../lib/design-tokens.js";
 import { ModalShell } from "../lib/ModalShell.jsx";
+import { MiniSlider } from "../lib/MiniSlider.jsx";
+import { SegmentedControl } from "../lib/SegmentedControl.jsx";
+import { InfoTip } from "./InfoTip.jsx";
 
 // Concrete verbs the model responds to, phrased as the user would type them.
 const EXAMPLES = [
@@ -41,14 +44,33 @@ const EXAMPLES_MASK_REF = [
 const ZOOM_MAX = 8;
 const BRUSH_MIN = 4, BRUSH_MAX = 128;
 const UNDO_DEPTH = 12;
+// The crop region is adjustable, matching the character form's crop exactly
+// (one interaction everywhere): drag inside moves it, eight handles resize
+// it, a drag on the dimmed outside draws fresh. CROP_MIN is natural px.
+const CROP_MIN = 24;
+const CROP_HANDLES = [
+  { k: "nw", fx: 0,   fy: 0,   cursor: "nwse-resize" },
+  { k: "n",  fx: 0.5, fy: 0,   cursor: "ns-resize" },
+  { k: "ne", fx: 1,   fy: 0,   cursor: "nesw-resize" },
+  { k: "w",  fx: 0,   fy: 0.5, cursor: "ew-resize" },
+  { k: "e",  fx: 1,   fy: 0.5, cursor: "ew-resize" },
+  { k: "sw", fx: 0,   fy: 1,   cursor: "nesw-resize" },
+  { k: "s",  fx: 0.5, fy: 1,   cursor: "ns-resize" },
+  { k: "se", fx: 1,   fy: 1,   cursor: "nwse-resize" },
+];
 const STAGE_HELP = "scroll to zoom · space-drag or middle-drag to pan · "
                  + "[ ] brush size · ctrl+z undoes a stroke";
-// With a reference attached the instruction points at it as "image 2" — that
-// exact phrase is what the encoder was trained on, so the examples model it.
+// Qwen's second image encoder names the attachment "image 2". Klein carries
+// references in its latent chain instead, so its prompts name their content.
 const EXAMPLES_REF = [
   "put the logo from image 2 on her shirt",
   "paint image 2 on the wall as a mural",
   "print the logo from image 2 on the billboard",
+];
+const EXAMPLES_REF_KLEIN = [
+  "put the logo from the attached image on her shirt",
+  "dress her in the jacket from the attached image",
+  "swap her face for the attached photo",
 ];
 
 const toolBtn = (active) => ({
@@ -63,7 +85,7 @@ const toolBtn = (active) => ({
 });
 
 export const EditDirector = ({ onClose, onAction, available = true, missing = [],
-                               imageUrl = "", kleinAvailable = true,
+                               wholeFrameRecipe = null, imageUrl = "", kleinAvailable = true,
                                kleinMissing = [] }) => {
   const [instruction, setInstruction] = useState("");
   const [tool, setTool] = useState("paint");
@@ -72,7 +94,8 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   const [crop, setCrop] = useState(null);          // natural-px {x,y,w,h}
   const [imgDims, setImgDims] = useState(null);    // natural size once loaded
   const [busy, setBusy] = useState(false);
-  const [refImg, setRefImg] = useState(null);      // input name of image 2
+  const [refImg, setRefImg] = useState(null);      // uploaded input name
+  const [anchor, setAnchor] = useState("full");
   const [refErr, setRefErr] = useState("");
   const refFile = useRef(null);
   const taRef = useRef(null);
@@ -92,6 +115,11 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   const spaceHeld = useRef(false);
   const [zoom, setZoom] = useState(1);
   const [panning, setPanning] = useState(false);
+  // The crop tool's cursor follows what is under the pointer (a handle, the
+  // region, the outside). State, not a style write: a setCrop render would
+  // clobber an imperative cursor mid-drag; the zone changes rarely, so the
+  // re-renders are cheap.
+  const [cropCursor, setCropCursor] = useState("crosshair");
   // A brush ring under the pointer; canvas-space coordinates, ref-only.
   const hover = useRef(null);
   // Undo is a stack of mask snapshots taken before each stroke - a 2 MP mask
@@ -104,6 +132,8 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
   const masked = hasMask && !!imgDims;
   const laneOk = masked ? kleinAvailable : available;
   const laneMissing = masked ? kleinMissing : missing;
+  const kleinWholeFrame = wholeFrameRecipe?.id === "klein_edit";
+  const wholeFrameLabel = wholeFrameRecipe?.label || "Whole-frame edit";
 
   // Pointer position in the mask's natural coordinates. The overlay canvas is
   // the img's box exactly (the rect is post-transform, so zoom is already in
@@ -122,6 +152,22 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     const box = view.getBoundingClientRect();
     const k = view.width / box.width;
     return { x: (e.clientX - box.left) * k, y: (e.clientY - box.top) * k, k };
+  };
+  const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  // What the pointer is over, in crop terms: a handle, the region, or null.
+  // Tolerance is screen pixels converted through p.scale so a handle stays
+  // grabbable at any zoom.
+  const cropZone = (p) => {
+    if (!crop) return null;
+    const tol = 12 * p.scale;
+    for (const h of CROP_HANDLES) {
+      const hx = crop.x + h.fx * crop.w, hy = crop.y + h.fy * crop.h;
+      if (Math.abs(p.x - hx) <= tol && Math.abs(p.y - hy) <= tol) return h;
+    }
+    if (p.x > crop.x && p.x < crop.x + crop.w &&
+        p.y > crop.y && p.y < crop.y + crop.h)
+      return { k: "move", cursor: "move" };
+    return null;
   };
 
   const applyView = () => {
@@ -212,14 +258,34 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
       ctx.fillRect(0, r.y + r.h, view.width, view.height - r.y - r.h);
       ctx.fillRect(0, r.y, r.x, r.h);
       ctx.fillRect(r.x + r.w, r.y, view.width - r.x - r.w, r.h);
-      // A canvas context has no element to resolve CSS custom properties
-      // against, so "var(--accent)" is silently ignored and the rect keeps the
-      // initial #000000 - black on the dark scrim, effectively invisible.
-      // Resolve the token against the mounted canvas itself.
-      ctx.strokeStyle =
-        getComputedStyle(view).getPropertyValue("--accent").trim() || "#D6F32F";
-      ctx.lineWidth = 1.5;
+      // The frame and handles hold a constant SCREEN size: k converts a
+      // screen px to canvas px, and the CSS zoom transform multiplies it
+      // back out - the same trick the brush ring uses. Geometry is the
+      // design system's locked handle spec (10px corner dots, 18x6 edge
+      // pills, white, 25%-alpha hairline, no shadows), shared with the
+      // character form's crop.
+      const sk = view.width / view.getBoundingClientRect().width;
+      ctx.strokeStyle = "#FFFFFF";
+      ctx.lineWidth = 1 * sk;
       ctx.strokeRect(r.x, r.y, r.w, r.h);
+      if (tool === "crop") {
+        for (const hd of CROP_HANDLES) {
+          const hx = r.x + hd.fx * r.w, hy = r.y + hd.fy * r.h;
+          ctx.fillStyle = "#FFFFFF";
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+          ctx.lineWidth = 1 * sk;
+          ctx.beginPath();
+          if (hd.fx !== 0.5 && hd.fy !== 0.5) {
+            ctx.arc(hx, hy, 5 * sk, 0, Math.PI * 2);
+          } else if (hd.fy === 0.5) {
+            ctx.roundRect(hx - 3 * sk, hy - 9 * sk, 6 * sk, 18 * sk, 3 * sk);
+          } else {
+            ctx.roundRect(hx - 9 * sk, hy - 3 * sk, 18 * sk, 6 * sk, 3 * sk);
+          }
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
     }
     // The brush ring: the exact footprint of the next stroke, in canvas
     // pixels (brush is a screen size, k converts it). Hidden while panning.
@@ -291,7 +357,16 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     }
     if (e.button !== 0) return;
     const p = toNatural(e);
-    if (tool === "crop") { drag.current = { x0: p.x, y0: p.y }; return; }
+    if (tool === "crop") {
+      const zone = cropZone(p);
+      if (zone) {
+        setCropCursor(zone.cursor);
+        drag.current = { mode: zone.k, start: p, from: { ...crop } };
+      } else {
+        drag.current = { mode: "draw", x0: p.x, y0: p.y };
+      }
+      return;
+    }
     const ctx = maskRef.current.getContext("2d");
     undoRef.current.push(ctx.getImageData(0, 0, maskRef.current.width, maskRef.current.height));
     if (undoRef.current.length > UNDO_DEPTH) undoRef.current.shift();
@@ -319,18 +394,57 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     }
     // The ring follows the pointer whether or not a stroke is in progress.
     hover.current = toCanvas(e);
-    if (!drag.current) { redraw(); return; }
-    const p = toNatural(e);
-    if (tool === "crop") {
-      const x = Math.max(0, Math.min(drag.current.x0, p.x));
-      const y = Math.max(0, Math.min(drag.current.y0, p.y));
-      const w = Math.min(imgDims.w, Math.max(drag.current.x0, p.x)) - x;
-      const h = Math.min(imgDims.h, Math.max(drag.current.y0, p.y)) - y;
-      if (w > 8 && h > 8) setCrop({ x, y, w, h });
+    if (!drag.current) {
+      if (tool === "crop") {
+        const zone = cropZone(toNatural(e));
+        const next = zone ? zone.cursor : "crosshair";
+        if (next !== cropCursor) setCropCursor(next);
+      }
+      redraw();
       return;
     }
+    const p = toNatural(e);
+    if (tool === "crop") {
+      const d = drag.current;
+      if (d.mode === "draw") {
+        const x = Math.max(0, Math.min(d.x0, p.x));
+        const y = Math.max(0, Math.min(d.y0, p.y));
+        const w = Math.min(imgDims.w, Math.max(d.x0, p.x)) - x;
+        const h = Math.min(imgDims.h, Math.max(d.y0, p.y)) - y;
+        if (w > 8 && h > 8) setCrop({ x, y, w, h });
+      } else if (d.mode === "move") {
+        setCrop({ ...d.from,
+                  x: clampN(d.from.x + (p.x - d.start.x), 0, imgDims.w - d.from.w),
+                  y: clampN(d.from.y + (p.y - d.start.y), 0, imgDims.h - d.from.h) });
+      } else {
+        const spec = CROP_HANDLES.find((h) => h.k === d.mode);
+        const dx = p.x - d.start.x, dy = p.y - d.start.y;
+        let { x, y, w, h } = d.from;
+        if (spec.fx === 0) {
+          const nx = clampN(d.from.x + dx, 0, d.from.x + d.from.w - CROP_MIN);
+          w = d.from.x + d.from.w - nx; x = nx;
+        } else if (spec.fx === 1) {
+          w = clampN(d.from.w + dx, CROP_MIN, imgDims.w - d.from.x);
+        }
+        if (spec.fy === 0) {
+          const ny = clampN(d.from.y + dy, 0, d.from.y + d.from.h - CROP_MIN);
+          h = d.from.y + d.from.h - ny; y = ny;
+        } else if (spec.fy === 1) {
+          h = clampN(d.from.h + dy, CROP_MIN, imgDims.h - d.from.y);
+        }
+        setCrop({ x, y, w, h });
+      }
+      return;
+    }
+    // A 239Hz pointer outruns pointermove events on a fast stroke; the
+    // coalesced samples fill the gaps so the line follows the hand instead
+    // of cutting its corners.
     const ctx = maskRef.current.getContext("2d");
-    ctx.lineTo(p.x, p.y);
+    const samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const ce of (samples.length ? samples : [e])) {
+      const q = toNatural(ce);
+      ctx.lineTo(q.x, q.y);
+    }
     ctx.stroke();
     redraw();
   };
@@ -386,6 +500,24 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     finally { setBusy(false); }
   };
 
+  const lane = useMemo(() => {
+    if (masked) return {
+      id: "klein_inpaint",
+      copy: refImg
+        ? "the painted area is redrawn from the attached image · Klein inpaint"
+        : "only the painted area redraws · Klein inpaint",
+    };
+    if (refImg) return {
+      id: "whole_frame",
+      copy: kleinWholeFrame
+        ? "your words can describe what the attached image provides · Klein edit"
+        : "your words can point at the attached image as “image 2”",
+    };
+    if (crop) return { id: "whole_frame", copy: "edits just the cropped region" };
+    return { id: "whole_frame", copy: "keeps the frame, changes what you name" };
+  }, [masked, crop, refImg, kleinWholeFrame]);
+  const maskedSwap = masked && !!refImg && lane.id === "klein_inpaint";
+
   const go = async () => {
     if (!text || !laneOk || busy) return;
     setBusy(true);
@@ -396,20 +528,12 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
       // now, so neither one drops the other's attachment.
       if (refImg) extra.reference = refImg;
       if (masked) extra.mask = exportMask();
+      if (maskedSwap) extra.anchor = anchor;
       if (imgDims && crop) extra.cropBlob = await exportCrop();
       onAction(text, extra);
       onClose();
     } finally { setBusy(false); }
   };
-
-  const lane = useMemo(() => {
-    if (masked) return refImg
-      ? "the painted area is redrawn from the attached image · Klein inpaint"
-      : "only the painted area redraws · Klein inpaint";
-    if (refImg) return "your words can point at the attached image as “image 2”";
-    if (crop) return "edits just the cropped region";
-    return "keeps the frame, changes what you name";
-  }, [masked, crop, refImg]);
 
   return (
     <ModalShell onClose={onClose}
@@ -440,7 +564,7 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
 
         {!laneOk ? (
           <div role="alert" style={{ fontSize: TYPE.ui, lineHeight: 1.5, color: "#E3A7B0" }}>
-            {masked ? "Klein inpaint is unavailable." : "Qwen Image Edit is unavailable."}
+            {masked ? "Klein inpaint is unavailable." : `${wholeFrameLabel} is unavailable.`}
             {laneMissing.length > 0 && (
               <ul style={{ margin: `${SPACE[6]}px 0 0`, paddingLeft: SPACE[16] }}>
                 {laneMissing.map((item) => <li key={item}>{item}</li>)}
@@ -476,35 +600,40 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
                            touchAction: "none",
                            cursor: !imgDims ? "default"
                              : panning ? "grab"
-                             : tool === "crop" ? "crosshair" : "none" }} />
+                             : tool === "crop" ? cropCursor : "none" }} />
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
                           flexWrap: "wrap" }}>
               <button type="button" style={toolBtn(tool === "paint")}
-                      onClick={() => setTool("paint")} title="paint the area to redraw">
-                <PaintBrush size={13} weight="bold" /> paint
+                      onClick={() => setTool("paint")} title="Paint the area to redraw">
+                <PaintBrush size={13} weight="bold" /> Paint
               </button>
               <button type="button" style={toolBtn(tool === "erase")}
-                      onClick={() => setTool("erase")} title="erase painted mask">
-                <Eraser size={13} weight="bold" /> erase
+                      onClick={() => setTool("erase")} title="Erase painted mask">
+                <Eraser size={13} weight="bold" /> Erase
               </button>
               <button type="button" style={toolBtn(tool === "crop")}
-                      onClick={() => setTool("crop")} title="drag a crop rectangle">
-                <Crop size={13} weight="bold" /> crop
+                      onClick={() => {
+                        setTool("crop");
+                        // Entering the tool places a region to adjust - never
+                        // a blank state to draw perfectly on the first try.
+                        if (!crop && imgDims)
+                          setCrop({ x: Math.round(imgDims.w * 0.15),
+                                    y: Math.round(imgDims.h * 0.15),
+                                    w: Math.round(imgDims.w * 0.7),
+                                    h: Math.round(imgDims.h * 0.7) });
+                      }} title="Adjust the crop region">
+                <Crop size={13} weight="bold" /> Crop
               </button>
-              <label title="brush size" style={{ display: "inline-flex",
-                       alignItems: "center", gap: SPACE[6], fontFamily: FONT,
-                       fontSize: 10, color: "var(--textTer)",
-                       textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                brush
-                <input type="range" min={BRUSH_MIN} max={BRUSH_MAX} value={brush}
-                       onChange={(e) => setBrush(+e.target.value)}
-                       style={{ width: 90, accentColor: "var(--accent)" }} />
-              </label>
+              <div title="Brush size" style={{ width: 120 }}>
+                <MiniSlider ariaLabel="Brush size" min={BRUSH_MIN} max={BRUSH_MAX}
+                  step={4} value={brush} onChange={setBrush}
+                  format={(v) => `${Math.round(v)}px`} />
+              </div>
               <button type="button" style={{ ...toolBtn(false), opacity: canUndo ? 1 : 0.45 }}
-                      disabled={!canUndo} onClick={undo} title="undo the last stroke (ctrl+z)">
-                <ArrowUUpLeft size={13} weight="bold" /> undo
+                      disabled={!canUndo} onClick={undo} title="Undo the last stroke (Ctrl+Z)">
+                <ArrowUUpLeft size={13} weight="bold" /> Undo
               </button>
               <button type="button" style={{ ...toolBtn(false), fontVariantNumeric: "tabular-nums",
                                              opacity: zoom > 1 ? 1 : 0.6 }}
@@ -514,8 +643,8 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
               </button>
               <button type="button" style={toolBtn(false)} onClick={() => {
                 clearMask(); setCrop(null); resetView();
-              }} title="clear mask, crop and zoom">
-                <ArrowCounterClockwise size={13} weight="bold" /> reset
+              }} title="Clear mask, crop and zoom">
+                <ArrowCounterClockwise size={13} weight="bold" /> Reset
               </button>
             </div>
           </>
@@ -556,7 +685,9 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
               <ImageSquare size={13} weight="bold" />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis",
                              whiteSpace: "nowrap" }}>{refImg}</span>
-              <button type="button" onClick={() => setRefImg(null)}
+              <button type="button" onClick={() => {
+                        setRefImg(null); setAnchor("full");
+                      }}
                       title="remove reference image"
                       style={{ display: "inline-flex", padding: 0, border: "none",
                                background: "transparent", color: "inherit",
@@ -572,6 +703,25 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
           )}
         </div>
 
+        {maskedSwap && (
+          <div style={{ display: "flex", flexDirection: "column", gap: SPACE[6] }}>
+            <span style={{ fontSize: TYPE.label, fontWeight: W.label,
+                           color: "var(--textSec)" }}>
+              Anchor
+              <InfoTip size={12} text={"The anchor keeps identity outside the mask from drifting. "
+                + "Dropping it lets the attached reference drive the masked area. "
+                + "The composite still returns untouched pixels bit-identical."} />
+            </span>
+            <SegmentedControl ariaLabel="Masked swap anchor" size="sm"
+              value={anchor} onChange={setAnchor}
+              options={[
+                { v: "full", label: "Anchored" },
+                { v: "drop", label: "Reference leads" },
+                { v: "last", label: "Anchor last" },
+              ]} />
+          </div>
+        )}
+
         {/* Examples follow the lane: masked = what goes INSIDE the paint. */}
         <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
                       flexWrap: "wrap" }}>
@@ -580,7 +730,9 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
               for example
             </span>
             {(masked ? (refImg ? EXAMPLES_MASK_REF : EXAMPLES_MASK)
-                     : refImg ? EXAMPLES_REF : EXAMPLES).map((item) => (
+                     : refImg
+                       ? (kleinWholeFrame ? EXAMPLES_REF_KLEIN : EXAMPLES_REF)
+                       : EXAMPLES).map((item) => (
               <button key={item} type="button" onClick={() => setInstruction(item)}
                 style={{
                   padding: `${SPACE[4]}px ${SPACE[10]}px`, cursor: "pointer",
@@ -594,8 +746,8 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
         <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
           <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
                          whiteSpace: "nowrap", overflow: "hidden",
-                         textOverflow: "ellipsis" }} title={lane}>
-            {lane}
+                         textOverflow: "ellipsis" }} title={lane.copy}>
+            {lane.copy}
           </span>
           <button type="button" onClick={go} disabled={!text || !laneOk || busy}
             style={{

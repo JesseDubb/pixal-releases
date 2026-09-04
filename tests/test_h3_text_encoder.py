@@ -139,7 +139,8 @@ def no_disk():
 
 
 def cfg_with(h3=None):
-    return {"h3": h3 if h3 is not None else
+    return {"edit": {"model": ""},
+            "h3": h3 if h3 is not None else
             {"ref_model": "", "fl_model": "", "text_encoder": ""},
             "extra_model_roots": []}
 

@@ -9,6 +9,17 @@ import { prettyTemplate } from "./lib/names.js";
 
 const CONV = "local";
 const OPTS_KEY = "pixal-opts-v2";
+// The last catalog the server sent. Seeding state from it lets the whole app
+// paint on open instead of sitting on an empty chat until /api/options
+// answers (1.5 s warm, longer cold); the fresh one reconciles in behind it.
+const OPTIONS_KEY = "pixal-options-v1";
+
+function loadCachedOptions() {
+  try {
+    const o = JSON.parse(localStorage.getItem(OPTIONS_KEY));
+    return o && Array.isArray(o.recipes) && Array.isArray(o.models) ? o : null;
+  } catch { return null; }
+}
 
 const state = {
   conversations: { [CONV]: { id: CONV, messages: [] } },
@@ -20,7 +31,7 @@ const state = {
   brain: null,                   // { mode, model, device, vision, nsfw }
   scan: null,                    // startup/rescan readout text while scanning
   history: [],
-  options: null,
+  options: loadCachedOptions(),
   opts: loadOpts(),
   railOpen: false,
   lb: null,                      // lightbox { images, idx, meta }
@@ -715,6 +726,12 @@ const EMPTY_LIVE = { progress: {}, preview: null };
 const live = new Map();          // jobId -> { progress, preview }
 const liveSubs = new Map();      // jobId -> Set<fn>
 const liveDirty = new Set();
+// Jobs the chat must NOT show. A character's photo edit belongs to the modal
+// the user is looking at, not to the conversation behind it - and two cards
+// animating the same render is overhead nobody asked for (Jesse,
+// 2026-09-04). Correlation ids, registered before the request and consumed by
+// the job event they come back on.
+const silentCids = new Set();
 let liveFlush = 0;
 
 function touchLive(jobId, patch) {
@@ -815,6 +832,9 @@ function onEvent(d) {
       }
       state.liveJobs = [...state.liveJobs, d.job_id];
       state.draftPending = false;      // the draft fired; the offer is spent
+      // A silent job still samples, still calms the UI, still lands in the
+      // ledger and still drives the render meter - it just writes no message.
+      if (d.cid && silentCids.delete(d.cid)) { emit(); break; }
       appendMsg({
         id: cid(), role: "assistant", ts: d.ts,
         job: { job_id: d.job_id, template: d.template, scene: d.scene,
@@ -1456,7 +1476,8 @@ export const api = {
       }
       const result = await transport.edit(id, cid(), instruction, input,
                                           extra.mask || null,
-                                          extra.reference || null);
+                                          extra.reference || null,
+                                          extra.anchor || null);
       if (!result?.ok)
         appendMsg({ id: cid(), role: "error",
                     text: result?.error || "the edit could not be started",
@@ -1478,13 +1499,20 @@ export const api = {
                              { type: "image/png" });
         input = (await transport.upload(file)).name;
       }
-      const result = await transport.edit(null, cid(), instruction, input,
+      // The character form is this path's only caller, and its edit shows its
+      // progress on the portrait itself - so the job is silent in the lane.
+      const correlate = cid();
+      silentCids.add(correlate);
+      const result = await transport.edit(null, correlate, instruction, input,
                                           extra.mask || null,
-                                          extra.reference || null);
-      if (!result?.ok)
+                                          extra.reference || null,
+                                          extra.anchor || null);
+      if (!result?.ok) {
+        silentCids.delete(correlate);
         appendMsg({ id: cid(), role: "error",
                     text: result?.error || "the edit could not be started",
                     ts: Date.now() / 1000 });
+      }
       return !!result?.ok;
     } catch (e) {
       appendMsg({ id: cid(), role: "error", text: "server unreachable: " + e.message,
@@ -1539,6 +1567,7 @@ export const api = {
   async loadOptions() {
     try {
       state.options = await transport.options();
+      try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(state.options)); } catch { /* full */ }
       // Remember what localStorage asked for before general reconciliation can
       // erase an anchor that is no longer in the server roster. A saved manual
       // face must never silently take over from that formerly-authoritative

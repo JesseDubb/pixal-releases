@@ -732,10 +732,12 @@ export const Chat = () => {
   const [animFor, setAnimFor] = useState(null);
   // Edit is the same shape as animate: pick the frame, then say what changes.
   const [editFor, setEditFor] = useState(null);
-  const editRecipe = ((store.options && store.options.recipes) || [])
-    .find((r) => r.id === "qwen_edit");
-  const kleinRecipe = ((store.options && store.options.recipes) || [])
-    .find((r) => r.id === "klein_inpaint");
+  const editRoutes = (store.options && store.options.edit_routes) || {};
+  const recipes = ((store.options && store.options.recipes) || []);
+  const editRecipe = recipes
+    .find((r) => r.id === (editRoutes.whole_frame || "qwen_edit"));
+  const kleinRecipe = recipes
+    .find((r) => r.id === (editRoutes.masked || "klein_inpaint"));
   // The lobby (greeting + chips) waits for options so it can speak to the
   // actual character roster; the dice re-rolls it; a first saved character
   // upgrades a bare lobby to their name on the spot.
@@ -1635,6 +1637,7 @@ export const Chat = () => {
           <EditDirector onClose={() => setEditFor(null)}
             available={editRecipe ? editRecipe.available !== false : true}
             missing={(editRecipe && editRecipe.missing) || []}
+            wholeFrameRecipe={editRecipe}
             kleinAvailable={kleinRecipe ? kleinRecipe.available !== false : true}
             kleinMissing={(kleinRecipe && kleinRecipe.missing) || []}
             imageUrl={still ? imgUrl(still) : ""}

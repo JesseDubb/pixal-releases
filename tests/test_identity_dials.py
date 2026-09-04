@@ -55,8 +55,8 @@ class IdentityDialDeclarationTests(unittest.TestCase):
         dials = {d["key"]: d for d in server.RECIPE_SPECS["identity_edit"]["dials"]}
         # Brief 9.15 added the bypass variant choice, 9.56 the identity patch
         # build choice, to the same declaration.
-        self.assertEqual(set(dials), {"ref_boost", "grounding", "bypass_variant",
-                                      "identity_build"})
+        self.assertEqual(set(dials), {"ref_boost", "grounding", "ref_boost_mask",
+                                      "bypass_variant", "identity_build"})
         likeness = dials["ref_boost"]
         self.assertEqual((likeness["min"], likeness["max"]), (0.0, 10.0))
         self.assertEqual(likeness["default"], server.IDENTITY_REF_BOOST)
@@ -169,8 +169,8 @@ class IdentityDialOptionsTests(unittest.TestCase):
         # same declaration; with an empty catalog their live choices are
         # simply empty.
         self.assertEqual([d["key"] for d in identity["dials"]],
-                         ["ref_boost", "grounding", "bypass_variant",
-                          "identity_build"])
+                         ["ref_boost", "grounding", "ref_boost_mask",
+                          "bypass_variant", "identity_build"])
         likeness = identity["dials"][0]
         self.assertEqual(likeness["label"], "Likeness")
         self.assertEqual(likeness["default"], server.IDENTITY_REF_BOOST)

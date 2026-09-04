@@ -6,7 +6,7 @@ The point is repeatability. Model files remain interchangeable within their supp
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.2.3b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.3.0b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 

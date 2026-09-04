@@ -108,7 +108,8 @@ def no_disk():
 
 
 def cfg_with(h3=None):
-    return {"h3": h3 or {"ref_model": "", "fl_model": ""},
+    return {"edit": {"model": ""},
+            "h3": h3 or {"ref_model": "", "fl_model": ""},
             "extra_model_roots": []}
 
 

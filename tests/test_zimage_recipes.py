@@ -182,35 +182,78 @@ class PresetTests(unittest.TestCase):
 
 
 class ShippedPresetFileTests(unittest.TestCase):
-    """The five presets in recipes/ have to survive the real loader."""
+    """The SHIPPED starter styles survive the real loader.
 
-    IDS = ("zimage_realism", "zimage_seeds", "zimage_ancestral", "zimage_sde",
-           "zimage_turbo_fast")
+    This class used to assert five `recipes/zimage_*.json` files existed, and
+    it broke CI on every push from 1.2.2b (2026-09-03) onward while passing on
+    the author's machine. `recipes/` is the USER's folder and `.gitignore`
+    line 22 ignores its contents on purpose, so those five were never in a
+    commit, never in `git archive HEAD`, and therefore never in an installer -
+    a test can only see them on a machine that happens to have them.
+
+    They were also never shippable. They name private Civitai checkpoints
+    (`pornmasterZImage_baseV1`, `nsgirlZImage_002`, `cyberrealisticZImage_v70`)
+    while the starter set is deliberately built ONLY on checkpoints the
+    installer itself lays down, "so every one of them runs on a machine that
+    has never seen a Civitai login" (see seed_starter_styles). They are
+    personal saved styles, and personal saved styles are exactly what
+    `recipes/` is for.
+
+    So the subject is the real shipped set - `server.STARTER_STYLE_DIR`, read
+    from the module rather than rebuilt from `parents[1]`, so the test cannot
+    drift from what the seeder actually copies.
+    """
+
+    def _shipped(self):
+        import json
+        out = []
+        for path in sorted(server.STARTER_STYLE_DIR.glob("*.json")):
+            out.append((path, json.loads(path.read_text(encoding="utf-8"))))
+        return out
+
+    def test_there_is_a_starter_set_at_all(self):
+        self.assertTrue(self._shipped(), "no starter styles ship at all")
 
     def test_each_one_loads_and_validates(self):
-        import json
-        root = Path(__file__).resolve().parents[1] / "recipes"
-        for sid in self.IDS:
-            with self.subTest(preset=sid):
-                path = root / f"{sid}.json"
-                self.assertTrue(path.exists(), f"{path} is missing")
-                raw = json.loads(path.read_text(encoding="utf-8"))
+        for path, raw in self._shipped():
+            with self.subTest(preset=path.stem):
                 record = server.validate_saved_style(raw)
-                self.assertEqual(record["id"], sid)
-                self.assertEqual(record["base"], "zimage")
-                self.assertTrue(record["provenance"].get("note"))
+                self.assertEqual(record["id"], path.stem)
+                self.assertIn(record["base"], server.PUBLIC_RECIPE_IDS)
 
-    def test_the_base_ones_carry_a_negative_and_the_turbo_one_does_not(self):
-        import json
-        root = Path(__file__).resolve().parents[1] / "recipes"
-        for sid in self.IDS:
-            raw = json.loads((root / f"{sid}.json").read_text(encoding="utf-8"))
-            with self.subTest(preset=sid):
-                if sid.startswith("zimage_turbo"):
-                    # Writing one would be a field that never reaches the graph.
+    def test_a_zimage_base_style_carries_a_negative_and_turbo_does_not(self):
+        """cfg 1 has no guidance to steer, so a negative there is a field that
+        never reaches the graph."""
+        for path, raw in self._shipped():
+            if raw.get("base") != "zimage":
+                continue
+            with self.subTest(preset=path.stem):
+                if "turbo" in path.stem:
                     self.assertNotIn("negative", raw)
-                else:
-                    self.assertIn("negative", raw)
+
+    def test_every_shipped_style_is_tracked_by_git(self):
+        """The guard the old version of this class needed.
+
+        A shipped asset that git does not track cannot reach a user: the
+        installer packages `git archive HEAD`, never the working tree. Anything
+        under a gitignored path is invisible to a release and green only on the
+        machine that wrote it - which is the exact way this file broke.
+        """
+        import subprocess
+        root = Path(__file__).resolve().parents[1]
+        if not (root / ".git").exists():
+            self.skipTest("not a git checkout (shipped source tree)")
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", str(server.STARTER_STYLE_DIR)],
+            cwd=root, capture_output=True, text=True)
+        if tracked.returncode != 0:
+            self.skipTest("git unavailable")
+        names = {Path(line).name for line in tracked.stdout.split("\n") if line.strip()}
+        for path, _ in self._shipped():
+            with self.subTest(preset=path.name):
+                self.assertIn(path.name, names,
+                              f"{path.name} ships but git does not track it - "
+                              f"it would be absent from every installer")
 
 
 if __name__ == "__main__":

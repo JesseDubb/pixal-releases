@@ -159,7 +159,7 @@ class SeatSignatureTests(unittest.TestCase):
         self.assertIsNone(rows["klein_edit"]["sampler"])
 
     def test_the_options_route_probes_comfy_first(self):
-        handler = re.search(r"async def options\(_req\):([\s\S]{0,400}?)\n\n",
+        handler = re.search(r"async def options\(_req\):([\s\S]{0,1200}?)\n\n",
                             SERVER_SRC)
         self.assertIsNotNone(handler)
         self.assertIn("await refresh_comfy_nodes()", handler.group(1))

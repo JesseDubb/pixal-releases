@@ -98,6 +98,17 @@ class PanelDoesNotResize(unittest.TestCase):
         self.assertNotIn("{note && (", strip)
         self.assertIn("opacity: note ? 1 : 0", strip)
 
+    def test_the_floating_shapes_hold_one_height(self):
+        """A cap alone lets the card size to its CONTENT, so it resized on
+        every tab change - and both floating shapes are anchored from the
+        bottom, so the panel jumped on the way to the tab being aimed at.
+        The docked shape was always height:100%; these two match it now."""
+        for token in ('height: "82dvh"', 'height: "86vh"'):
+            with self.subTest(shape=token):
+                self.assertIn(token, SETTINGS)
+        self.assertNotIn('maxHeight: "82dvh"', SETTINGS)
+        self.assertNotIn('maxHeight: "86vh"', SETTINGS)
+
     def test_the_docked_card_is_the_positioning_context(self):
         self.assertIsNotNone(re.search(
             r'width: "100%", height: "100%",.*?position: "relative"',

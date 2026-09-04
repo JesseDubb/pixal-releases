@@ -25,6 +25,7 @@ import { AccordionPanel, AccordionChevron } from "../lib/Accordion.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Picker } from "../lib/Picker.jsx";
 import { familyName, tuningLine, variantName } from "../lib/names.js";
+import { Bar, PickerGhost, SegGhost, SkeletonStyle } from "./Skeleton.jsx";
 import { forgetCombo, inputImages, inputImgUrl, setInputRefType, starCombo, styleFromImage,
          styleSampler, upload } from "../transport.js";
 
@@ -1083,25 +1084,95 @@ const ComboShelf = ({ options, value, note, error, saved, busy, canStar,
     </div>
   );
 };
+// One sampler seat per (recipe, model), shared by every mount of the card
+// (Jesse, 2026-09-03: "I've minimized it before and felt like it was gone.
+// It is a very important panel" / "why does it have to load multiple
+// times"). Stale-while-revalidate: a mount paints the cached seat at once
+// while the fetch refreshes it behind, and only an ok answer ever writes
+// here - so a failed fetch can never evict a seat, or the skeleton's place.
+// "|" cannot appear in a recipe id or a model rel (illegal in a filename).
+const seatCache = new Map();
+const seatKey = (recipeId, model) => recipeId + "|" + (model || "");
 const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase,
                       open, onToggle }) => {
-  const [seat, setSeat] = useState(null);
+  // The cache IS the seat state; the tick only asks React to read it again.
+  // A keyed read swaps seats in the SAME render a recipe change happens in -
+  // no frame of the old recipe's numbers, no flash of skeleton over a seat
+  // already fetched.
+  const [, setSeatTick] = useState(0);
+  const seat = recipeId ? seatCache.get(seatKey(recipeId, model)) : null;
   // Both belong to the combo shelf's star and both must be declared BEFORE the
-  // early return below - a hook after a conditional return is a hook that stops
-  // being called the moment the seat goes away.
+  // early returns below - a hook after a conditional return is a hook that
+  // stops being called the moment the seat goes away.
   const [comboBusy, setComboBusy] = useState(false);
   const [comboErr, setComboErr] = useState(null);
   useEffect(() => {
     let live = true;
-    if (!recipeId) { setSeat(null); return undefined; }
+    if (!recipeId) return undefined;
+    const key = seatKey(recipeId, model);
     styleSampler(recipeId, model || "")
-      .then((d) => { if (live) setSeat(d?.ok ? d : null); })
-      .catch(() => { if (live) setSeat(null); });
+      .then((d) => {
+        if (!d?.ok) return;       // error answer: the stale seat (or skeleton) holds
+        seatCache.set(key, d);    // cache even if unmounted - the next mount is free
+        if (live) setSeatTick((t) => t + 1);
+      })
+      .catch(() => {});           // sidecar away: the skeleton keeps the card's place
     return () => { live = false; };
   }, [recipeId, model]);
   // A stale "could not save that" must not outlive the recipe it was about.
   useEffect(() => { setComboErr(null); }, [recipeId, model]);
-  if (!seat?.tunable) return null;
+  if (!recipeId) return null;
+  // Three states, and only a LOADED seat may hide the card: while the seat is
+  // still unknown, a skeleton shell holds the card's real geometry - header,
+  // ghost summary line, working chevron - so minimizing the composer mid-load
+  // never reads as the sampler panel being gone.
+  if (!seat) return (
+    <div style={{ ...rowBase, display: "flex", flexDirection: "column",
+                  alignItems: "stretch", gap: 0, marginBottom: SPACE[8] }}>
+      <SkeletonStyle />
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE[10], minWidth: 0 }}>
+        <SlidersHorizontal size={18} weight="duotone" style={{ color: "var(--accent)", flexShrink: 0 }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
+                        fontSize: TYPE.body, fontWeight: W.nav, color: "var(--text)",
+                        lineHeight: 1.35 }}>
+            Sampler
+          </div>
+          {/* The summary line's own metrics, so the swap to real text is
+              opacity-only - nothing below this card moves when it lands. */}
+          <div style={{ fontSize: TYPE.label, lineHeight: 1.4, height: "1.4em",
+                        display: "flex", alignItems: "center" }}>
+            <Bar w="55%" h={10} />
+          </div>
+        </div>
+        <button type="button" onClick={onToggle} aria-expanded={open}
+          aria-label="sampler settings" title={open ? "collapse sampler settings" : "expand sampler settings"}
+          style={{ height: 24, width: 24, display: "inline-flex", alignItems: "center",
+                   justifyContent: "center", flexShrink: 0, padding: 0,
+                   border: "1px solid var(--border)", borderRadius: RADIUS.control,
+                   cursor: "pointer", background: "var(--bg2)", color: "var(--textTer)" }}>
+          <AccordionChevron open={open} />
+        </button>
+      </div>
+      <AccordionPanel open={open}>
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE[12],
+                      marginTop: SPACE[12], paddingTop: SPACE[12],
+                      borderTop: "1px solid var(--border)" }}>
+          <SegGhost segments={3} />
+          {["sampler", "scheduler"].map((k) => (
+            <div key={k} style={{ display: "flex", flexDirection: "column",
+                                  gap: SPACE[4], minWidth: 0 }}>
+              <span style={{ height: 16, display: "flex", alignItems: "center" }}>
+                <Bar w={64} h={11} />
+              </span>
+              <PickerGhost />
+            </div>
+          ))}
+        </div>
+      </AccordionPanel>
+    </div>
+  );
+  if (!seat.tunable) return null;
   const keys = seat.keys || [];
   const has = (k) => keys.includes(k);
   const choices = seat.options || {};
@@ -1162,7 +1233,12 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
       const d = await call(recipeId, model || "", resolved.sampler_name, resolved.scheduler);
       // The server answers with the whole shelf rather than the one row, so the
       // card never has to guess where a new pair landed in the order.
-      if (d?.ok) setSeat((s) => (s ? { ...s, combos: d.combos || [] } : s));
+      if (d?.ok) {
+        const key = seatKey(recipeId, model);
+        const cur = seatCache.get(key);
+        if (cur) seatCache.set(key, { ...cur, combos: d.combos || [] });
+        setSeatTick((t) => t + 1);
+      }
       else setComboErr({ pair: comboPairKey, message: d?.error || "That pair could not be saved." });
     } catch {
       setComboErr({ pair: comboPairKey, message: "Pixal did not answer - the pair was not saved." });

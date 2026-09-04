@@ -54,14 +54,15 @@ SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding
 # fourteenth is 9.60's official-prompting toggle); videoCfg owns four
 # (engine, model, the 9.38 dialogue format, and the 9.31 H3 2× default);
 # upscale owns three (its Image-tab controls, its Video-tab controls, and
-# the Image-tab installed-count gloss); editCfg owns two (the picker and
-# its count gloss). h3Cfg owns ONE: 9.91's two model pickers and 9.94's text
+# the Image-tab installed-count gloss); editCfg owns one gate that swaps its
+# two pickers, color-match switch, count subline, and matching ghosts together.
+# h3Cfg owns ONE: 9.91's two model pickers and 9.94's text
 # encoder are all in the MiniMax H3 section now, so a single gate swaps three
 # PickerGhost value pills for three Pickers. (The encoder briefly had a second gate of
 # its own under VRAM profile; it moved on 2026-08-31 - Jesse, "I want the
 # option in settings under minimax" - and one gate covering the section is the
 # better shape anyway: the three rows land together or not at all.)
-GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 2,
+GATES = {"cfg": 14, "videoCfg": 5, "upscale": 3, "editCfg": 1,
          # vae owns two since 1.2.0b: the Z-Image decoder row and the Special
          # decoders group (one gate swaps both of its rows together).
          "vae": 2, "pidCfg": 1, "upd": 1,
@@ -273,7 +274,13 @@ class SettingsLoading(unittest.TestCase):
         self.assertIn("Card not read yet", SRC)  # reachable only past the gate now
         self.assertEqual(SRC.count("<ValueGhost"), 3)
         self.assertRegex(SRC, r"(?s)gloss=\{cfg \? \(.{0,400}?Found.{0,400}?<ValueGhost")
-        self.assertRegex(SRC, r"(?s)gloss=\{editCfg \? \(.{0,400}?compatible installed.{0,400}?<ValueGhost")
+        self.assertRegex(
+            SRC,
+            r"(?s)\{editCfg \? \(.{0,800}?hint=\{`[^`]*compatible installed\.`\}")
+        self.assertRegex(
+            SRC,
+            r'(?s)<Field label="Whole frame".{0,120}?Runs instruction edits\.'
+            r'.{0,120}?<ValueGhost')
         self.assertRegex(SRC, r"(?s)gloss=\{upscale \? \(.{0,400}?PiD repaints.{0,400}?<ValueGhost")
 
 

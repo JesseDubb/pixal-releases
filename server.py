@@ -31,6 +31,7 @@ import statistics
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -480,7 +481,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.2.3b"
+PIXAL_VERSION = "1.3.0b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -567,7 +568,9 @@ def load_config():
            # un-accelerated schedule; the step counts behind both come from
            # EDIT_ACCELERATORS, never from the user, because a distillation
            # belongs to one transformer.
-           "edit": {"model": "", "inpaint_model": "", "speed": "turbo"},
+           "edit": {"model": "", "inpaint_model": "",
+                    # Default-off Klein inpaint color correction (10.12).
+                    "inpaint_color_match": False, "speed": "turbo"},
            # Which H3 builds the lanes reach for when a render names none
            # (9.91). Two slots because H3 has two lanes and they take
            # different weights: ref_model serves the reference lanes
@@ -757,22 +760,39 @@ def vl_download_gb(name):
 def save_config(cfg):
     CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
 
+_YAML_ROOTS = {"key": None, "roots": []}
+
+def _yaml_model_roots(yaml_path):
+    """The base_path entries of extra_model_paths.yaml, parsed once per file
+    version. A catalog build asks for the roots about 800 times (once per LoRA
+    and model row), and re-parsing the YAML on each ask was three of the
+    build's four seconds."""
+    try:
+        st = yaml_path.stat()
+    except OSError:
+        return []
+    key = (str(yaml_path), st.st_mtime_ns, st.st_size)
+    if _YAML_ROOTS["key"] == key:
+        return list(_YAML_ROOTS["roots"])
+    roots = []
+    try:
+        import yaml
+        for section in (yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}).values():
+            if isinstance(section, dict):
+                bp = section.get("base_path")
+                if bp:
+                    roots.append(Path(bp))
+    except Exception:
+        pass
+    _YAML_ROOTS.update(key=key, roots=roots)
+    return list(roots)
+
 def model_roots(cfg=None):
     """Every root we scan: ComfyUI/models, extra_model_paths.yaml entries, and any
     roots the user added in settings (other drives, other layouts)."""
     cfg = cfg or load_config()
     roots = [CDIR / "models"]
-    yaml_path = CDIR / "extra_model_paths.yaml"
-    if yaml_path.exists():
-        try:
-            import yaml
-            for section in (yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}).values():
-                if isinstance(section, dict):
-                    bp = section.get("base_path")
-                    if bp:
-                        roots.append(Path(bp))
-        except Exception:
-            pass
+    roots.extend(_yaml_model_roots(CDIR / "extra_model_paths.yaml"))
     for r in cfg["extra_model_roots"]:
         p = Path(r)
         if p.is_dir():
@@ -910,6 +930,18 @@ def resolve_upscale_model(chosen):
 
 
 _COMFY_NODES = {"at": 0.0, "names": None, "modules": {}, "enums": {}}
+# One in-flight background refresh per cache. object_info is 12 MB and six
+# seconds on a full install; stacking a second fetch behind the first would
+# only make the next reader wait twice.
+_REFRESH_TASKS = {}
+
+def _spawn_refresh(fn):
+    task = _REFRESH_TASKS.get(fn.__name__)
+    if task is not None and not task.done():
+        return task
+    task = asyncio.ensure_future(fn())
+    _REFRESH_TASKS[fn.__name__] = task
+    return task
 # Deno's pack first; the NVIDIA RTX pack exposes an equivalent filter as a fallback.
 VIDEO_UPSCALE_NODES = ("DenoRTXVFXEasyUpscale", "RTXVideoSuperResolution")
 
@@ -1777,6 +1809,11 @@ IDENTITY_DIALS = [
      "help": ("Lower = stronger edit adherence, higher = stronger identity. "
               "Trained range 384-768. Duplicated or split compositions mean "
               "lower it.")},
+    {"key": "ref_boost_mask", "kind": "choice", "stage": "identity_edit",
+     "label": "Boost region", "default": "whole",
+     "choices": [{"value": "whole", "label": "Whole reference"},
+                 {"value": "face", "label": "Face only"}],
+     "help": "Face only limits the likeness boost to the detected face."},
 ]
 
 # The bypass A/B (brief 9.15): the same extender, a choice dial rather than a
@@ -1815,12 +1852,11 @@ IDENTITY_BUILD_DIAL = {"key": "identity_build", "kind": "choice",
 
 
 def recipe_dial_value(dial, value):
-    """One declared dial on the way in: a finite in-range number passes,
-    coerced the way the builder coerces so the stored spec says what ran;
-    anything else lands on the recipe constant. Degrades, never dies - None,
-    bool, non-numeric and out-of-range all fall back rather than raise, the
-    same policy as reroll's canvas block."""
-    if dial.get("choices_from"):
+    """One declared dial on the way in: a listed choice or finite in-range
+    number passes, with numbers coerced the way the builder coerces so the
+    stored spec says what ran. Anything else lands on the recipe constant.
+    Degrades, never dies - the same policy as reroll's canvas block."""
+    if dial.get("kind") == "choice":
         return _recipe_choice_value(dial, value)
     if isinstance(value, bool) or not isinstance(value, (int, float)) \
             or not math.isfinite(value) \
@@ -1860,26 +1896,27 @@ def _recipe_dials_payload(spec):
 
 
 def _recipe_choice_value(dial, value):
-    """A declared choice passes only when it names an INSTALLED option - the
-    control never offers what would fail at queue time, so a value that
-    arrives anyway (a stale composer, a file deleted since /api/options)
-    lands on the default rather than raising. The default itself always
-    passes: it names the authored stage, which runs exactly as it always has.
-    Same degrade-never-die policy as the number dials.
-    The value's TYPE is the scan's own: vector_bypass keys on the int vector
-    count (with the int coercion that always applied), identity_patch on the
-    build-id string (brief 9.56) - membership in the installed set is the
-    whole test, whatever the type."""
+    """A declared choice passes only when it names one of its options.
+
+    Dynamic choices validate against what is installed, so a stale composer
+    degrades to the authored default rather than failing at queue time. Static
+    inline choices validate against their declaration. The default itself
+    always passes, and choice values keep their declared type."""
     if value == dial["default"]:
         return value
-    if dial["choices_from"] == "vector_bypass":
+    source = dial.get("choices_from")
+    if source == "vector_bypass":
         if isinstance(value, bool) or not isinstance(value, (int, float)) \
                 or not math.isfinite(value) or value != int(value):
             return dial["default"]
         value = int(value)
         installed = vector_bypass_variants()
-    elif dial["choices_from"] == "identity_patch":
+    elif source == "identity_patch":
         installed = identity_patch_variants()
+    elif "choices" in dial:
+        return value if any(
+            isinstance(choice, dict) and choice.get("value") == value
+            for choice in dial.get("choices") or ()) else dial["default"]
     else:
         installed = {}
     return value if value in installed else dial["default"]
@@ -5984,7 +6021,8 @@ def build_face_mint(scene, seed, image=None, denoise=None, eta=None,
 def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
                     ref_boost=IDENTITY_REF_BOOST, overrides=(), model=None, aspect=None,
                     mp=None, loras=(), character=None, lora_plan=None, pid=None,
-                    bypass_variant=None, identity_build=None):
+                    bypass_variant=None, identity_build=None,
+                    ref_boost_mask="whole"):
     """THE settled moments recipe (2026-08-07), captured verbatim from
     edit_fast.py: mxfp8 + Wan VAE, linear/euler + simple, 10 steps, cfg 1.0,
     eta 0.0, no base realism LoRA, 1152x2048. RawGirlV3 rode along in the
@@ -6013,9 +6051,23 @@ def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
     g["30:51"]["inputs"]["seed"] = seed
     g["30:6"]["inputs"]["grounding_px"] = int(grounding)
     g["ed:img"]["inputs"]["image"] = ref
-    # UNMASKED boost - a nudge, not the face-masked lock. Always written so the
-    # builder is the single source of truth for it, as it is for grounding_px.
+    # The boost is always written so the builder is the single source of truth
+    # for it, as it is for grounding_px. Its default remains whole-reference.
     g["ed:patch"]["inputs"]["ref_boost"] = float(ref_boost)
+    boost_mask_status = "whole"
+    if ref_boost_mask == "face":
+        staged_mask, boost_mask_status = _stage_identity_face_mask(ref)
+        if staged_mask:
+            g["ed:boost_mask"] = {
+                "class_type": "LoadImageMask",
+                "inputs": {"image": staged_mask, "channel": "red"},
+            }
+            # Krea2EditModelPatch applies this mask to the LAST reference only.
+            # Identity Edit has exactly one (`ed:img`); if a second is ever
+            # added, this mask follows the last slot. The staged mask is built
+            # in that reference's pixel space, not the target canvas. The node
+            # thresholds it at >0.5, so face_mask's feather is inert here.
+            g["ed:patch"]["inputs"]["ref_boost_mask"] = ["ed:boost_mask", 0]
     if aspect:                        # default canvas is the recipe's 1152x2048 (9:16 @ 2.36MP)
         w, h = dims_for(aspect, mp or 2.36)
         g["30:5"]["inputs"]["width"], g["30:5"]["inputs"]["height"] = w, h
@@ -6051,7 +6103,8 @@ def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
     size = f"{g['30:5']['inputs']['width']}x{g['30:5']['inputs']['height']}"
     info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
             "size": size + " (PiD 4×)" if use_pid else size,
-            "character": ch["name"] if ch else None}
+            "character": ch["name"] if ch else None,
+            "ref_boost_mask": boost_mask_status}
     return g, (scene + " " + suffix).strip(), info
 
 
@@ -6423,7 +6476,7 @@ def attach_klein_references(g, prefix, names, chains, vae):
 
 
 def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None,
-                        reference=None):
+                        reference=None, *, anchor="full", color_match=False):
     """Masked inpaint of an existing frame (FLUX.2 Klein 9B).
 
     Ported node-for-node from the F4 group of geoahmed's
@@ -6453,11 +6506,17 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None,
     runs its own 20 steps at the same cfg 1.0.
 
     Reference images (a face to swap in, a garment, a product) chain onto the
-    POSITIVE conditioning after the two source latents, so the masked region
-    is redrawn from them while the untouched pixels still anchor the
-    attention. The negative keeps carrying no reference latents at all, which
-    is this lane's existing shape - it is the zeroed instruction, not a
+    POSITIVE conditioning. ``anchor="full"`` keeps today's order after both
+    source latents; ``drop`` removes the full-frame source anchor while a
+    reference is attached; ``last`` puts attached references after the
+    inpaint latent and the full-frame anchor after them. With no reference the
+    choice is inert. The negative keeps carrying no reference latents at all,
+    which is this lane's existing shape - it is the zeroed instruction, not a
     second description of the frame."""
+    if not isinstance(color_match, bool):
+        color_match = bool(color_match)
+    if anchor not in ("full", "drop", "last"):
+        raise ValueError(f"unknown Klein Inpaint anchor: {anchor}")
     src = input_ref_name(image)
     if not src:
         raise ValueError("Klein Inpaint needs a source image in ComfyUI/input")
@@ -6512,14 +6571,39 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None,
             g[node]["inputs"]["resolution_steps"] = KLEIN_INPAINT_STEPS
     else:
         _klein_bypass_scaling(g)
-    # After ki:ref, so the two source latents (masked, then full-frame) still
-    # come first in the chain: the frame anchors the attention and the
-    # references are what the masked region is redrawn FROM.
+    # The anchor lever only changes a graph that actually has an attached
+    # reference. Keep this after the scaling branch: its native-size bypass
+    # still needs ki:reffull in place while it rewires that node.
     if refs:
-        ends = attach_klein_references(g, "ki", refs, {"pos": "ki:ref"}, "ki:vae")
-        g["ki:sampler"]["inputs"]["positive"] = [ends["pos"], 0]
+        if anchor == "drop":
+            g.pop("ki:ref")
+            g.pop("ki:reffull")
+            ends = attach_klein_references(
+                g, "ki", refs, {"pos": "ki:refinpaint"}, "ki:vae")
+            g["ki:sampler"]["inputs"]["positive"] = [ends["pos"], 0]
+        elif anchor == "last":
+            ends = attach_klein_references(
+                g, "ki", refs, {"pos": "ki:refinpaint"}, "ki:vae")
+            g["ki:ref"]["inputs"]["conditioning"] = [ends["pos"], 0]
+        else:
+            # Today's chain: masked latent, full-frame anchor, then references.
+            ends = attach_klein_references(
+                g, "ki", refs, {"pos": "ki:ref"}, "ki:vae")
+            g["ki:sampler"]["inputs"]["positive"] = [ends["pos"], 0]
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+    if color_match:
+        # Read the final decode path rather than naming ki:back: an image whose
+        # source dimensions cannot be measured bypasses scaling and points the
+        # composite straight at ki:decode.
+        image_target = g["ki:composite"]["inputs"]["generated_image"]
+        g["ki:cmatch"] = {
+            "class_type": "ColorMatchV2",
+            "inputs": {"image_target": image_target,
+                       "image_ref": ["ki:img", 0],
+                       "method": "mkl", "strength": 0.95,
+                       "multithread": True}}
+        g["ki:composite"]["inputs"]["generated_image"] = ["ki:cmatch", 0]
     info = {**model_job_info(model_entry), "source_image": src}
     if refs:
         info["reference_images"] = refs
@@ -8974,6 +9058,61 @@ def face_mask(size, faces, grow=FACE_MASK_GROW):
         d.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=255)
         feather = max(feather, bw / 16.0)
     return m.filter(ImageFilter.GaussianBlur(feather))
+
+
+def _stage_identity_face_mask(ref):
+    """Stage a reusable reference-space identity mask without blocking a job.
+
+    The cache key is the reference name plus its nanosecond mtime. A successful
+    mask survives queueing in ComfyUI/input; subsequent builds reuse it before
+    considering the detector. The two detector fallbacks stay distinct for the
+    render ledger. Any other staging failure also degrades to the closest
+    available attestation instead of failing the render.
+    """
+    source = CDIR / "input" / ref
+    tmp = None
+    try:
+        stamp = source.stat().st_mtime_ns
+        key = hashlib.sha256(
+            (str(ref).replace("\\", "/") + "\0" + str(stamp)).encode("utf-8")
+        ).hexdigest()[:20]
+        name = f"pixal_identity_face_{key}.png"
+        staged = CDIR / "input" / name
+        if staged.is_file():
+            return name, "face"
+
+        faces = find_faces(source)
+        if faces is None:
+            print(f"[pixal] identity boost face mask: no finder for {ref}; "
+                  "using whole reference", flush=True)
+            return None, "whole (no finder)"
+        if not faces:
+            print(f"[pixal] identity boost face mask: no face found in {ref}; "
+                  "using whole reference", flush=True)
+            return None, "whole (no face found)"
+
+        from PIL import Image
+        with Image.open(source) as opened:
+            ref_size = opened.size
+        mask = face_mask(ref_size, faces)
+        # Publish atomically so concurrent builds never reuse a partial PNG.
+        # Only this throwaway temp is removed; the final mask must outlive the
+        # queue and remains available for the deterministic cache above.
+        tmp = staged.with_name(f".{staged.name}.{uuid.uuid4().hex}.tmp")
+        mask.save(tmp, format="PNG")
+        os.replace(tmp, staged)
+        tmp = None
+        return name, "face"
+    except Exception as exc:
+        print(f"[pixal] identity boost face mask: unavailable for {ref} "
+              f"({exc}); using whole reference", flush=True)
+        return None, "whole"
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def still_de_shine_active():
@@ -14973,6 +15112,8 @@ class Hub:
         return {"models": models, "model_meta": model_meta, "loras": loras, "aspects": ASPECTS,
                 "inputs": inputs, "input_images": input_images,
                 "templates": list(PUBLIC_RECIPE_IDS), "recipes": recipes,
+                "edit_routes": {"whole_frame": _whole_frame_edit_recipe(),
+                                "masked": "klein_inpaint"},
                 "saved_styles": saved_styles,
                 "style_bases": list(STYLE_BASE_IDS),
                 "style_problems": list(STYLE_PROBLEMS),
@@ -21431,6 +21572,8 @@ async def settings_get(_req):
                     "video_available": bool(_video_upscale_node()),
                     "ltx25_video_available": not _ltx25_upscale_missing()},
         "edit": {**cfg["edit"],
+                 "inpaint_color_match": bool(
+                     cfg["edit"].get("inpaint_color_match", False)),
                  # Both lanes, each option carrying what it weighs on disk
                  # (9.29) - name+size objects like the critic block above,
                  # never bare strings.
@@ -21611,6 +21754,9 @@ async def settings_post(req):
                 {"ok": False, "error": f"not an installed Klein Inpaint model: {want}"},
                 status=400)
         cfg["edit"]["inpaint_model"] = want
+    if ("inpaint_color_match" in edit_cfg
+            and isinstance(edit_cfg["inpaint_color_match"], bool)):
+        cfg["edit"]["inpaint_color_match"] = edit_cfg["inpaint_color_match"]
     vae = body.get("vae") or {}
     if "zimage" in vae and isinstance(vae["zimage"], str):
         want = vae["zimage"].strip().replace("/", "\\")
@@ -23371,15 +23517,19 @@ async def edit(req):
             {"ok": False, "error": f"{recipe} cannot take a reference image - "
                                    f"the Qwen and Klein edit lanes can"}, status=400)
     args = {"image": dst}
+    if recipe == "klein_inpaint":
+        args["color_match"] = load_config()["edit"].get(
+            "inpaint_color_match", False)
     if reference:
         args["reference"] = reference
     if body.get("megapixels") is not None:
         args["megapixels"] = body["megapixels"]
-    for key in ("denoise", "eta"):
+    for key in ("denoise", "eta", "anchor"):
         if body.get(key) is not None:
             args[key] = body[key]
-    # Recipes accept different knobs; megapixels means nothing to face_mint and
-    # denoise means nothing to qwen_edit.
+    # Recipes accept different knobs; megapixels means nothing to face_mint,
+    # denoise means nothing to qwen_edit, and anchor belongs only to the masked
+    # Klein lane.
     args = {k: v for k, v in args.items() if k in SIGS[recipe]}
     # seed is not a builder argument - HUB.submit pops it before the SIGS
     # filter - so it rides past this one, the same contract generate() has.
@@ -23831,11 +23981,20 @@ async def history(_req):
     return web.json_response({"entries": entries})
 
 async def options(_req):
-    await refresh_lm_cache()
-    # The recipe rows now carry sampler-seat signatures (9.75): probe here,
-    # cached, or a first load before Settings/styles ever asked would ship
-    # empty choice lists and the 9.75 carry could not compare seats.
-    await refresh_comfy_nodes()
+    # Stale-while-revalidate: the UI paints nothing until this answers, and a
+    # catalog it can paint NOW beats a fresher one six seconds later. Only the
+    # first request after boot waits on ComfyUI; every later one serves the
+    # cache it has and refreshes behind it. The recipe rows carry sampler-seat
+    # signatures (9.75), which is why the node probe must have run at least
+    # once before the payload ships.
+    if _COMFY_NODES["names"] is None:
+        await refresh_comfy_nodes()
+    else:
+        _spawn_refresh(refresh_comfy_nodes)
+    if not _LM["at"]:
+        await refresh_lm_cache()
+    else:
+        _spawn_refresh(refresh_lm_cache)
     return web.json_response(HUB.options())
 
 async def h3_canvas(req):
@@ -26515,26 +26674,43 @@ def _fetch_latest_release():
     # `<64 hex>`"); 9.24b verifies the download against it, so it rides the
     # wire from day one.
     body = str(data.get("body") or "")
-    sha = re.search(r"\b([0-9a-fA-F]{64})\b", body)
+    # This exact prose is release.py's public contract. A stray commit id or
+    # source-archive digest elsewhere in the notes is not authority to run an
+    # unsigned executable.
+    sha = re.search(r"(?i)\bsha256\s+`([0-9a-f]{64})`", body)
     url = str(data.get("html_url") or "") or f"{RELEASE_PAGE}/tag/{tag}"
-    return {"latest": tag[1:] if tag.startswith("v") else tag,
-            "url": url, "sha256": sha.group(1).lower() if sha else None}
+    latest = tag[1:] if tag.startswith("v") else tag
+    installer_name = f"Pixal-Setup-{latest}-win-x64.exe"
+    download_url = None
+    for asset in data.get("assets") or []:
+        if not isinstance(asset, dict) or asset.get("name") != installer_name:
+            continue
+        candidate = str(asset.get("browser_download_url") or "")
+        if candidate:
+            download_url = candidate
+            break
+    return {"latest": latest, "url": url,
+            "sha256": sha.group(1).lower() if sha else None,
+            "download_url": download_url}
 
 
 def update_check(now=None):
-    """{"ok", "running", "latest", "update", "url", "sha256"}. ok False is the
-    quiet unknown. Never raises, and never calls an equal or older release an
-    update."""
+    """9.24a release facts, including 9.24b's exact installer asset URL.
+
+    ok False is the quiet unknown. Never raises, and never calls an equal or
+    older release an update.
+    """
     now = time.time() if now is None else now
     cached = _update_check_cache["result"]
     if cached is not None and now - _update_check_cache["at"] < UPDATE_CHECK_TTL:
         return dict(cached)
     result = {"ok": False, "running": PIXAL_VERSION, "latest": None,
-              "update": False, "url": None, "sha256": None}
+              "update": False, "url": None, "sha256": None,
+              "download_url": None}
     try:
         rel = _fetch_latest_release()
         result.update(ok=True, latest=rel["latest"], url=rel["url"],
-                      sha256=rel["sha256"],
+                      sha256=rel["sha256"], download_url=rel["download_url"],
                       update=compare_versions(rel["latest"], PIXAL_VERSION) > 0)
     except Exception:
         pass                                    # silent and complete, by design
@@ -26546,6 +26722,258 @@ async def update_check_get(_req):
     # urllib blocks, so the check rides a thread: a cold lookup must not stall
     # chat and SSE behind a 4s GitHub timeout.
     return web.json_response(await asyncio.to_thread(update_check))
+
+
+# ---------------------------------------------------------------- update install
+#
+# Brief 9.24b: download the exact installer asset named by the 9.24a check,
+# prove it against the digest published with that release, then open the real
+# wizard visibly. There is intentionally no resume: a partial installer is
+# removed and the next click starts it again from byte zero.
+UPDATE_DIR = Path(tempfile.gettempdir()) / "pixal-update"
+UPDATE_FETCH = {"task": None, "cancel": None, "path": None,
+                "version": None, "sha256": None}
+
+
+class _UpdateCancelled(Exception):
+    """The user's cancel action, kept distinct from a failed transfer."""
+
+
+def _update_sha256(value):
+    """A normalized published digest, or None when it is not exact."""
+    value = str(value or "").strip().lower()
+    return value if re.fullmatch(r"[0-9a-f]{64}", value) else None
+
+
+def _update_asset_name(check):
+    """Validate the release-owned URL and return its safe local basename."""
+    version = str(check.get("latest") or "")
+    if parse_version(version) is None:
+        raise ValueError("the release version is not readable")
+    expected = f"Pixal-Setup-{version}-win-x64.exe"
+    parsed = urllib.parse.urlparse(str(check.get("download_url") or ""))
+    name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[-1])
+    if parsed.scheme.lower() != "https" or not parsed.netloc or name != expected:
+        raise ValueError("the release has no matching Windows installer asset")
+    return name
+
+
+def _update_forget(delete=True):
+    """Forget the verified file, optionally removing it from disk."""
+    path = UPDATE_FETCH.get("path")
+    UPDATE_FETCH.update(path=None, version=None, sha256=None)
+    if delete and path is not None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+async def _update_fetch_run(check, cancel, dest_dir=None):
+    """Stream, byte-count, hash, and atomically publish one installer.
+
+    This follows _quant_fetch_run's timeout, chunk, .part, and broadcast
+    discipline. SHA-256 and cancellation are the two additions an executable
+    needs. Every non-success path removes the partial file.
+    """
+    dest_dir = Path(dest_dir) if dest_dir is not None else UPDATE_DIR
+    version = str(check.get("latest") or "")
+    want = _update_sha256(check.get("sha256"))
+    part = None
+    got, total, said = 0, None, 0
+
+    def say(phase, *, done=False, error=None, cancelled=False):
+        HUB.broadcast(type="update_fetch", phase=phase, got=got, total=total,
+                      version=version, done=done, error=error,
+                      cancelled=cancelled)
+
+    try:
+        if want is None:
+            raise ValueError("the release does not publish a readable sha256")
+        name = _update_asset_name(check)
+        dest = dest_dir / name
+        part = dest.with_name(dest.name + ".part")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # A prior interrupted process may have left either name behind. Neither
+        # becomes launchable merely because a new request started.
+        part.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
+        if cancel.is_set():
+            raise _UpdateCancelled()
+        async with aiohttp.ClientSession() as session:
+            # No total timeout: a large installer on a slow link takes what it
+            # takes. A connection has 15s to form and a stalled read gets 120s.
+            async with session.get(
+                    str(check["download_url"]),
+                    timeout=aiohttp.ClientTimeout(
+                        total=None, connect=15, sock_read=120)) as response:
+                if response.status != 200:
+                    raise aiohttp.ClientError(
+                        f"update download: HTTP {response.status}")
+                length = response.headers.get("Content-Length")
+                total = int(length) if length is not None else None
+                say("download")
+                digest = hashlib.sha256()
+                with part.open("wb") as output:
+                    async for chunk in response.content.iter_chunked(1 << 22):
+                        if cancel.is_set():
+                            raise _UpdateCancelled()
+                        await asyncio.to_thread(output.write, chunk)
+                        digest.update(chunk)
+                        got += len(chunk)
+                        if got - said >= 4 * 2**20:
+                            said = got
+                            say("download")
+        if total is not None and got != total:
+            raise aiohttp.ClientError(f"truncated at {got} of {total} bytes")
+        say("verify")
+        if not hmac.compare_digest(digest.hexdigest(), want):
+            raise ValueError(
+                "the installer failed its sha256 check - deleted, nothing was run")
+        if cancel.is_set():
+            raise _UpdateCancelled()
+        os.replace(part, dest)
+        UPDATE_FETCH.update(path=dest, version=version, sha256=want)
+        say("ready", done=True)
+    except (_UpdateCancelled, asyncio.CancelledError):
+        if part is not None:
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                pass
+        _update_forget()
+        say("cancelled", cancelled=True)
+    except Exception as exc:
+        if part is not None:
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                pass
+        _update_forget()
+        say("error", error=str(exc))
+    finally:
+        task = asyncio.current_task()
+        if UPDATE_FETCH.get("task") is task:
+            UPDATE_FETCH.update(task=None, cancel=None)
+
+
+def _update_spawn(exe):
+    """Open the real wizard visibly and detached so it survives our exit."""
+    # No /SILENT or /VERYSILENT: pixal.iss has interactive MsgBoxes that are
+    # not gated on WizardSilent(), so hiding the wizard can hang forever.
+    subprocess.Popen([str(exe)], cwd=str(HERE), close_fds=True,
+                     creationflags=0x00000008 | 0x08000000)
+
+
+async def update_download_post(_req):
+    """Begin the single allowed installer download."""
+    if not _nt():
+        return web.json_response(
+            {"ok": False, "error": "updates install on Windows only"}, status=400)
+    task = UPDATE_FETCH.get("task")
+    if task is not None and not task.done():
+        return web.json_response(
+            {"ok": False, "error": "an update download is already running"},
+            status=409)
+    check = await asyncio.to_thread(update_check)
+    if not (check.get("ok") and check.get("update")):
+        return web.json_response(
+            {"ok": False, "error": "no update is on offer right now"}, status=400)
+    if _update_sha256(check.get("sha256")) is None:
+        return web.json_response(
+            {"ok": False,
+             "error": "the release does not publish a readable sha256 - refusing"},
+            status=400)
+    try:
+        _update_asset_name(check)
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    _update_forget()
+    cancel = asyncio.Event()
+    UPDATE_FETCH["cancel"] = cancel
+    task = asyncio.create_task(_update_fetch_run(check, cancel))
+    UPDATE_FETCH["task"] = task
+    return web.json_response({"ok": True, "version": check["latest"]})
+
+
+async def update_cancel_post(_req):
+    """Stop an in-flight transfer or discard the verified file. Idempotent."""
+    cancel = UPDATE_FETCH.get("cancel")
+    if cancel is not None:
+        cancel.set()
+    task = UPDATE_FETCH.get("task")
+    if task is not None and not task.done():
+        # The latch handles chunk boundaries; cancelling the task also breaks
+        # a socket read that would otherwise take up to 120s to time out.
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    _update_forget()
+    if UPDATE_FETCH.get("task") is task:
+        UPDATE_FETCH.update(task=None, cancel=None)
+    return web.json_response({"ok": True})
+
+
+async def update_launch_post(_req):
+    """Open a still-verified installer, then close Pixal after the response."""
+    if not _nt():
+        return web.json_response(
+            {"ok": False, "error": "updates install on Windows only"}, status=400)
+    if studio_busy():
+        return web.json_response(
+            {"ok": False,
+             "error": "something is still rendering - try again when idle"},
+            status=409)
+    path = UPDATE_FETCH.get("path")
+    if path is None:
+        return web.json_response(
+            {"ok": False, "error": "nothing has been downloaded yet"}, status=400)
+    want = _update_sha256(UPDATE_FETCH.get("sha256"))
+    if want is None:
+        _update_forget()
+        return web.json_response(
+            {"ok": False,
+             "error": "the release sha256 is unknown - refusing to run the installer"},
+            status=400)
+    path = Path(path)
+    if not path.is_file():
+        _update_forget()
+        return web.json_response(
+            {"ok": False, "error": "the downloaded installer is missing"}, status=400)
+    try:
+        actual = await asyncio.to_thread(_sha256_of, path)
+    except OSError as exc:
+        _update_forget()
+        return web.json_response(
+            {"ok": False, "error": f"the installer could not be verified: {exc}"},
+            status=400)
+    if not hmac.compare_digest(actual, want):
+        _update_forget()
+        return web.json_response(
+            {"ok": False,
+             "error": "the installer failed its sha256 check - deleted, nothing was run"},
+            status=400)
+    try:
+        _update_spawn(path)
+    except OSError as exc:
+        return web.json_response(
+            {"ok": False, "error": f"could not start the installer: {exc}"},
+            status=500)
+
+    # The installer owns this file now. Drop Pixal's launchable pointer without
+    # deleting the executable from under the running wizard.
+    _update_forget(delete=False)
+    # Exactly restart_sidecar's proven order: detached child first, then a
+    # delayed signal from a plain callback. 0.75s lets this response reach the
+    # browser before aiohttp unwinds through on_cleanup. KEEP_COMFY is NOT
+    # written: updates must take ComfyUI and the managed brain down with them.
+    asyncio.get_running_loop().call_later(
+        0.75, signal.raise_signal, signal.SIGINT)
+    return web.json_response(
+        {"ok": True, "note": "the installer is open - Pixal is closing"})
 
 
 def main():
@@ -26612,6 +27040,9 @@ def main():
     app.router.add_post("/api/settings/test", settings_test)
     app.router.add_post("/api/settings/rescan", settings_rescan)
     app.router.add_get("/api/update-check", update_check_get)
+    app.router.add_post("/api/update/download", update_download_post)
+    app.router.add_post("/api/update/cancel", update_cancel_post)
+    app.router.add_post("/api/update/launch", update_launch_post)
     app.router.add_post("/api/animate", animate)
     app.router.add_post("/api/animate/brief", animate_brief)
     app.router.add_post("/api/edit", edit)

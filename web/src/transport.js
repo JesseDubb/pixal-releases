@@ -188,11 +188,13 @@ export const forgetCombo = (base, model, sampler_name, scheduler) =>
 // `mask` is a white-on-black PNG data URL (white = edit here); the server
 // bakes it into the staged copy's alpha and routes the edit to Klein inpaint.
 // `reference` names a second image in ComfyUI/input (a logo, a product shot)
-// the instruction can point at as "image 2" — whole-frame edits only.
-export const edit = (id, cid, instruction, input, mask, reference) =>
+// that the whole-frame and masked Klein lanes can follow. `anchor` chooses how
+// the masked lane seats its full-frame source latent beside that reference.
+export const edit = (id, cid, instruction, input, mask, reference, anchor) =>
   post("/api/edit", { id, cid, instruction, ...(input ? { input } : {}),
                       ...(mask ? { mask } : {}),
-                      ...(reference ? { reference } : {}) });
+                      ...(reference ? { reference } : {}),
+                      ...(anchor ? { anchor } : {}) });
 // Stage a finished render's still into ComfyUI/input (no edit queued) so it
 // can be picked like an upload — the character form adopts edit results this way.
 export const stageInput = (id) => post("/api/input/stage", { id });

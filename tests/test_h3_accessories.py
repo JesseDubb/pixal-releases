@@ -37,7 +37,7 @@ What these tests pin:
                  on both ref-still builders only.
   Options      - /api/options carries the ENABLED count per character.
   ClientPins   - static, in the test_character_form.py style: the group sits
-                 between "always true" and "for the writer" with the of-8
+                 between "always true" and "for the writer" with the N / 8
                  count, rows use the shared lib Switch (the one control -
                  Composer's LoraToggle and MotionDirector's Switch are
                  migrated, no third copy), the save posts accessories, and
@@ -529,24 +529,28 @@ class ClientPinTests(unittest.TestCase):
         # Re-labelled "references" in 1.1.4b: the slots always took any
         # photograph, and calling them accessories hid the single biggest
         # fix of the reference-realism session - wiring a SECOND PERSON.
-        self.assertLess(FORM.index('label="always true"'),
-                        FORM.index('label="references"'))
-        self.assertLess(FORM.index('label="references"'),
-                        FORM.index('label="for the writer"'))
+        self.assertLess(FORM.index('<Group label={<>Always true'),
+                        FORM.index('<Group label={<>Wired references'))
+        self.assertLess(FORM.index('<Group label={<>Wired references'),
+                        FORM.index('<Group label={<>For the writer'))
         self.assertNotIn('label="accessories"', FORM)
 
-    def test_the_header_states_the_cost_as_the_of_eight_count(self):
-        self.assertIn("of ${ACCESSORY_MAX} on", FORM)
-        # The subline names what may go in a slot rather than restating the
-        # cost - a person in one is the thing worth knowing, and the cost is
-        # in the add button's title.
-        self.assertIn("a bag, a jacket, or a second person", FORM)
-        self.assertIn("rides every sampling step", FORM)
+    def test_the_eyebrow_and_button_face_state_the_capacity(self):
+        start = FORM.index('<Group label={<>Wired references')
+        group = FORM[start:FORM.index("</Group>", start)]
+        self.assertIn("fontFamily: MONO", group)
+        self.assertIn(
+            "{accessories.filter((a) => a.enabled).length} / {ACCESSORY_MAX}",
+            group)
+        self.assertNotIn("of ${ACCESSORY_MAX} on", FORM)
+        self.assertIn("a bag, a jacket, or a second person", group)
+        self.assertNotIn("{accessories.length}/{ACCESSORY_MAX}", group,
+                         "the count is stated once, in the eyebrow")
         self.assertRegex(FORM, r"const ACCESSORY_MAX = 8;")
 
     def test_rows_use_the_shared_switch_and_carry_the_load_bearing_field(self):
         self.assertIn('import { Switch } from "../lib/Switch.jsx";', FORM)
-        self.assertIn("what it is — green pebbled leather phone case", FORM)
+        self.assertIn('placeholder="green pebbled leather phone case"', FORM)
         self.assertIn("ch.accessories = accOut", FORM)
         self.assertIn("every accessory needs a description", FORM)
 

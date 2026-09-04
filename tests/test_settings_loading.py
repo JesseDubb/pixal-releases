@@ -225,18 +225,18 @@ class SettingsLoading(unittest.TestCase):
         # the collapsed partials are gone
         self.assertNotIn("loading…", SRC)
         self.assertNotIn("...((videoCfg && videoCfg.engines) || [])", SRC)
-        # PickerGhost IS the value-pill trigger (10.0): same 24px box
+        # PickerGhost IS the value-pill trigger (10.0): same HEIGHT.rail box
         picker_ghost = re.search(r"export const PickerGhost = .*?\n\);", SKEL, re.S)
         self.assertIsNotNone(picker_ghost, "PickerGhost is gone from Skeleton.jsx")
-        self.assertIn("height: 24", picker_ghost.group(0))
-        trigger = re.search(r'width: "fit-content", maxWidth: 260, height: (\d+), display: "flex"', SRC)
-        self.assertIsNotNone(trigger, "the ScrollPicker trigger lost its fixed height")
-        self.assertEqual(trigger.group(1), "24")
+        self.assertIn("height: HEIGHT.rail", picker_ghost.group(0))
+        picker = (ROOT / "web/src/lib/Picker.jsx").read_text(encoding="utf-8")
+        self.assertIn("height: HEIGHT.rail", picker)
+        self.assertIn("<Picker hug label={placeholder", SRC)
         # SegGhost IS the pill selector's capsule: 1px border + 2px padding
-        # around a 22px option - 2×1 + 2×2 + 22 = 28 on both sides.
+        # around a (HEIGHT.rail - 6) option - HEIGHT.rail on both sides.
         seg_ghost = re.search(r"export const SegGhost = .*?\n\);", SKEL, re.S)
         self.assertIsNotNone(seg_ghost, "SegGhost is gone from Skeleton.jsx")
-        self.assertIn("h={22}", seg_ghost.group(0))
+        self.assertIn("h={HEIGHT.rail - 6}", seg_ghost.group(0))
         self.assertIn("padding: 2", seg_ghost.group(0))
         # the flex variant (other surfaces) still renders its own box
         self.assertIn("padding: 3", SEG)
@@ -272,7 +272,8 @@ class SettingsLoading(unittest.TestCase):
         # 10.0: the VRAM gloss is the row's inline subline (hint), same gate
         self.assertRegex(SRC, r"(?s)hint=\{!cfg \? \(.{0,300}?<LineGhost[^>]*/>\s*\) : \(")
         self.assertIn("Card not read yet", SRC)  # reachable only past the gate now
-        self.assertEqual(SRC.count("<ValueGhost"), 3)
+        self.assertIn("store.options ? item.count : <ValueGhost", SRC)
+        self.assertIn("known ? <>{Number(item.used)", SRC)
         self.assertRegex(SRC, r"(?s)gloss=\{cfg \? \(.{0,400}?Found.{0,400}?<ValueGhost")
         self.assertRegex(
             SRC,

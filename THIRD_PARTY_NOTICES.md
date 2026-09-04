@@ -105,26 +105,29 @@ done.
 ## Fonts
 
 Pixal redistributes the following webfont files, subset to Latin, under
-`site/fonts/`. Copyright lines below are read from the `name` table of the
+`site/fonts/` for the website and `web/fonts/` for the app. Copyright lines
+below are read from the `name` table of the
 shipped files themselves, not transcribed from upstream. All three families
 are licensed under the **SIL Open Font License, Version 1.1**, whose text is
 reproduced in full below as that licence requires.
 
-- **Geist** (`geist-400-n-latin.woff2`, `geist-600-n-latin.woff2`) —
+- **Geist** (`geist-400-n-latin.woff2`, `geist-600-n-latin.woff2`,
+  `geist-variable-latin.woff2`) —
   Copyright 2024 The Geist Project Authors
   (https://github.com/vercel/geist-font) — SIL OFL 1.1.
 - **JetBrains Mono** (`jetbrains-mono-500-n-latin.woff2`) —
   Copyright 2020 The JetBrains Mono Project Authors
   (https://github.com/JetBrains/JetBrainsMono) — SIL OFL 1.1.
-- **Syne** (`syne-600-n-latin.woff2`, `syne-700-n-latin.woff2`) —
+- **Syne** (`syne-600-n-latin.woff2`, `syne-700-n-latin.woff2`,
+  `syne-variable-latin.woff2`) —
   Copyright 2019 The Syne Project Authors
   (https://gitlab.com/bonjour-monde/fonderie/syne-typeface) — SIL OFL 1.1.
 
-None of these fonts is sold, and none is bundled inside the installer; they
-are served by the website and carried in this repository. The OFL permits
-that, provided the fonts are not sold on their own, remain under the OFL,
-and travel with this notice — and provided no Reserved Font Name is used on
-a modified version. Pixal ships them unmodified apart from Latin subsetting.
+The Geist and Syne variable fonts in `web/fonts/` are bundled inside the
+installer, alongside this notice, so the local app does not depend on a font
+CDN. The files in `site/fonts/` are served by the website. None is sold on its
+own. All remain under the OFL and travel with this notice. Pixal ships them
+unmodified apart from Latin subsetting.
 
 ## SIL Open Font License, Version 1.1 text
 

@@ -30,6 +30,7 @@ import { EditDirector } from "./EditDirector.jsx";
 import { HistoryGrid } from "./HistoryGrid.jsx";
 import { ChatsPanel } from "./ChatsPanel.jsx";
 import { SettingsMenu } from "./SettingsMenu.jsx";
+import { SettingsDockStyle, useSettingsDock } from "./SettingsDock.jsx";
 import { JobCard } from "./JobCard.jsx";
 import { NavRail } from "./NavRail.jsx";
 import { PhotonField } from "../lib/PhotonField.jsx";
@@ -822,6 +823,7 @@ export const Chat = () => {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const wide = vw >= 1100;
+  const settingsDock = useSettingsDock(vw);
   // One measure for the conversation and the composer, so their left and right
   // edges stay flush. 760 was set by reading comfort alone and left the pill
   // row one pill short of fitting - it wrapped 2:3 onto a second line. 880 is
@@ -835,7 +837,7 @@ export const Chat = () => {
     : store.chatsOpen ? "chats" : null) : null;
   // Lane width INCLUDES the 12px gap to the content card (margins live inside
   // the lane so the whole thing collapses to 0 cleanly).
-  const dockW = dock === "settings" ? 412 : dock === "chats" ? 292
+  const dockW = dock === "settings" ? settingsDock.width + 12 : dock === "chats" ? 292
     : dock === "history" ? Math.min(Math.round(vw * 0.46), 732) : 0;
   const hasLoraChain = !!store.activeLoraPlan;
   // The chain is a real execution rail, not composer decoration. At desktop
@@ -1033,10 +1035,11 @@ export const Chat = () => {
       {/* The dock lane — rail panels slide in HERE as sibling cards and push
           the content surface over (width-transitioned; the inner panel keeps
           its final width so it's revealed, not squished). Empty = zero width. */}
-      <div aria-hidden={!dock} style={{
+      <SettingsDockStyle />
+      <div aria-hidden={!dock} className={dock === "settings" ? "t-resize" : undefined} style={{
         flexShrink: 0, width: dockW, overflow: "hidden",
         position: "relative", zIndex: 2,
-        transition: `width ${MOTION.layout}`,
+        transition: settingsDock.resizing ? "none" : dock === "settings" ? undefined : `width ${MOTION.layout}`,
       }}>
         {dock && (
           <div style={{ width: dockW - 12, height: "calc(100% - 24px)",
@@ -1060,6 +1063,7 @@ export const Chat = () => {
             )}
           </div>
         )}
+        {dock === "settings" && settingsDock.handle}
       </div>
 
       {/* The content SURFACE — the z.ai pattern: nav floats on the page ground,
@@ -1204,7 +1208,7 @@ export const Chat = () => {
         <div style={{ maxWidth: narrow ? COLUMN : COLUMN + 46, margin: "0 auto" }}>
           <div style={{ width: "100%", maxWidth: COLUMN, margin: "0 auto" }}>
             <InstallNudge />
-            <div style={{ display: "flex", alignItems: "center", gap: SPACE[6],
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: SPACE[6],
                         padding: `0 ${SPACE[12]}px ${SPACE[8]}px`,
                         color: "var(--textTer)", fontSize: TYPE.label }}>
             <span className={store.comfy ? undefined : "px-dot-wait"} style={{
@@ -1212,8 +1216,12 @@ export const Chat = () => {
               background: store.comfy === null ? "var(--textTer)"
                 : store.comfy ? "#7BB495" : "#E3A7B0",
             }} />
-            {store.comfy === null ? "connecting to comfyui" : store.comfy
-              ? "connected to comfyui" : "comfyui offline — watching for it"}
+            <span title={store.comfy === null ? "Connecting to ComfyUI" : store.comfy
+                ? "Connected to ComfyUI" : "ComfyUI offline — watching for it"}
+              style={{ flexShrink: 0 }}>
+              {narrow || dock ? "ComfyUI" : store.comfy === null ? "Connecting to ComfyUI" : store.comfy
+                ? "Connected to ComfyUI" : "ComfyUI offline — watching for it"}
+            </span>
             {store.scan && (
               <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10,
                              color: "var(--accent)", whiteSpace: "nowrap" }}>
@@ -1221,17 +1229,18 @@ export const Chat = () => {
               </span>
             )}
             {!store.scan && (
-              <span style={{ marginLeft: "auto", minWidth: 0, display: "inline-flex" }}>
-                <BrainChip brain={store.brain} narrow={narrow} />
+              <span style={{ marginLeft: "auto", minWidth: 0, flex: "1 1 80px", justifyContent: "flex-end", display: "inline-flex" }}>
+                <BrainChip brain={store.brain} narrow={narrow || !!dock} />
               </span>
             )}
             {!store.scan && store.gpu && (
-              <span style={{ marginLeft: store.brain ? 10 : "auto",
+              <span title={`${store.gpu.name} · ${store.gpu.used}/${store.gpu.total} GB VRAM · ${store.gpu.ram_used}/${store.gpu.ram_total} GB RAM`}
+                style={{ marginLeft: store.brain ? 10 : "auto", flexShrink: 0,
                              fontFamily: MONO, fontSize: 10,
                              color: "var(--textTer)", whiteSpace: "nowrap",
                              display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <NvidiaMark />
-                {narrow
+                {narrow || dock
                   ? <>{store.gpu.used}/{store.gpu.total} GB</>
                   : <>{store.gpu.name}{" · "}{store.gpu.used}/{store.gpu.total} GB VRAM
                       {" · "}{store.gpu.ram_used}/{store.gpu.ram_total} GB RAM</>}
@@ -1277,7 +1286,7 @@ export const Chat = () => {
           <div style={{
             position: "relative",
             display: "flex", flexDirection: "column", gap: SPACE[8],
-            background: "rgba(255,255,255,0.03)",
+            background: "var(--surfaceInset)",
             // The lane scrolls beneath this box, so its blur re-samples on any
             // lane damage - off during sampling, same reason as the surface.
             backdropFilter: rendering ? "none" : "blur(10px)",
@@ -1431,7 +1440,7 @@ export const Chat = () => {
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); }
               }}
               placeholder="Message pixal"
-              rows={narrow ? 2 : 3}
+              rows={2}
               className="px-input"
               style={{
                 width: "100%", resize: "none", maxHeight: 220,

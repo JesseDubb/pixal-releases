@@ -311,7 +311,7 @@ export const ComfyCompatCard = ({ open, horizontal }) => {
 
           <button type="button" onClick={copy} style={{
             display: "flex", alignItems: "center", justifyContent: "center",
-            gap: SPACE[6], height: HEIGHT.sm, borderRadius: RADIUS.input,
+            gap: SPACE[6], height: HEIGHT.row, borderRadius: RADIUS.input,
             border: "1px solid var(--border)", cursor: "pointer",
             background: copied ? "var(--accentMut)" : "var(--bg3)",
             color: copied ? "var(--accent)" : "var(--textSec)",

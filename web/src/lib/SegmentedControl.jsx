@@ -46,16 +46,22 @@
 // Radio semantics throughout: radiogroup / radio / aria-checked, and the
 // group gets its accessible name from ariaLabel (DESIGN.md §6).
 
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION } from "./design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, HEIGHT, MOTION } from "./design-tokens.js";
 import { Chip } from "./Chip.jsx";
 // The pill selector's track (brief 10.0, the mockup's .seg): bg3 with a
 // hairline border, 2px padding and gap, pill radius. Module-level so the
 // spec has one name; options get theirs in the map below (pillStyle).
+// The track is a rail passenger, so it is HEIGHT.rail outside to outside
+// and its options are that less the border and padding (1 + 2 each side).
+// Fixed, not content-sized: a track that took its height from its label's
+// line box was 25-26 depending on the font that loaded, and sat beside
+// 24px value pills on the same rail (2026-09-04).
 const PILL_TRACK = {
-  display: "flex", background: "var(--bg3)",
+  display: "flex", background: "var(--bg3)", boxSizing: "border-box",
   border: "1px solid var(--border)", borderRadius: RADIUS.pill,
-  padding: 2, gap: 2,
+  height: HEIGHT.rail, padding: 2, gap: 2,
 };
+const PILL_OPTION_H = HEIGHT.rail - 6;
 
 export const SegmentedControl = ({
   options, value, onChange, ariaLabel,
@@ -127,12 +133,21 @@ export const SegmentedControl = ({
         // grid segment style — grid columns cannot shrink below their own
         // label, so this object declares NO shrink rule and NO clip rule:
         // pill option style (brief 10.0, the mockup's .seg span): the label
-        // hug - 3px 11px at label type, idle ink textSec, the active option
+        // hug - PILL_OPTION_H tall, 11px sides, at label type, idle ink textSec, the active option
         // full accent with accentInk text. No slide: the active state is the
         // option's own background, settling on MOTION.state.
+        // 550, half a step: dark ink on full chartreuse is the panel's
+        // brightest ground and 500 reads thin on it, but 600 is bold - "I
+        // dont want bold I just wanted slightly thicker … like split the
+        // difference" (Jesse, 2026-09-04). Half steps only exist because
+        // Geist is a VARIABLE face; under the Arial fallback this shipped
+        // with, 550 rounded to bold and there was nothing in between.
+        // EVERY option carries it, not just the active one: a heavier active
+        // label is a wider active label, and the track would reflow its
+        // neighbours on every click. State is ground and ink, never width.
         const pillStyle = {
-          padding: "3px 11px",
-          fontSize: TYPE.label, fontWeight: W.nav, fontFamily: FONT,
+          height: PILL_OPTION_H, padding: "0 11px",
+          fontSize: TYPE.label, fontWeight: W.emphasis, fontFamily: FONT,
           background: active ? "var(--accent)" : "transparent",
           color: active ? "var(--accentInk)" : "var(--textSec)",
           opacity: off && !active ? 0.45 : 1,

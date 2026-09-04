@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.3.1b — 2026-09-04
+
+**Settings has room to breathe.** The six pages now share a resizable workspace
+with clearer groups, quieter cards and the same surfaces as the chat lane.
+Labels and controls have a consistent rhythm, long choices remain readable,
+and search finds settings across every page, including installed models.
+Drag the edge to give the panel more room; Pixal remembers its width. The
+save status stays in view while you scroll, and Escape closes the current
+picker before closing Settings.
+
+**The right controls are together.** Memory usage has its own live readout,
+with maintenance actions grouped separately. Video render defaults sit apart
+from post processing. The installed-model library is easier to scan by family,
+with counts and complete filenames. Repeated hints and extra dividers are gone;
+the information bubbles carry the details without crowding every row.
+
+**The type is finally the type.** Pixal had named Geist as its interface font
+without loading it, so Windows quietly rendered the app in Arial. Geist and
+Syne now ship with the app and work offline. The intermediate font weights
+actually render, giving labels, controls and headings a more consistent voice.
+
+**A character's photo shows the work happening to it.** The editing overlay
+now follows live progress instead of getting stuck on “queued…”, covers the
+whole portrait and keeps its status separate from the filename.
+
+**Two reliability fixes round out the release.** Restarting ComfyUI now starts
+it again reliably; the old path could stop it and then wait up to 15 minutes
+without starting anything, with Retry doing nothing. The update panel now
+names the available version and links to its release page, replacing the
+in-app download-and-run-installer flow.
+
 ## 1.3.0b — 2026-09-04
 
 **The character page is rebuilt around the face.** A character used to be a

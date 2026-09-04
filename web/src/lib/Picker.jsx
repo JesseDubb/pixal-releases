@@ -2,7 +2,7 @@
 // box once the list is long. Lifted out of MotionDirector (its model picker)
 // on 2026-08-26 so the composer's tuning card could stop using a native
 // <select> - Jesse: "make the dropdown work like our other ones".
-// The trigger is the control family's VALUE PILL (brief 10.0): 24px, bg3,
+// The trigger is the control family's VALUE PILL (brief 10.0): HEIGHT.rail, bg3,
 // pill radius, the picked value in --text and the chevron in --textTer.
 // `hug` shrinks the box to its value (the settings row's right rail) and
 // hangs the popover off the trigger's right edge; default keeps the old
@@ -22,11 +22,11 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CaretDown } from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, Z } from "./design-tokens.js";
+import { FONT, W, TYPE, SPACE, RADIUS, HEIGHT, MOTION, SHADOW, Z } from "./design-tokens.js";
 // Trigger-to-popover gap, and the most the box can stand: the 236px list
-// cap plus the filter row (28 + the flex gap), padding and border.
+// cap plus the filter row (HEIGHT.rail + the flex gap), padding and border.
 const GAP = 6;
-const POP_MAX = 236 + 28 + SPACE[4] + SPACE[4] * 2 + 2;
+const POP_MAX = 236 + HEIGHT.rail + SPACE[4] + SPACE[4] * 2 + 2;
 
 export const Picker = ({ label, options, value, onChange, placeholder, hug = false }) => {
   const [open, setOpen] = useState(false);
@@ -35,6 +35,7 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
   const boxRef = useRef(null);
   const popRef = useRef(null);
   const inputRef = useRef(null);
+  const triggerRef = useRef(null);
   useLayoutEffect(() => {
     if (!open) { setPop(null); return undefined; }
     // Layout effect: the box must land at its rect before the first paint,
@@ -47,10 +48,12 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
       const up = below < POP_MAX && above > below;
       // A hugging trigger (settings' value pill) is only as wide as its
       // value, so the list would open comically narrow under it - floor it
-      // at 240 and hang its RIGHT edge off the trigger's, since the pill
+      // at 340 and hang its RIGHT edge off the trigger's, since the pill
       // lives on the row's right rail, hard against the panel's edge.
-      const w = hug ? Math.min(340, Math.max(r.width, 240)) : r.width;
-      setPop({ left: hug ? r.right - w : r.left, width: w, up,
+      const w = Math.min(window.innerWidth - 24, hug ? Math.max(r.width, 340) : r.width);
+      const left = Math.max(12, Math.min(hug ? r.right - w : r.left, window.innerWidth - w - 12));
+      setPop({ left, width: w, up, settings: !!boxRef.current?.closest(".px-settings"),
+               maxHeight: Math.max(80, Math.min(236, (up ? above : below) - 54)),
                top: up ? null : r.bottom + GAP,
                bottom: up ? window.innerHeight - r.top + GAP : null });
     };
@@ -60,17 +63,24 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
     // every click in the list as an away click and close on choice.
     const away = (e) => {
       if (boxRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
-      setOpen(false);
+      setOpen(false); setQ("");
+    };
+    const escape = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault(); e.stopPropagation();
+      setOpen(false); setQ(""); triggerRef.current?.focus();
     };
     // Capture-phase scroll catches any ancestor's scroll (the rail, the
     // chain's px-scroll list); a rAF throttle keeps it to one layout a frame.
     let raf = 0;
     const follow = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); };
     document.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", escape, true);
     window.addEventListener("resize", follow);
     window.addEventListener("scroll", follow, true);
     return () => {
       document.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", escape, true);
       window.removeEventListener("resize", follow);
       window.removeEventListener("scroll", follow, true);
       cancelAnimationFrame(raf);
@@ -79,21 +89,44 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
   // The filter input mounts with the portal box (once `pop` lands), so the
   // focus waits for it in a plain effect - the layout one above runs while
   // the portal's first render is still gated off.
-  useEffect(() => { if (open && pop) inputRef.current?.focus(); }, [open, pop]);
+  useEffect(() => {
+    if (!open || !pop) return;
+    const target = inputRef.current || popRef.current?.querySelector('[aria-selected="true"]')
+      || popRef.current?.querySelector('[role="option"]');
+    target?.focus({ preventScroll: true });
+  }, [open, !!pop]);
+  const close = () => { setOpen(false); setQ(""); triggerRef.current?.focus(); };
   const onEsc = (e) => {
-    if (e.key === "Escape" && open) { e.stopPropagation(); setOpen(false); setQ(""); }
+    if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); close(); }
   };
   const current = options.find((opt) => opt.id === value);
   const needle = q.trim().toLowerCase();
   const hits = options.filter((opt) => !needle ||
-    `${opt.label} ${opt.description || ""}`.toLowerCase().includes(needle));
-  const choose = (opt) => { onChange(opt.id); setOpen(false); setQ(""); };
+    `${opt.label} ${opt.description || ""} ${opt.group || ""}`.toLowerCase().includes(needle));
+  const choose = (opt) => { if (!opt.disabled) { onChange(opt.id); close(); } };
+  const navigate = (e) => {
+    onEsc(e);
+    const options = [...(popRef.current?.querySelectorAll('[role="option"]:not(:disabled)') || [])];
+    if (!options.length) return;
+    const i = options.indexOf(document.activeElement);
+    if (e.key === "Enter" && e.target === inputRef.current) { e.preventDefault(); options[0].click(); return; }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    if (e.target === inputRef.current && ["Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0 : e.key === "End" ? options.length - 1
+      : i < 0 ? (e.key === "ArrowDown" ? 0 : options.length - 1)
+      : (i + (e.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+    options[next].focus();
+  };
   return (
-    <div ref={boxRef} onKeyDown={onEsc} style={hug ? { width: "fit-content", maxWidth: 260 } : undefined}>
-      <button type="button" aria-haspopup="listbox" aria-expanded={open}
+    <div ref={boxRef} onKeyDown={onEsc} style={hug ? { width: "fit-content", maxWidth: "var(--picker-max-width, 260px)" } : undefined}>
+      <button ref={triggerRef} type="button" aria-haspopup="listbox" aria-expanded={open}
         aria-label={label} title={current ? current.label : label}
-        onClick={() => setOpen((o) => !o)}
-        style={{ width: "100%", height: 24, display: "flex", alignItems: "center",
+        onClick={() => { setQ(""); setOpen((o) => !o); }}
+        onKeyDown={(e) => {
+          if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); setOpen(true); }
+        }}
+        style={{ width: "100%", height: HEIGHT.rail, display: "flex", alignItems: "center",
                  gap: SPACE[8], padding: `0 ${SPACE[12]}px`, cursor: "pointer",
                  background: "var(--bg3)",
                  border: `1px solid ${open ? "var(--borderStr)" : "var(--border)"}`,
@@ -110,8 +143,8 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
           transition: `transform ${MOTION.hover}` }} />
       </button>
       {open && pop && createPortal(
-        <div role="listbox" aria-label={label} className="px-root px-ov-pop"
-          ref={popRef} onKeyDown={onEsc}
+        <div role="listbox" aria-label={label} className="px-root px-picker px-ov-pop"
+          data-settings={pop.settings ? "true" : undefined} ref={popRef} onKeyDown={navigate}
           style={{ position: "fixed", left: pop.left, width: pop.width,
                    ...(pop.up ? { bottom: pop.bottom } : { top: pop.top }),
                    transformOrigin: pop.up ? "bottom center" : "top center",
@@ -121,13 +154,13 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
                    gap: SPACE[4] }}>
           {options.length > 6 && (
             <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="find…" className="px-input" spellCheck={false}
-              style={{ width: "100%", height: 28, padding: `0 ${SPACE[8]}px`,
+              placeholder="Search" aria-label={`Filter ${label}`} className="px-input" spellCheck={false}
+              style={{ width: "100%", height: HEIGHT.rail, padding: `0 ${SPACE[8]}px`,
                        background: "var(--bg2)", border: "1px solid var(--border)",
                        borderRadius: RADIUS.input, outline: "none",
                        color: "var(--text)", fontFamily: FONT, fontSize: 12 }} />
           )}
-          <div className="px-scroll" style={{ maxHeight: 236, overflowY: "auto",
+          <div className="px-scroll" style={{ maxHeight: pop.maxHeight, overflowY: "auto",
                         display: "flex", flexDirection: "column" }}>
             {hits.map((opt, index) => {
               const on = opt.id === value;
@@ -145,23 +178,21 @@ export const Picker = ({ label, options, value, onChange, placeholder, hug = fal
                     {opt.group}
                   </span>
                 )}
-                <button type="button" role="option" aria-selected={on}
+                <button type="button" role="option" aria-selected={on} disabled={opt.disabled}
                   onClick={() => choose(opt)} title={opt.label}
                   style={{ display: "flex", flexDirection: "column",
                            alignItems: "stretch", gap: 1,
-                           padding: `${SPACE[6]}px ${SPACE[8]}px`, textAlign: "left",
+                           padding: `${SPACE[8]}px ${SPACE[10]}px`, textAlign: "left",
                            background: on ? "var(--accentMut)" : "transparent",
                            border: "none", borderRadius: RADIUS.input,
                            cursor: "pointer", fontFamily: FONT }}>
-                  <span style={{ fontSize: 12, overflow: "hidden",
-                                 textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  <span style={{ fontSize: 12, lineHeight: 1.4, overflowWrap: "anywhere",
                                  color: on ? "var(--accent)" : "var(--text)" }}>
                     {opt.label}
                   </span>
                   {opt.description && (
-                    <span style={{ fontSize: 9, color: "var(--textTer)",
-                                   overflow: "hidden", textOverflow: "ellipsis",
-                                   whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 10, lineHeight: 1.4, color: "var(--textSec)",
+                                   overflowWrap: "anywhere" }}>
                       {opt.description}
                     </span>
                   )}

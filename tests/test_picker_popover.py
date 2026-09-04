@@ -38,9 +38,10 @@ class PortalEscape(unittest.TestCase):
         # left/width are the trigger's: the caller's layout must not change.
         # 10.0's hug mode (the settings value pill) right-aligns instead,
         # floored at 240 so the list never opens comically narrow.
-        self.assertRegex(PICKER, r"left:\s*hug \? r\.right - w : r\.left")
-        self.assertRegex(PICKER,
-                         r"const w = hug \? Math\.min\(340, Math\.max\(r\.width, 240\)\) : r\.width")
+        self.assertIn("hug ? r.right - w : r.left", PICKER)
+        self.assertIn("Math.min(window.innerWidth - 24", PICKER)
+        self.assertIn("Math.max(r.width, 340)", PICKER)
+        self.assertIn("window.innerWidth - w - 12", PICKER)
         self.assertRegex(PICKER, r"top:\s*up \? null : r\.bottom \+ GAP")
 
     def test_the_flip_is_gated_on_room_below_and_above(self):
@@ -75,7 +76,9 @@ class FollowAndDismiss(unittest.TestCase):
         # listbox node itself, not only on the trigger's wrapper.
         self.assertRegex(
             PICKER,
-            r'ref=\{popRef\} onKeyDown=\{onEsc\}')
+            r'ref=\{popRef\} onKeyDown=\{navigate\}')
+        self.assertIn("onEsc(e);", PICKER)
+        self.assertIn('window.addEventListener("keydown", escape, true)', PICKER)
         self.assertIn('e.key === "Escape"', PICKER)
 
 
@@ -86,7 +89,7 @@ class LookAndStack(unittest.TestCase):
     def test_keeps_the_open_animation_and_gains_the_theme_scope(self):
         # px-root: applyThemeCss scopes every var to that class and body
         # sits outside it (InfoTip's body-plus-px-root pair).
-        self.assertIn('className="px-root px-ov-pop"', PICKER)
+        self.assertIn('className="px-root px-picker px-ov-pop"', PICKER)
 
     def test_sits_at_the_dropdown_tier_above_the_composer_popups(self):
         # The composer's model/LoRA popups run zIndex 25 (docked) / 45

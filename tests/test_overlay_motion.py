@@ -141,9 +141,11 @@ class PopoversRenderTheSharedEntrance(unittest.TestCase):
 
     def test_scroll_picker_dropdown(self):
         block = _block(_src("SettingsMenu.jsx"),
-                       "const ScrollPicker", "const PickRow")
-        self.assertIn("px-ov-pop", block,
-                      "the ScrollPicker dropdown still appears out of nothing")
+                       "const ScrollPicker", "// One edit-lane option")
+        self.assertIn("<Picker hug", block)
+        shared = (SRC / "lib/Picker.jsx").read_text(encoding="utf-8")
+        self.assertIn("px-ov-pop", shared,
+                      "the shared dropdown lost its entrance")
 
     def test_info_tip_tooltip(self):
         src = _src("InfoTip.jsx")
@@ -156,7 +158,7 @@ class PopoversRenderTheSharedEntrance(unittest.TestCase):
         for name, start, end in (
             ("MotionDirector.jsx", "const AddLora", "model grouping"),
             ("MotionDirector.jsx", "const ModelPicker", "const ENGINE_ICONS"),
-            ("SettingsMenu.jsx", "const ScrollPicker", "const PickRow"),
+            ("SettingsMenu.jsx", "const ScrollPicker", "// One edit-lane option"),
         ):
             with self.subTest(popover=start):
                 block = _block(_src(name), start, end)

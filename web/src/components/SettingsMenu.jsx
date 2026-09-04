@@ -8,10 +8,10 @@
 // so the theme toggle previews against the live chat; the fallback is the old
 // bottom-left floating panel budding off the rail's settings button.
 // Local-first: everything persists to pixal_dm/config.json via /api/settings.
-import { Fragment, Children, createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { CaretDown, Check, DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
-import { FONT, W, TYPE, SPACE, RADIUS, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { DesktopTower, Envelope, Eye, EyeSlash, FolderOpen, LockKey, Moon, Plus, Sun, ArrowSquareOut, X } from "@phosphor-icons/react";
+import { FONT, W, TYPE, SPACE, RADIUS, HEIGHT, MOTION, SHADOW, OVERLAY } from "../lib/design-tokens.js";
+import { Btn } from "../lib/Btn.jsx";
 import { Lockup } from "../lib/Lockup.jsx";
 import { ModalShell, OverlayMotionStyle } from "../lib/ModalShell.jsx";
 import { Picker } from "../lib/Picker.jsx";
@@ -24,7 +24,10 @@ import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, SwitchGhost, ValueGhost } from "./Skeleton.jsx";
 import { familyName, prettyModel, prettyTemplate } from "../lib/names.js";
 import { useStore } from "../store.js";
-import { subscribe } from "../transport.js";
+import { SettingsWorkspace } from "./SettingsWorkspace.jsx";
+import { SETTINGS, settingId } from "../lib/settings-layout.js";
+import { textOf } from "../lib/settings-search.js";
+import { Disclosure } from "../lib/Disclosure.jsx";
 
 const MONO = "ui-monospace, Consolas, monospace";
 
@@ -39,45 +42,20 @@ const NvidiaAccent = ({ size }) => <NvidiaMark size={size} active />;
 // not a display string, and the wire has not changed.
 const LTX25_VIDEO_MODE = "LTX 2.5 2x";
 const VSR_DEFAULT_MODE = "VSR High";
+// The node's three grades, as stored. A value pill like every other choice
+// on a rail - this was a native <select>, which DESIGN.md calls a defect on
+// sight, and at 24 it was the odd height on its row.
+const DLSS5_STYLES = ["default", "natural", "cinematic"].map((id) => ({ id, label: id }));
 
-// ── the 34px beat (brief 10.0) ────────────────────────────────────────────
-// The stacked wall is gone: every setting row is ONE line, 34px exactly -
-// label and its one-fact subline inline on the left, the control on the
-// right rail (Field below IS the row). Jesse on the old panel: "really
-// loose on the vertical spacing rhythm ... doesnt feel like a professional
-// app." The beat is what makes it feel measured:
-//
-//     0   between consecutive rows in a run - the 34px height IS the gap
-//     8   inside a Section: title -> content, block -> block
-//    16   above a row run that CONTINUES its cluster after a Section
-//         (px-set-rows--cont: the run is a peer of the Section's rows, not
-//         a new cluster)
-//    12   under a cluster heading (GroupLabel)
-//    32   between clusters (the scroll container's own gap)
-//    48   above a cluster heading
-//
-// Rows always travel in a named run (Rows / px-set-rows): the scroll
-// container gaps every direct child 32, so unwrapped rows would read as
-// clusters of one. The asymmetry that mattered survives: 8 under a
-// heading against 48 above it means the heading still opens what follows
-// instead of floating between two groups - and 8 is the SAME air a
-// Section title keeps above its rows, because heading and title share one
-// register now (Jesse, 2026-09-01). The offsets are relative to the
-// container's own 32px gap.
-const CSS = `
-.px-set-group { margin-top: 16px; }
-.px-set > .px-set-group:first-child { margin-top: 0; }
-.px-set > .px-set-group + * { margin-top: -24px; }
-.px-set > .px-set-rows--cont { margin-top: -16px; }
-.px-about-update-host > :not(.px-about-update-live) { display: none !important; }
-`;
+// The workspace owns page chrome, search and the reading rhythm. Controls
+// keep the shared rail height; rows may grow when labels need another line.
 
 // ── loading: ghosts, not guesses ─────────────────────────────────────────
 // Twelve slots below start empty and land together from /api/settings (the
 // twelfth, `upd`, is About's update check). A control whose options or
 // stored value are still in flight renders a ghost of its FINAL size -
-// SegGhost is the 28px pill-selector capsule, PickerGhost the 24px value
-// pill, SwitchGhost the 42x16 toggle track - so the panel's scrollHeight is identical before and after the
+// SegGhost is the pill-selector capsule and PickerGhost the value pill, both
+// HEIGHT.rail, SwitchGhost the 42x16 toggle track - so the panel's scrollHeight is identical before and after the
 // fetches land and nothing below a ghost ever moves. The swap is
 // px-ghost-in: opacity only, never a height animation (DESIGN.md §5). And a
 // segment row never shows a DEFAULTED selection while its stored value is
@@ -91,124 +69,22 @@ const CSS = `
 // same scroll-and-pick shape the model and LoRA browsers use - filter on top,
 // grouped rows with real vertical rhythm, the scale as a chip rather than more
 // text run into the name.
-const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "none",
-                        required = false, className }) => {
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
-  const boxRef = useRef(null);
-  const searchRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
-    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc);
-    searchRef.current?.focus();
-    return () => {
-      document.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
-
-  const needle = filter.trim().toLowerCase();
-  const matches = options.filter((item) => !needle ||
-    `${item.label} ${item.name} ${item.group || ""}`.toLowerCase().includes(needle));
-  const groups = [];
-  matches.forEach((item) => {
-    const key = item.group || "";
-    const last = groups[groups.length - 1];
-    if (last && last.key === key) last.items.push(item);
-    else groups.push({ key, items: [item] });
-  });
-  const current = options.find((item) => item.name === value);
-
-  return (
-    <div ref={boxRef} className={className} style={{ position: "relative" }}>
-      {/* The trigger shape: fixed height, caret in its own right-hand slot
-          with a rotation instead of jammed against the label (Jesse, 2026-08-18). */}
-      <button type="button" onClick={() => { setOpen(!open); setFilter(""); }}
-        style={{
-          width: "fit-content", maxWidth: 260, height: 24, display: "flex", alignItems: "center",
-          gap: SPACE[8], padding: `0 ${SPACE[12]}px`, cursor: "pointer",
-          background: "var(--bg3)", border: `1px solid ${open ? "var(--accentStr)" : "var(--border)"}`,
-          borderRadius: RADIUS.pill, color: current ? "var(--text)" : "var(--textTer)",
-          fontFamily: FONT, fontSize: TYPE.label, fontWeight: W.nav, textAlign: "left",
-          transition: `border-color ${MOTION.hover}`,
-        }}
-        onMouseEnter={(e) => { if (!open) e.currentTarget.style.borderColor = "var(--borderHov)"; }}
-        onMouseLeave={(e) => { if (!open) e.currentTarget.style.borderColor = "var(--border)"; }}>
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
-                       textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {current ? current.label : placeholder}
-        </span>
-        {current?.badge && <Chip>{current.badge}</Chip>}
-        <CaretDown size={11} weight="bold" style={{
-          color: "var(--textTer)", flexShrink: 0, marginLeft: SPACE[4],
-          transform: open ? "rotate(180deg)" : "none",
-          transition: `transform ${MOTION.hover}`,
-        }} />
-      </button>
-
-      {open && (
-        <div style={{
-          // The pill hugs its value on the row's right rail, so the list hangs
-          // off the pill's RIGHT edge (the panel edge is right there) and
-          // opens as wide as its rows need, capped.
-          position: "absolute", zIndex: 20, top: "calc(100% + 4px)", right: 0,
-          minWidth: "100%", width: "max-content", maxWidth: 340,
-          transformOrigin: "top right",
-          maxHeight: 320, overflowY: "auto", padding: SPACE[6],
-          background: "var(--bg1)", border: "1px solid var(--borderHov)",
-          borderRadius: RADIUS.card, boxShadow: SHADOW.xl,
-        }} className="px-scroll px-ov-pop">
-          <input ref={searchRef} value={filter} onChange={(e) => setFilter(e.target.value)}
-            placeholder="filter…" className="px-input"
-            style={{
-              width: "100%", height: 30, marginBottom: SPACE[6], padding: `0 ${SPACE[8]}px`,
-              background: "var(--bg2)", border: "1px solid var(--border)",
-              borderRadius: RADIUS.input, color: "var(--text)", outline: "none",
-              fontFamily: FONT, fontSize: TYPE.label,
-            }} />
-          {/* required = the setting has no "none" state (the reviewer must
-              name a model), so the clear row would be a trap. */}
-          {!required && (
-            <PickRow selected={!value} onClick={() => { onPick(""); setOpen(false); }}>
-              <span style={{ color: "var(--textTer)" }}>{emptyLabel}</span>
-            </PickRow>
-          )}
-          {groups.map((group) => (
-            <div key={group.key || "_"}>
-              {group.key && (
-                <div style={{
-                  padding: `${SPACE[8]}px ${SPACE[8]}px ${SPACE[4]}px`, fontFamily: FONT,
-                  fontSize: 9, letterSpacing: "0.09em", textTransform: "uppercase",
-                  color: "var(--textMut)",
-                }}>{group.key}</div>
-              )}
-              {group.items.map((item) => (
-                <PickRow key={item.name} selected={item.name === value}
-                  title={item.title || item.name}
-                  onClick={() => { onPick(item.name); setOpen(false); }}>
-                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
-                                 textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.label}
-                  </span>
-                  {item.badge && <Chip>{item.badge}</Chip>}
-                </PickRow>
-              ))}
-            </div>
-          ))}
-          {matches.length === 0 && (
-            <div style={{ padding: SPACE[10], color: "var(--textTer)", fontSize: TYPE.label }}>
-              nothing matches “{filter.trim()}”
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
+const ScrollPicker = ({ value, options, placeholder, onPick, emptyLabel = "None",
+                        required = false, className }) => (
+  <div className={className}>
+    <Picker hug label={placeholder || "Choose a model"} value={value}
+      placeholder={placeholder}
+      options={[
+        ...(!required ? [{ id: "", label: emptyLabel }] : []),
+        ...options.map((item) => ({
+          id: item.name, label: item.label + (item.badge ? ` · ${item.badge}` : ""),
+          description: item.title || (item.name !== item.label ? item.name : undefined),
+          group: item.group,
+        })),
+      ]}
+      onChange={onPick} />
+  </div>
+);
 
 // One edit-lane option (9.29), in the shared Picker's shape (9.73): `id` is
 // the raw build name the pick posts, `label` the product name plus what the
@@ -279,147 +155,34 @@ const h3EncoderOptions = (h3) => {
   return options;
 };
 
-const PickRow = ({ selected, onClick, children, title }) => (
-  <button type="button" onClick={onClick} title={title}
-    style={{
-      width: "100%", minHeight: 34, display: "flex", alignItems: "center", gap: SPACE[8],
-      padding: `${SPACE[6]}px ${SPACE[8]}px`, cursor: "pointer", textAlign: "left",
-      background: selected ? "var(--accentMut)" : "transparent",
-      border: `1px solid ${selected ? "var(--accentStr)" : "transparent"}`,
-      borderRadius: RADIUS.input, color: selected ? "var(--accent)" : "var(--textSec)",
-      fontFamily: FONT, fontSize: TYPE.ui,
-      transition: `background ${MOTION.hover}, color ${MOTION.hover}`,
-    }}
-    onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "var(--bg2)"; }}
-    onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
-  >{children}</button>
-);
-
-// The little badge (the pickers' "4×" scale chip) lives in lib/Chip.jsx
-// now — shared with SegmentedControl options and the Animate dialog, so a
-// factor never renders as prose in one surface and a chip in another.
-
-// ── the search (brief 10.0) ───────────────────────────────────────────────
-// The header field filters THIS tab: a case-insensitive match on section
-// titles and row labels; non-matching rows and empty sections hide while
-// typing, an empty query restores everything. Client-side only - a query
-// never touches config.json. The context carries the lowered needle so the
-// components below filter themselves.
-const SettingsQuery = createContext("");
-
-// The visible TEXT of a label/title prop: strings pass through, fragments
-// give up their children, and an InfoTip contributes nothing - its prose is
-// help, not the row's name (the filter is titles + labels, not the manual).
-const textOf = (node) => {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join(" ");
-  if (typeof node === "object" && node.props) {
-    if (node.type === InfoTip) return "";
-    return textOf(node.props.children);
-  }
-  return "";
-};
-
-// Every Field label under a node - a section hides only when neither its
-// title nor one of its rows matches.
-const collectLabels = (kids) => {
-  const out = [];
-  Children.forEach(kids, (c) => {
-    if (!c || typeof c !== "object") return;
-    if (c.type === Field) out.push(textOf(c.props.label));
-    else if (c.props && c.props.children) out.push(...collectLabels(c.props.children));
-  });
-  return out;
-};
-
-// ── the 34px row (brief 10.0) ─────────────────────────────────────────────
-// ONE line, 34px exactly: the label (TYPE.body at body weight) with its
-// one-fact subline INLINE (TYPE.label 300, textTer, nowrap + ellipsis -
-// never wraps, [[vertical-rhythm]]), the control on a right-hand rail.
-// `hint` keeps its name from the stacked layout, but it is the subline now:
-// same words, same copy-budget surface, new seat.
+// A labeled setting and its control rail. Stable identifiers let global
+// search reveal and focus the same row without maintaining a second catalog.
 const Field = ({ label, hint, children, className }) => {
-  const q = useContext(SettingsQuery);
-  if (q && !textOf(label).toLowerCase().includes(q)) return null;
   return (
-    <div className={className} style={{ display: "flex", alignItems: "center",
-                  height: 34, gap: SPACE[10] }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: SPACE[8],
-                    minWidth: 0, flex: "1 1 auto" }}>
-        {label && (
-          <span style={{ fontSize: TYPE.body, fontWeight: W.body, fontFamily: FONT,
-                         color: "var(--text)", whiteSpace: "nowrap" }}>{label}</span>
-        )}
-        {hint && (
-          <span style={{ fontSize: TYPE.label, fontWeight: W.label, fontFamily: FONT,
-                         color: "var(--textTer)", whiteSpace: "nowrap", minWidth: 0,
-                         overflow: "hidden", textOverflow: "ellipsis" }}>{hint}</span>
-        )}
+    <div className={`px-setting ${className || ""}`} data-set-row=""
+      data-setting={settingId(textOf(label))} tabIndex={-1}>
+      <div className="px-setting-label">
+        {label && <span className="px-setting-name">{label}</span>}
+        {hint && <span className="px-setting-hint">{hint}</span>}
       </div>
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center",
-                    flex: "0 0 auto" }}>{children}</div>
+      <div data-set-rail="" className="px-setting-rail">{children}</div>
     </div>
   );
 };
+Field.settingsKind = "field";
 
-// A run of consecutive rows: they touch (the 34px beat IS the spacing), so
-// they travel as one child of the 32-gap container. `cont` marks a run that
-// continues its cluster after a Section - 16 above it, not a full cluster
-// gap, or it would read as a new group.
-const Rows = ({ cont, children }) => (
-  <div className={cont ? "px-set-rows px-set-rows--cont" : "px-set-rows"}
-       style={{ display: "flex", flexDirection: "column" }}>{children}</div>
-);
+// Rows travel as one card; a GroupLabel names the cards that follow it.
+const Rows = ({ children }) => <div className="px-set-rows">{children}</div>;
 
-// THE one heading register (Jesse, 2026-09-01: "why would you make a one
-// off style") - TYPE.micro, W.nav, uppercase, .09em tracking, textTer,
-// the hairline running right. Section titles and cluster GroupLabels both
-// render it; neither carries a private look.
-const TITLE_STYLE = {
-  fontSize: TYPE.micro, fontWeight: W.nav, fontFamily: FONT,
-  color: "var(--textTer)", textTransform: "uppercase",
-  letterSpacing: "0.09em", whiteSpace: "nowrap",
-};
-const Hairline = () => (
-  <span aria-hidden="true" style={{ flex: 1, borderTop: "1px solid var(--border)" }} />
-);
-
-// Cluster heading inside a tab - the information architecture the flat wall
-// of Sections was missing. Same register as the Section titles (TITLE_STYLE
-// + the hairline); what separates a cluster heading is its 48px of air
-// above (the rhythm CSS), not a different look. `badge` slots at the right
-// edge (the Models tab's family state).
 const GroupLabel = ({ children, badge }) => {
-  const q = useContext(SettingsQuery);
-  // Searching flattens the panel to matching rows; a heading whose group
-  // hid would float, so headings sit the search out entirely.
-  if (q) return null;
   return (
-    <div className="px-set-group"
-         style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-      <span style={TITLE_STYLE}>{children}</span>
-      <Hairline />
+    <div className="px-settings-group-heading" data-set-break="">
+      <span>{children}</span>
       {badge}
     </div>
   );
 };
-
-// One badge, two registers of the panel's one color story (brief 10.0):
-// state-satisfied ("Installed") is the DIMMED chartreuse - accentDim on
-// accentDimMut, never the success green; action ("Install") is the outlined-mid
-// register. VISUAL STATE ONLY: no handler, not even a pointer - the install
-// flow is an open product decision.
-const Badge = ({ action, children }) => (
-  <span style={{ flexShrink: 0, marginLeft: "auto", fontFamily: FONT,
-                 fontSize: TYPE.micro, fontWeight: W.nav, letterSpacing: "0.04em",
-                 padding: "2px 7px", borderRadius: RADIUS.pill,
-                 ...(action
-                   ? { color: "var(--accent)", background: "var(--accentMut)",
-                       border: "1px solid var(--accentStr)" }
-                   : { color: "var(--accentDim)", background: "var(--accentDimMut)" }),
-                 }}>{children}</span>
-);
+GroupLabel.settingsKind = "group";
 
 // ── the library (9.30) ────────────────────────────────────────────────────
 // The Models tab is the read-only inventory: choosing per lane is the Image
@@ -440,14 +203,9 @@ const HUMAN_REASON = {
   "no compatible Pixal pipeline yet": "no lane here runs it yet",
 };
 
-// One library row: what it is, what it runs, what it weighs — one
-// fixed-height line (nowrap + ellipsis, [[vertical-rhythm]]), the raw relpath
-// and any advisory in the tooltip. A video model is not dead weight — the
-// Animate lanes run it — so it keeps its ink and says where it runs; a model
-// nothing here runs goes quiet and says why. Heavier-than-card follows 9.29:
-// an honest tooltip line, never a badge, a colour, or a block.
-const LibraryRow = ({ rel, name, meta, detectedGb }) => {
-  const [hov, setHov] = useState(false);
+// The readable inventory: product name, filename, compatibility and disk
+// size. Heavy builds remain selectable; their tooltip explains offloading.
+const LibraryRow = ({ rel, name, meta, detectedGb, sharedLanes = [] }) => {
   const family = meta.family || "unknown";
   const gb = meta.size ? meta.size / 1e9 : 0;
   const heavy = gb > 0 && detectedGb > 0 && gb > detectedGb;
@@ -456,49 +214,69 @@ const LibraryRow = ({ rel, name, meta, detectedGb }) => {
   const state = family === "video"
     ? HUMAN_REASON["video model"]
     : (HUMAN_REASON[meta.reason] || meta.reason || "no lane here runs it yet");
-  const shown = lanes.slice(0, 3);
-  const overflow = lanes.length - shown.length;
+  const extraLanes = lanes.filter((lane) => !sharedLanes.includes(lane));
+  const filename = rel.split(/[\\/]/).pop();
   return (
-    <div title={rel + (heavy
+    <div className="px-library-row" data-setting={`model-${settingId(rel)}`} tabIndex={-1}
+      title={rel + (lanes.length ? `\n${lanes.join(" · ")}` : "") + (heavy
                  ? `\nlarger than this card's ${Math.round(detectedGb)} GB — it will offload and run slowly`
-                 : "")}
-      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ display: "flex", alignItems: "center", gap: SPACE[10], height: 34,
-               padding: `0 ${SPACE[8]}px`, borderRadius: RADIUS.input,
-               background: hov ? "var(--bg2)" : "transparent",
-               transition: `background ${MOTION.hover}` }}>
-      <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
-                     textOverflow: "ellipsis", whiteSpace: "nowrap",
-                     fontFamily: FONT, fontSize: TYPE.body,
-                     color: dead ? "var(--textTer)" : "var(--textSec)" }}>
-        {meta.civitai_url ? (
+                 : "")}>
+      <div className="px-library-identity">
+        <span className="px-library-name" style={{ color: dead ? "var(--textSec)" : "var(--text)" }}>
+          {meta.civitai_url ? (
           <a href={meta.civitai_url} target="_blank" rel="noreferrer"
-             style={{ color: "inherit", textDecoration: "none",
-                      borderBottom: `1px solid ${hov ? "var(--textTer)" : "transparent"}`,
-                      transition: `border-color ${MOTION.hover}` }}>
+             style={{ color: "inherit", textDecoration: "none" }}>
             {name}
           </a>
-        ) : name}
-      </span>
-      <span title={lanes.length ? lanes.join(" · ") : undefined}
-        style={{ flexShrink: 0, maxWidth: "45%", display: "flex",
-                 alignItems: "baseline", overflow: "hidden", whiteSpace: "nowrap",
-                 fontFamily: FONT, fontSize: TYPE.label, color: "var(--textTer)" }}>
-        {meta.supported && family !== "video" ? (<>
-          {/* the +N never clips: it is the whole "there is more" signal */}
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            {shown.join(" · ")}
-          </span>
-          {overflow > 0 && <span style={{ flexShrink: 0 }}>{` +${overflow}`}</span>}
-        </>) : state}
-      </span>
-      <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: TYPE.label,
-                     color: "var(--textTer)", fontVariantNumeric: "tabular-nums" }}>
-        {gb ? `${gb.toFixed(1)} GB` : ""}
-      </span>
+          ) : name}
+        </span>
+        {filename !== name && <span className="px-library-file">{filename}</span>}
+        {(dead || extraLanes.length > 0 || family === "video") &&
+          <span className="px-library-detail">{meta.supported && family !== "video"
+            ? extraLanes.join(" · ") : state}</span>}
+      </div>
+      <span className="px-library-size" title="Size on disk">{gb ? `${gb.toFixed(1)} GB` : "—"}</span>
     </div>
   );
 };
+LibraryRow.settingsKind = "model";
+
+const LibraryFamily = ({ title, count, size, lanes, open, onToggle, children }) => (
+  <section className="px-library-family" data-setting={`section-${settingId(title)}`} tabIndex={-1}>
+    <Disclosure open={open} onToggle={onToggle} caretSide="trailing" caretSize={12}
+      triggerStyle={{ padding: "16px", color: "var(--text)", gap: 10 }}
+      trigger={<>
+        <span className="px-library-family-name">{title}</span>
+        <span className="px-library-count">{count} {count === 1 ? "build" : "builds"}</span>
+        <span className="px-library-family-size">{size ? `${size.toFixed(1)} GB` : ""}</span>
+      </>}>
+      <div className="px-library-family-body">
+        {lanes.length > 0 && <div className="px-library-lanes">{lanes.join(" · ")}</div>}
+        {children}
+      </div>
+    </Disclosure>
+  </section>
+);
+LibraryFamily.settingsKind = "section";
+
+const MemoryOverview = ({ gpu }) => (
+  <div className="px-memory-overview">
+    {[{ label: "Video memory", used: gpu?.used, total: gpu?.total },
+      { label: "System memory", used: gpu?.ram_used, total: gpu?.ram_total }].map((item) => {
+      const known = Number.isFinite(Number(item.used)) && Number(item.total) > 0;
+      const ratio = known ? Math.min(100, Number(item.used) / Number(item.total) * 100) : 0;
+      return <div key={item.label} className="px-memory-stat">
+        <span>{item.label}</span>
+        <strong>{known ? <>{Number(item.used).toFixed(1)} <small>/ {Number(item.total).toFixed(1)} GB</small></> : <ValueGhost w={112} />}</strong>
+        <span className="px-memory-track" role="meter" aria-label={item.label}
+          aria-valuenow={known ? Number(item.used) : undefined} aria-valuemin={0}
+          aria-valuemax={known ? Number(item.total) : undefined}>
+          <span style={{ width: `${ratio}%`, background: ratio >= 90 ? "var(--warning)" : "var(--accentDim)" }} />
+        </span>
+      </div>;
+    })}
+  </div>
+);
 
 // Two ways to have a brain: any OpenAI-compatible API, or a GGUF on this PC
 // (llama.cpp server the sidecar spawns itself). Quick chips just prefill the
@@ -569,13 +347,26 @@ const Supporter = ({ label, title, Mark, href }) => {
 
 // Linear-style tab strip: bottom-border indicator, no fills. A tab is a place,
 // not a button - the quiet chrome keeps the sections themselves loud.
-const TabStrip = ({ tabs, value, onChange, className, ariaLabel }) => (
-  <div role="tablist" aria-label={ariaLabel} className={className} style={{ display: "flex", gap: SPACE[16],
+// `info` rides AFTER the last tab, never inside one: a tip that moved with
+// the active tab would change that tab's width and shove its neighbour, and
+// a control may not reshape on selection.
+const TabStrip = ({ tabs, value, onChange, className, ariaLabel, info }) => (
+  <div role="tablist" aria-label={ariaLabel} data-setting={settingId(ariaLabel)} tabIndex={-1}
+    className={className} style={{ display: "flex", gap: SPACE[16],
+                               alignItems: "center",
                                borderBottom: "1px solid var(--border)" }}>
     {tabs.map((t) => {
       const active = value === t.id;
       return (
         <button key={t.id} type="button" role="tab" aria-selected={active}
+          tabIndex={active ? 0 : -1}
+          onKeyDown={(e) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+            e.preventDefault();
+            const i = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1
+              : (tabs.indexOf(t) + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+            onChange(tabs[i].id); e.currentTarget.parentElement.children[i]?.focus();
+          }}
           onClick={() => onChange(t.id)}
           style={{ padding: `${SPACE[6]}px 0 ${SPACE[8]}px`, background: "transparent",
                    border: "none", borderBottom: "2px solid",
@@ -589,186 +380,37 @@ const TabStrip = ({ tabs, value, onChange, className, ariaLabel }) => (
         </button>
       );
     })}
+    {info && <InfoTip text={info} />}
   </div>
 );
+TabStrip.settingsKind = "navigation";
 
-// One section (brief 10.0): the title in the cluster register - TYPE.micro,
-// W.nav, uppercase, .09em, textTer, the hairline running right - with any
-// live-value gloss INLINE after it (the mockup's card-head title + sub
-// pattern: a live value may not hide in a tip, so it rides the title line),
-// then its rows and blocks 8 apart. The rows inside travel in a Rows run so
-// they touch. Searching hides the section when neither its title nor one of
-// its row labels matches.
+// A named card has one header divider. Rows inside it are separated by air.
 const Section = ({ title, gloss, children }) => {
-  const q = useContext(SettingsQuery);
-  if (q) {
-    const hay = [textOf(title), ...collectLabels(children)]
-      .join("\n").toLowerCase();
-    if (!hay.includes(q)) return null;
-  }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: SPACE[8] }}>
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-        <span style={TITLE_STYLE}>{title}</span>
-        {gloss && (
-          <span style={{ fontSize: TYPE.label, fontWeight: W.label, fontFamily: FONT,
-                         color: "var(--textTer)", whiteSpace: "nowrap", minWidth: 0,
-                         overflow: "hidden", textOverflow: "ellipsis" }}>{gloss}</span>
-        )}
-        <Hairline />
-      </div>
+    <section className="px-settings-card" data-setting={title ? `section-${settingId(textOf(title))}` : undefined}
+      tabIndex={title ? -1 : undefined}>
+      {title && (
+        <div className="px-settings-card-header" data-set-sublabel="">
+          <span className="px-settings-card-title">{title}</span>
+          {gloss && <span className="px-settings-card-gloss">{gloss}</span>}
+        </div>
+      )}
       {children}
-    </div>
+    </section>
   );
 };
+Section.settingsKind = "section";
 
+// A field that owns its own line, not a rail passenger: HEIGHT.row.
+// Buttons are lib/Btn - size "sm" on a rail, the default beside a field of
+// this height, "lg" only for a lone primary. This file used to carry its own
+// Btn at a height it measured for itself; the ladder owns it now.
 const inputStyle = {
-  height: 38, background: "var(--bg3)", border: "1px solid var(--border)",
+  height: HEIGHT.row, background: "var(--bg3)", border: "1px solid var(--border)",
   borderRadius: RADIUS.pill, padding: `0 ${SPACE[16]}px`, fontSize: TYPE.ui,
   color: "var(--text)", fontFamily: FONT, outline: "none", width: "100%",
 };
-
-const Btn = ({ children, onClick, primary, disabled, title }) => (
-  <button type="button" onClick={onClick} disabled={disabled} title={title}
-    style={{
-      height: 34, padding: `0 ${SPACE[16]}px`, fontSize: TYPE.ui, fontFamily: FONT,
-      fontWeight: primary ? W.heading : W.body, cursor: disabled ? "default" : "pointer",
-      color: primary ? "var(--accentInk)" : "var(--textSec)",
-      background: primary ? "var(--accent)" : "var(--bg2)",
-      border: `1px solid ${primary ? "var(--accent)" : "var(--border)"}`,
-      borderRadius: RADIUS.pill, opacity: disabled ? 0.5 : 1,
-      transition: `background ${MOTION.hover}`,
-    }}>{children}</button>
-);
-
-// 9.24b fills 9.24a's reserved update slot. The slot itself lives inside the
-// About region frozen byte-for-byte by brief 10.0, so SettingsMenu portals
-// this control into that existing host instead of rewriting the later brief's
-// composition. Only the old slot contents are hidden; the credits stay exact.
-const AboutUpdate = ({ upd, install, transferring, pct, amount,
-                       onBegin, onCancel, onLaunch }) => (
-  <div className="px-about-update-live px-ghost-in" style={{ display: "flex",
-    flexDirection: "column", alignItems: "center", gap: SPACE[6] }}>
-    {upd !== null ? (
-      <>
-        {upd.ok && !upd.update && (
-          <span style={{ fontSize: TYPE.label, color: "var(--textMut)" }}>
-            Up to date{upd.latest ? ` — ${upd.latest} is the latest release` : ""}
-          </span>
-        )}
-        {upd.ok && upd.update && (
-          <>
-            <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
-              Pixal {upd.latest} is out
-            </span>
-            {install.phase === "idle" && (
-              <div style={{ display: "flex", alignItems: "center", gap: SPACE[8] }}>
-                <Btn primary onClick={onBegin}>Update Pixal</Btn>
-                <a href={upd.url} target="_blank" rel="noreferrer"
-                   style={{ display: "inline-flex", alignItems: "center",
-                            gap: SPACE[4], color: "var(--textTer)",
-                            textDecoration: "none", fontFamily: FONT,
-                            fontSize: TYPE.label }}>
-                  Release notes
-                  <ArrowSquareOut size={12} weight="duotone" />
-                </a>
-              </div>
-            )}
-
-            {transferring && (
-              <>
-                <span style={{ fontFamily: MONO, fontSize: TYPE.label,
-                               color: "var(--textSec)" }}>
-                  {install.phase === "verify"
-                    ? "Verifying download…"
-                    : install.phase === "cancelling"
-                      ? "Stopping download…"
-                      : `Downloading${amount ? ` — ${amount}` : "…"}`}
-                </span>
-                {install.total ? (
-                  <div role="progressbar" aria-label="Update download"
-                       aria-valuemin={0} aria-valuemax={100}
-                       aria-valuenow={install.phase === "verify" ? 100 : pct}
-                       style={{ width: 220, height: 6, overflow: "hidden",
-                                borderRadius: RADIUS.pill,
-                                background: "var(--bg3)" }}>
-                    <div style={{
-                      width: `${install.phase === "verify" ? 100 : pct}%`,
-                      height: "100%", borderRadius: RADIUS.pill,
-                      background: "var(--accent)",
-                      transition: `width ${MOTION.state}`,
-                    }} />
-                  </div>
-                ) : (
-                  <Bar w={220} h={6} />
-                )}
-                {/* The server checks the cancel latch at every chunk and once
-                    more immediately before publishing the verified exe. */}
-                <Btn onClick={onCancel} disabled={install.phase === "cancelling"}>
-                  {install.phase === "cancelling" ? "Stopping…" : "Cancel"}
-                </Btn>
-              </>
-            )}
-
-            {install.phase === "ready" && (
-              <>
-                <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
-                  Download verified.
-                </span>
-                <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
-                               lineHeight: 1.5, maxWidth: 320 }}>
-                  The Windows installer opens next. Pixal will close;
-                  Setup will reopen it when you finish.
-                </span>
-                {install.error && (
-                  <span style={{ fontSize: TYPE.label, color: "var(--error)",
-                                 lineHeight: 1.5, maxWidth: 320 }}>
-                    {install.error}
-                  </span>
-                )}
-                <Btn primary onClick={onLaunch}>Open installer</Btn>
-              </>
-            )}
-            {install.phase === "launching" && (
-              <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
-                Opening installer…
-              </span>
-            )}
-            {install.phase === "handoff" && (
-              <span style={{ fontSize: TYPE.label, color: "var(--textSec)" }}>
-                Installer opened. Pixal is closing…
-              </span>
-            )}
-            {install.phase === "error" && (
-              <>
-                <span style={{ fontSize: TYPE.label, color: "var(--error)",
-                               lineHeight: 1.5, maxWidth: 320 }}>
-                  {install.error || "Update could not continue."}
-                </span>
-                <Btn onClick={onBegin}>Try again</Btn>
-              </>
-            )}
-            {install.phase === "cancelled" && (
-              <>
-                <span style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>
-                  Download cancelled.
-                </span>
-                <Btn onClick={onBegin}>Download again</Btn>
-              </>
-            )}
-            <span style={{ fontSize: TYPE.label, color: "var(--textTer)",
-                           lineHeight: 1.5, maxWidth: 320 }}>
-              Updating replaces only Pixal's own modules — your recipes,
-              characters, styles, settings and history stay untouched.
-            </span>
-          </>
-        )}
-      </>
-    ) : (
-      <Bar w={150} h={11} />
-    )}
-  </div>
-);
 
 export const SettingsMenu = ({ onClose, docked, phone }) => {
   const store = useStore();
@@ -816,14 +458,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   const [roots, setRoots] = useState([]);
   const [extraRoots, setExtraRoots] = useState([]);
   const [newRoot, setNewRoot] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState({});
   const [note, setNote] = useState(null);
   const [upd, setUpd] = useState(null);
-  const [updInstall, setUpdInstall] = useState({
-    phase: "idle", got: 0, total: null, error: null,
-  });
   const settingsBodyRef = useRef(null);
-  const [aboutUpdateHost, setAboutUpdateHost] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState("");
   // The DLSS runtime seat (Jesse, 2026-09-01): Pixal can neither ship nor
   // fetch the DLL (no legal source exists until NVIDIA releases DLSS 5),
   // so the row offers the next best thing - pick your own copy and the
@@ -868,24 +508,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     try { window.localStorage.setItem(SETTINGS_TAB_KEY, id); }
     catch { /* private mode / storage disabled */ }
   };
-  useLayoutEffect(() => {
-    if (tab !== "about") return undefined;
-    // The frozen About composition's second child is 9.24a's reserved update
-    // slot. A portal lets 9.24b fill that slot while keeping brief 10.0's
-    // byte-identical region intact.
-    const about = settingsBodyRef.current?.lastElementChild;
-    const host = about?.children?.[1];
-    if (!host) return undefined;
-    host.classList.add("px-about-update-host");
-    setAboutUpdateHost(host);
-    return () => {
-      host.classList.remove("px-about-update-host");
-      setAboutUpdateHost((current) => current === host ? null : current);
-    };
-  }, [tab]);
-  // The header search (brief 10.0): filters this tab's rows and sections,
-  // client-side only - a keystroke never writes config. "/" focuses the
-  // field from anywhere but another text field; Escape in the field clears.
+  // Global settings search stays local. "/" focuses it unless the user is
+  // already typing in an input; SettingsWorkspace handles results and Escape.
   const [query, setQuery] = useState("");
   const searchRef = useRef(null);
   useEffect(() => {
@@ -900,7 +524,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const q = query.trim().toLowerCase();
 
   // One payload, applied the same way whether it came off the wire or out
   // of the module cache below the component's own scope (settingsCache).
@@ -961,81 +584,23 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   // surfaces nothing at all - never a note, never a red state. 9.17c: the
   // catch still resolves the slot - { ok: false } renders the same nothing,
   // and the ghost is not left shimmering over a check that is done.
+  //
+  // Advisory is now ALL it is. 9.24b's download-and-open-the-installer control
+  // was removed 2026-09-04: handing the user a wizard meant killing the
+  // sidecar AND ComfyUI before the install had begun, so a cancelled or failed
+  // wizard left a dead studio and a manual relaunch (and it always targeted
+  // {localappdata}\Programs\Pixal, never the root actually running). The About
+  // slot names the release and links to it. Nothing here starts an install
+  // until an update can finish one and bring Pixal back by itself.
+  // /api/update/{download,cancel,launch} still exist server-side, unreferenced.
   useEffect(() => {
     fetch("/api/update-check").then((r) => r.json()).then(setUpd)
       .catch(() => setUpd({ ok: false }));
   }, []);
 
-  // 9.24b shares the same SSE stream as render and model-fetch progress. The
-  // server is the authority for every phase: only its verified `ready` event
-  // enables the handoff button, never the completion of the fetch request.
-  useEffect(() => subscribe((ev) => {
-    if (ev.type !== "update_fetch") return;
-    setUpdInstall((current) => ({
-      phase: ev.cancelled ? "cancelled"
-        : ev.error ? "error"
-          : ev.done ? "ready"
-            : ev.phase || current.phase,
-      got: ev.got ?? current.got,
-      total: ev.total ?? current.total,
-      error: ev.error || null,
-    }));
-  }), []);
-
-  const beginUpdate = async () => {
-    setUpdInstall({ phase: "download", got: 0, total: null, error: null });
-    try {
-      const response = await fetch("/api/update/download", { method: "POST" });
-      const body = await response.json();
-      if (!body.ok) {
-        setUpdInstall((current) => ({ ...current, phase: "error",
-                                      error: body.error || "download could not start" }));
-      }
-    } catch (error) {
-      setUpdInstall({ phase: "error", got: 0, total: null,
-                      error: error.message });
-    }
-  };
-
-  const cancelUpdate = async () => {
-    setUpdInstall((current) => ({ ...current, phase: "cancelling" }));
-    try {
-      await fetch("/api/update/cancel", { method: "POST" });
-      setUpdInstall({ phase: "cancelled", got: 0, total: null, error: null });
-    } catch (error) {
-      setUpdInstall((current) => ({ ...current, phase: "error",
-                                    error: error.message }));
-    }
-  };
-
-  const launchUpdate = async () => {
-    setUpdInstall((current) => ({ ...current, phase: "launching", error: null }));
-    try {
-      const response = await fetch("/api/update/launch", { method: "POST" });
-      const body = await response.json();
-      if (body.ok) {
-        setUpdInstall((current) => ({ ...current, phase: "handoff" }));
-      } else {
-        setUpdInstall((current) => ({ ...current, phase: "ready",
-                                      error: body.error || "installer could not open" }));
-      }
-    } catch (error) {
-      setUpdInstall((current) => ({ ...current, phase: "ready",
-                                    error: error.message }));
-    }
-  };
-  const updTransferring = ["download", "verify", "cancelling"]
-    .includes(updInstall.phase);
-  const updPct = updInstall.total
-    ? Math.min(100, Math.round((updInstall.got / updInstall.total) * 100))
-    : 0;
-  const updAmount = updInstall.total
-    ? `${(updInstall.got / 1e6).toFixed(1)} of ${(updInstall.total / 1e6).toFixed(1)} MB`
-    : "";
-
   // Auto-apply: every control saves the moment it changes - no Save button.
   const apply = async (partial, okText = "saved") => {
-    setBusy(true); setNote(null);
+    setActivity("Saving changes…"); setBusy(true); setNote(null);
     try {
       const r = await fetch("/api/settings", { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(partial) });
@@ -1122,7 +687,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
   };
 
   const test = async () => {
-    setBusy(true); setNote(null);
+    setActivity("Testing connection…"); setBusy(true); setNote(null);
     try {
       const r = await fetch("/api/settings/test", { method: "POST" });
       const d = await r.json();
@@ -1242,52 +807,22 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
     else if (key !== "other") familyGroups.push({ key, rows: null, names: {} });
   }
 
-  // `panel` is the whole content, shared by both presentations below.
-  const panel = (
-    <SettingsQuery.Provider value={q}>
-      {/* Header + tabs stay put; only the tab's content scrolls. */}
-      <div style={{ padding: `${SPACE[16]}px ${SPACE[20]}px 0`, display: "flex",
-                    flexDirection: "column", gap: SPACE[10] }}>
-        <div style={{ display: "flex", alignItems: "center", gap: SPACE[10] }}>
-          <span style={{ fontSize: TYPE.h3, fontWeight: W.heading }}>Settings</span>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center",
-                        gap: 6, height: 26, width: 180, padding: "0 10px",
-                        background: "var(--bg2)", border: "1px solid var(--border)",
-                        borderRadius: RADIUS.input }}>
-            <input ref={searchRef} value={query} aria-label="Search settings"
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search settings" spellCheck={false}
-              autoComplete="off" autoCorrect="off" autoCapitalize="off"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); }
-              }}
-              style={{ flex: 1, minWidth: 0, padding: 0, background: "transparent",
-                       border: "none", outline: "none", color: "var(--text)",
-                       fontFamily: FONT, fontSize: TYPE.label }} />
-            {!query && (
-              <kbd aria-hidden="true" style={{ fontFamily: MONO, fontSize: 10,
-                       fontWeight: W.label, color: "var(--textMut)",
-                       border: "1px solid var(--border)", borderRadius: 4,
-                       padding: "0 4px" }}>/</kbd>
-            )}
-          </div>
-          <button type="button" onClick={onClose} title="close"
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center",
-                     width: 30, height: 30, background: "var(--bg2)", border: "1px solid var(--border)",
-                     borderRadius: RADIUS.pill, color: "var(--textTer)", cursor: "pointer" }}>
-            <X size={14} weight="bold" />
-          </button>
-        </div>
-        <TabStrip tabs={TABS} value={tab} onChange={pickTab} />
-      </div>
-      <div ref={settingsBodyRef} className="px-scroll px-set" style={{
-        flex: 1, minHeight: 0, overflowY: "auto", padding: SPACE[20],
-        display: "flex", flexDirection: "column", gap: SPACE[32],
-      }}>
+  for (const group of familyGroups) {
+    const metadata = (group.rows || []).map((rel) => libMeta[rel] || {});
+    group.size = metadata.reduce((sum, model) => sum + (model.size || 0), 0) / 1e9;
+    group.lanes = (metadata[0]?.compatible_recipes || [])
+      .filter((lane) => metadata.every((model) => (model.compatible_recipes || []).includes(lane)))
+      .map(prettyTemplate);
+  }
+
+  // Evaluate all page descriptions for search; only the active page mounts.
+  // Existing setting handlers and their loading gates remain the source of truth.
+  const page = (tab) => (
+    <>
         {tab === "general" && (<>
-        <GroupLabel>The app</GroupLabel>
+        <GroupLabel>Preferences</GroupLabel>
         <Rows>
-          <Field label="Appearance" hint="System follows Windows.">
+          <Field label={<>Appearance <InfoTip text="System follows Windows' own light/dark setting and changes with it." /></>}>
             <SegmentedControl variant="pill" ariaLabel="Appearance" value={store.themePref}
               onChange={(v) => store.setTheme(v)}
               options={[
@@ -1296,8 +831,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 { v: "system", label: "System", Icon: DesktopTower },
               ]} />
           </Field>
-          <Field label={<>Explicit content <InfoTip text="Uncensored writing needs a local abliterated model — most APIs refuse NSFW." /></>}
-                 hint="Auto reads your prompt · Never keeps everyone clothed.">
+          <Field label={<>Explicit content <InfoTip text="Auto reads your prompt and follows it; Allow never holds back; Never keeps everyone clothed. Uncensored writing needs a local abliterated model — most APIs refuse NSFW." /></>}>
             {cfg ? (
               <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Explicit content" value={explicit}
                 onChange={(id) => {
@@ -1319,26 +853,38 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
 
         <GroupLabel>This machine</GroupLabel>
         <Section title={<>Compute <InfoTip text="The ComfyUI box that renders. Another rig's address borrows its GPU. Restart is for the state no endpoint can fix." /></>}>
-          <input style={inputStyle} value={comfyUrl}
-                 autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-                 onChange={(e) => setComfyUrl(e.target.value)}
-                 onBlur={() => {
-                   if (cfg && comfyUrl.trim() !== (cfg.comfy_url || "")) {
-                     setCfg({ ...cfg, comfy_url: comfyUrl.trim() });
-                     apply({ comfy_url: comfyUrl.trim() }, "compute applied");
-                   }
-                 }}
-                 placeholder="http://127.0.0.1:8188 (this PC)" />
-          {/* Restart is for the state no endpoint can fix. */}
-          <div style={{ display: "flex", gap: SPACE[8], flexWrap: "wrap" }}>
-            <Btn disabled={comfyBusy} onClick={() => comfyAction(
+          {/* A full-width field and a button floating under it were the only
+              two things in this section that were not rows, and they read as
+              debris beside four aligned ones (Jesse, 2026-09-04: "also looks
+              terrible … rethink the layout"). One grammar now: label and its
+              one fact left, one control on the right rail. */}
+          <Rows>
+          {/* No hint: a 260px field on the rail leaves the label lane too
+              narrow to hold one without clipping it to "The…", and Compute's
+              own tip already says what the address is. */}
+          <Field label="Address">
+            <input style={{ ...inputStyle, height: HEIGHT.rail, width: 260,
+                            fontSize: TYPE.label, padding: `0 ${SPACE[12]}px` }}
+                   value={comfyUrl}
+                   aria-label="ComfyUI address"
+                   autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                   onChange={(e) => setComfyUrl(e.target.value)}
+                   onBlur={() => {
+                     if (cfg && comfyUrl.trim() !== (cfg.comfy_url || "")) {
+                       setCfg({ ...cfg, comfy_url: comfyUrl.trim() });
+                       apply({ comfy_url: comfyUrl.trim() }, "compute applied");
+                     }
+                   }}
+                   placeholder="http://127.0.0.1:8188 (this PC)" />
+          </Field>
+          <Field label="ComfyUI">
+            <Btn size="sm" disabled={comfyBusy} onClick={() => comfyAction(
               "/api/comfy/restart", "restarting ComfyUI",
               "ComfyUI restarting - the boot meter takes it from here")}>
               Restart
             </Btn>
-          </div>
-          <Rows>
-          <Field label={<>When ComfyUI boots <InfoTip text="ComfyUI likes to pop its node editor in a browser tab when it starts. quiet keeps that from interrupting; the editor is always at the compute address above." /></>}>
+          </Field>
+          <Field label={<>On startup <InfoTip text="ComfyUI likes to pop its node editor in a browser tab when it starts. Quiet keeps that from interrupting; the editor is always at the compute address above." /></>}>
             {cfg ? (
               <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="When ComfyUI boots" value={comfyEditor}
                 onChange={(on) => {
@@ -1348,12 +894,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                            : "quiet boots applied");
                 }}
                 options={[{ v: false, label: "Quiet" },
-                          { v: true, label: "Open the graph editor" }]} />
+                          { v: true, label: "Open editor" }]} />
             ) : (
               <SegGhost segments={2} />
             )}
           </Field>
-          <Field label={<>ComfyUI’s console window <InfoTip text="meters wrap the launcher in a boot dashboard and keep an errors-only log at logs\comfy-errors.log. plain console is the raw ComfyUI output. Either way, closing that window stops ComfyUI." /></>}>
+          <Field label={<>Console window <InfoTip text="Meters wrap the launcher in a boot dashboard and keep an errors-only log at logs\comfy-errors.log. Plain console is the raw ComfyUI output. Either way, closing that window stops ComfyUI." /></>}>
             {cfg ? (
               <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="ComfyUI console window" value={comfyConsole}
                 onChange={(id) => {
@@ -1371,43 +917,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Rows>
         </Section>
 
-        <Section title={<>Clean up <InfoTip text="Nothing hands memory back until asked. Each button says what it freed. A full card is a slow render." /></>}>
-          {/* Freeing is deliberately manual: ComfyUI caches models on purpose,
-              and the 21GB video stack staying resident is exactly why a second
-              render is fast. These are for when the card needs the room back. */}
-          <div style={{ display: "flex", gap: SPACE[8], flexWrap: "wrap", alignItems: "center" }}>
-            <Btn disabled={comfyBusy || renderBusy}
-                 title={renderBusy ? "wait for the render" : undefined}
-                 onClick={() => freeAction("/api/comfy/free", "freeing VRAM", "VRAM")}>
-              Free VRAM
-            </Btn>
-            {/* The one flush the VRAM button deliberately will not do. It is
-                here because a chat model with a grown KV cache was measured at
-                7.2GB, and MiniMax H3's DiT alone wants ~20GB of the card. */}
-            <Btn disabled={comfyBusy || renderBusy}
-                 title={renderBusy ? "wait for the render" : undefined}
-                 onClick={() => freeAction("/api/llm/free", "freeing the brain", "Brain")}>
-              Free brain
-            </Btn>
-            <Btn disabled={comfyBusy || renderBusy}
-                 title={renderBusy ? "wait for the render" : undefined}
-                 onClick={() => freeAction("/api/ram/free", "freeing RAM", "RAM")}>
-              Free RAM
-            </Btn>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE[6] }}>
-              <Btn disabled={comfyBusy || renderBusy}
-                   title={renderBusy ? "wait for the render" : undefined}
-                   onClick={() => freeAction("/api/desktop/reset", "resetting the desktop", "Desktop")}>
-                Reset desktop
-              </Btn>
-              <InfoTip text="Restarts Explorer and the Windows compositor, which hoard video memory. One screen flash, Explorer windows close, admin prompt; an idle ComfyUI may restart." />
-            </span>
-            <Btn primary disabled={comfyBusy || renderBusy}
-                 title={renderBusy ? "wait for the render" : undefined}
-                 onClick={freeAll}>
-              Free all
-            </Btn>
-          </div>
+        <Section title={<>Memory <InfoTip text="Pixal releases idle models automatically when a render needs room. The manual controls below release cached weights immediately; the next use reloads them." /></>}>
+          <MemoryOverview gpu={store.gpu} />
           <Rows>
           <Field label={<>Brain idles after <InfoTip text="A warmed brain holds ~8 GB. Idle, it unloads; the next message wakes it in seconds." /></>}>
             {cfg ? (
@@ -1426,10 +937,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <SegGhost segments={4} />
             )}
           </Field>
-          </Rows>
-        </Section>
-
-        <Rows cont>
           <Field label={<>VRAM profile <InfoTip text="What this machine can hold resident. Advisory: pickers flag what a tier holds poorly — the VRAM butler still manages the card at render time." /></>}
                  hint={!cfg ? (
                    /* saying the card is unread before the fetch landed was
@@ -1458,7 +965,51 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
               <SegGhost segments={4} />
             )}
           </Field>
-        </Rows>
+          </Rows>
+        </Section>
+
+        <Section title="Maintenance" gloss="Release cached models and memory.">
+          <Rows>
+          <Field label="Video memory">
+            <Btn size="sm" disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/comfy/free", "freeing VRAM", "VRAM")}>
+              Free
+            </Btn>
+          </Field>
+          {/* The one flush the VRAM row deliberately will not do. It is
+              here because a chat model with a grown KV cache was measured at
+              7.2GB, and MiniMax H3's DiT alone wants ~20GB of the card. */}
+          <Field label="Chat brain">
+            <Btn size="sm" disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/llm/free", "freeing the brain", "Brain")}>
+              Free
+            </Btn>
+          </Field>
+          <Field label="System RAM">
+            <Btn size="sm" disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/ram/free", "freeing RAM", "RAM")}>
+              Free
+            </Btn>
+          </Field>
+          <Field label={<>Desktop <InfoTip text="Restarts Explorer and the Windows compositor, which hoard video memory. One screen flash, Explorer windows close, admin prompt; an idle ComfyUI may restart." /></>}>
+            <Btn size="sm" disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={() => freeAction("/api/desktop/reset", "resetting the desktop", "Desktop")}>
+              Reset
+            </Btn>
+          </Field>
+          <Field label="Everything">
+            <Btn size="sm" disabled={comfyBusy || renderBusy}
+                 title={renderBusy ? "wait for the render" : undefined}
+                 onClick={freeAll}>
+              Free all
+            </Btn>
+          </Field>
+          </Rows>
+        </Section>
 
         <Section title="Model folders"
                  gloss={cfg ? (
@@ -1472,8 +1023,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                                     fontFamily: MONO, fontSize: 10, color: "var(--textSec)" }}>
                 <FolderOpen size={12} weight="duotone" style={{ color: "var(--textTer)",
                                                                flexShrink: 0 }} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis",
-                               whiteSpace: "nowrap" }}>{r}</span>
+                <span title={r} style={{ overflowWrap: "anywhere", minWidth: 0 }}>{r}</span>
               </div>
             ))}
             {extraRoots.map((r) => (
@@ -1481,8 +1031,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                                     fontFamily: MONO, fontSize: 10, color: "var(--text)" }}>
                 <FolderOpen size={12} weight="duotone" style={{ color: "var(--accent)",
                                                                flexShrink: 0 }} />
-                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis",
-                               whiteSpace: "nowrap" }}>{r}</span>
+                <span title={r} style={{ flex: 1, overflowWrap: "anywhere", minWidth: 0 }}>{r}</span>
                 <button type="button" onClick={() => {
                     const next = extraRoots.filter((x) => x !== r);
                     setExtraRoots(next);
@@ -1504,38 +1053,32 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </>)}
           <div style={{ display: "flex", gap: SPACE[6], alignItems: "center" }}>
             <input style={{ ...inputStyle, fontFamily: MONO, fontSize: 10 }} value={newRoot}
+                   aria-label="Add a model folder"
                    onChange={(e) => setNewRoot(e.target.value)}
                    placeholder="add a folder, e.g. D:\models"
                    onKeyDown={(e) => e.key === "Enter" && addRoot()} />
-            <button type="button" onClick={addRoot} title="add folder"
-              style={{
-                width: 38, height: 38, flexShrink: 0, cursor: "pointer",
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                background: "var(--bg2)", border: "1px solid var(--border)",
-                borderRadius: RADIUS.pill, color: "var(--textSec)",
-                transition: `border-color ${MOTION.hover}, color ${MOTION.hover}`,
-              }}>
-              <Plus size={14} weight="bold" />
-            </button>
+            <Btn iconOnly title="Add folder" onClick={addRoot}
+                 icon={<Plus size={14} weight="bold" />}></Btn>
           </div>
-          <div style={{ display: "flex" }}>
-            <Btn onClick={async () => {
-              setNote(null); setBusy(true);
+          <Rows>
+          <Field label="Rescan">
+            <Btn size="sm" onClick={async () => {
+              setActivity("Rescanning folders…"); setNote(null); setBusy(true);
               try {
                 await fetch("/api/settings/rescan", { method: "POST" });
                 setNote({ ok: true, text: "rescanning - watch the status row" });
               } catch (e) { setNote({ ok: false, text: e.message }); }
               setBusy(false);
-            }} disabled={busy}>Rescan folders</Btn>
-          </div>
+            }} disabled={busy}>Rescan</Btn>
+          </Field>
+          </Rows>
         </Section>
         </>)}
 
         {tab === "video" && (<>
         <GroupLabel>Defaults</GroupLabel>
                 <Rows>
-<Field label={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}
-                 hint="Which engine the popup opens on.">
+<Field label={<>Video engine <InfoTip text="The Animate popup still switches engines freely per clip — this only sets where it starts." /></>}>
           {videoCfg ? (
             <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Default video engine"
               value={videoCfg.default_engine || ""}
@@ -1558,12 +1101,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           ) : (
             /* the defect that started the brief: one AUTO segment becoming
                LTX / Minimax and pulling the page down. The ghost is the
-               40px capsule whatever the engine count turns out to be */
+               HEIGHT.rail capsule whatever the engine count turns out to be */
             <SegGhost segments={3} />
           )}
         </Field>
-        <Field label={<>Video model <InfoTip text="The popup still switches models freely per clip — this only sets the default." /></>}
-                 hint="Which model the popup opens on.">
+        <Field label={<>Video model <InfoTip text="The popup still switches models freely per clip — this only sets the default." /></>}>
           {videoCfg ? (
             <ScrollPicker className="px-ghost-in"
               value={videoCfg.default_model || ""}
@@ -1585,8 +1127,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <PickerGhost />
           )}
         </Field>
-        <Field label={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}
-                 hint="How H3 briefs write speech.">
+        <Field label={<>Dialogue format <InfoTip text="How spoken lines are written in H3 briefs. quotes is the default — (S1) says “…”, the MiniMax-H3 #76 form; it won the same-seed A/B with no opening blip and no cue read aloud. tags is MiniMax's trained (S1) says: <d>[English] …</d>, which some seeds open with a half-second of gibberish." /></>}>
           {videoCfg ? (
             <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="Dialogue format"
               value={videoCfg.h3_dialogue_tags || "quotes"}
@@ -1606,7 +1147,62 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Field>
         </Rows>
-        <GroupLabel>Finishing</GroupLabel>
+        <Section title="MiniMax H3 render defaults">
+        <Rows>
+          <Field label={<>H3 upscale <InfoTip text="Doubles the canvas by re-sampling H3’s latent inside the render, at roughly 3× the render time. It cannot run on a finished clip. This sets the default; Animate can override it per clip. Needs the MMH3 Ultimate Upscale pack and 659 MB weights." /></>}>
+            {/* The MiniMax upscaler re-samples the render's own latent, so it
+                can only live on the render itself (9.31) - the per-clip row in
+                the Animate popup's fine-tune fold. This is the standing default
+                that row opens on, the same contract as Video model above. 10.0:
+                an on/off default is a pixal toggle, not a two-option pill. */}
+            {videoCfg ? (
+              <Switch className="px-ghost-in" label="H3 2× upscale"
+                on={videoCfg.upscale_2x}
+                disabled={!videoCfg.upscale_2x_available}
+                title={videoCfg.upscale_2x_available
+                  ? "Twice the size, inside the render — roughly 3× the render time."
+                  : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."}
+                onChange={(on) => {
+                  setVideoCfg((v) => ({ ...(v || {}), upscale_2x: on }));
+                  apply({ video: { upscale_2x: on } },
+                        on ? "2× default applied" : "2× default off");
+                }} />
+            ) : (
+              <SwitchGhost />
+            )}
+          </Field>
+          <Field label={<>H3 resolution <InfoTip text="The canvas H3 renders at natively — detail comes from the model, not an upscaler. A bigger canvas re-frames the shot (composition can shift) and multiplies the render time: a 10 s Max clip is ~20 min on a 5090 and fills the card. H3 upscale stays the budget option — render small, then upscale. The Animate popup still decides per clip; this only sets the default." /></>}>
+            {/* 9.55: same contract as Video model above - the standing default
+                the Animate popup's Resolution row opens on. The tier list rides
+                the settings payload (h3_resolutions); the inline fallback only
+                covers an out-of-date server. */}
+            {videoCfg ? (
+              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="H3 resolution"
+                value={videoCfg.h3_resolution || "standard"}
+                onChange={(id) => {
+                  setVideoCfg((v) => ({ ...(v || {}), h3_resolution: id }));
+                  const label = ((videoCfg.h3_resolutions || [])
+                    .find((r) => r.id === id) || {}).label || id;
+                  apply({ video: { h3_resolution: id } },
+                        `${label} default applied`);
+                }}
+                options={(videoCfg.h3_resolutions || [
+                  { id: "standard", label: "Standard", mp: 1.0 },
+                  { id: "high", label: "High", mp: 1.8 },
+                  { id: "max", label: "Max", mp: 3.1 },
+                ]).map((r) => ({
+                  v: r.id, label: r.label,
+                  title: r.id === "standard"
+                    ? `${r.mp} MP — the fast default.`
+                    : `${r.mp} MP — ~${Math.round(r.mp)}x the render time.`,
+                }))} />
+            ) : (
+              <SegGhost segments={3} />
+            )}
+          </Field>
+        </Rows>
+        </Section>
+        <GroupLabel>Post processing</GroupLabel>
         <Section title={<>Upscaler <InfoTip text="The upscale button on finished clips." /></>}>
           {/* Two different things, not one five-step ladder. RTX Super
               Resolution is NVIDIA's image-space filter and its Low..Ultra are
@@ -1665,7 +1261,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 fps + 2x land in one graph. The tip carries the whole story;
                 the control itself states the rate (tip XOR hint). */}
             {!vidLtx && upscale.video_available && (
-              <Field className="px-ghost-in" label={<>Frame rate <InfoTip size={12} text="RIFE interpolation, in the same pass as the upscale. Doubles or more the frames, audio kept. Lips can ghost above 2×. LTX 2.5 ignores it — that mode re-renders at the clip's own rate." /></>}>
+              <Field className="px-ghost-in" label={<>Frame rate <InfoTip text="RIFE interpolation, in the same pass as the upscale. Doubles or more the frames, audio kept. Lips can ghost above 2×. LTX 2.5 ignores it — that mode re-renders at the clip's own rate." /></>}>
                 <SegmentedControl variant="pill" ariaLabel="Clip frame rate"
                   value={String(upscale.video_fps || 0)}
                   onChange={(id) => {
@@ -1698,70 +1294,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             </Rows>
           )}
         </Section>
-        <Rows cont>
-          <Field label={<>H3 <Chip>2×</Chip> upscale <InfoTip text="It runs inside the render — it re-samples the render's own latent, so it can never be a button on a finished clip — and costs roughly 3× the render time." /></>}
-                 hint={videoCfg && !videoCfg.upscale_2x_available
-                   ? "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."
-                   : "The popup still decides per clip — this sets the default."}>
-            {/* The MiniMax upscaler re-samples the render's own latent, so it
-                can only live on the render itself (9.31) - the per-clip row in
-                the Animate popup's fine-tune fold. This is the standing default
-                that row opens on, the same contract as Video model above. 10.0:
-                an on/off default is a pixal toggle, not a two-option pill. */}
-            {videoCfg ? (
-              <Switch className="px-ghost-in" label="H3 2× upscale"
-                on={videoCfg.upscale_2x}
-                disabled={!videoCfg.upscale_2x_available}
-                title={videoCfg.upscale_2x_available
-                  ? "Twice the size, inside the render — roughly 3× the render time."
-                  : "Needs the MMH3 Ultimate Upscale pack and 659 MB weights."}
-                onChange={(on) => {
-                  setVideoCfg((v) => ({ ...(v || {}), upscale_2x: on }));
-                  apply({ video: { upscale_2x: on } },
-                        on ? "2× default applied" : "2× default off");
-                }} />
-            ) : (
-              <SwitchGhost />
-            )}
-          </Field>
-          <Field label={<>H3 resolution <InfoTip text="The canvas H3 renders at natively — detail comes from the model, not an upscaler. A bigger canvas re-frames the shot (composition can shift) and multiplies the render time: a 10 s Max clip is ~20 min on a 5090 and fills the card. The 2× row stays the budget option — render small, then upscale." /></>}
-                 hint="The popup still decides per clip — this sets the default.">
-            {/* 9.55: same contract as Video model above - the standing default
-                the Animate popup's Resolution row opens on. The tier list rides
-                the settings payload (h3_resolutions); the inline fallback only
-                covers an out-of-date server. */}
-            {videoCfg ? (
-              <SegmentedControl variant="pill" className="px-ghost-in" ariaLabel="H3 resolution"
-                value={videoCfg.h3_resolution || "standard"}
-                onChange={(id) => {
-                  setVideoCfg((v) => ({ ...(v || {}), h3_resolution: id }));
-                  const label = ((videoCfg.h3_resolutions || [])
-                    .find((r) => r.id === id) || {}).label || id;
-                  apply({ video: { h3_resolution: id } },
-                        `${label} default applied`);
-                }}
-                options={(videoCfg.h3_resolutions || [
-                  { id: "standard", label: "Standard", mp: 1.0 },
-                  { id: "high", label: "High", mp: 1.8 },
-                  { id: "max", label: "Max", mp: 3.1 },
-                ]).map((r) => ({
-                  v: r.id, label: r.label,
-                  title: r.id === "standard"
-                    ? `${r.mp} MP — the fast default.`
-                    : `${r.mp} MP — ~${Math.round(r.mp)}x the render time.`,
-                }))} />
-            ) : (
-              <SegGhost segments={3} />
-            )}
-          </Field>
-        </Rows>
         </>)}
 
         {tab === "image" && (<>
-        <GroupLabel>Model choices</GroupLabel>
+        <GroupLabel>Image decoding</GroupLabel>
         <Rows>
-          <Field label={<>Z-Image decoder <InfoTip text="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Applies to Z-Image renders only — the clear-anime profile keeps its own matched VAE either way." /></>}
-                 hint="Sharper drop-in; can over-sharpen on one pass.">
+          <Field label={<>Z-Image decoder <InfoTip text="Z-Image and Flux share a VAE, so sharper drop-in decoders exist. Applies to Z-Image renders only — the clear-anime profile keeps its own matched VAE either way." /></>}>
           {vae ? (
             <ScrollPicker className="px-ghost-in"
               value={vae.zimage || ""}
@@ -1778,12 +1316,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           )}
         </Field>
         </Rows>
-        <GroupLabel>Special decoders</GroupLabel>
+        <Section title="Special decoder">
         {/* One gate for the group: both rows land together or not at all. */}
         {vae ? (
         <Rows>
-          <Field className="px-ghost-in" label={<>Decoder <InfoTip maxWidth={320} text="Replaces the last step of a render, the VAE decode, with a drop-in decoder for the Wan 2.1 / Qwen-Image latent. The Wan 2.1 2× VAE (spacepxl) decodes twice the pixels straight from the sampler's latent — the decode is the upscale, one pass, nothing repainted. Needs the ComfyUI-VAE-Utils node pack. Off leaves every recipe on its own VAE." /></>}
-                 hint="Krea 2 stills by default.">
+          <Field className="px-ghost-in" label={<>Decoder <InfoTip text="Replaces the last step of a render, the VAE decode, with a drop-in decoder for the Wan 2.1 / Qwen-Image latent. The Wan 2.1 2× VAE (spacepxl) decodes twice the pixels straight from the sampler's latent — the decode is the upscale, one pass, nothing repainted. Needs the ComfyUI-VAE-Utils node pack. Off leaves every recipe on its own VAE." /></>}>
             <Picker hug label="Special decoder"
               value={vae.special || ""}
               placeholder="Off"
@@ -1801,8 +1338,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       id ? "special decoder applied" : "stock decoders restored");
               }} />
           </Field>
-          <Field className="px-ghost-in" label={<>Force compatible models <InfoTip text="Every lane whose VAE lives in the Wan 2.1 / Qwen-Image latent — Qwen Image, Anima, the edit and identity lanes — decodes through the special decoder too, not only the Krea 2 still recipes." /></>}
-                 hint="All Wan/Qwen-latent lanes, not only Krea 2.">
+          <Field className="px-ghost-in" label={<>Force compatible models <InfoTip text="Every lane whose VAE lives in the Wan 2.1 / Qwen-Image latent — Qwen Image, Anima, the edit and identity lanes — decodes through the special decoder too, not only the Krea 2 still recipes." /></>}>
             <Switch label="Force"
               on={!!vae.special_force}
               disabled={!vae.special}
@@ -1819,6 +1355,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           <Field label="Force compatible models"><SwitchGhost /></Field>
         </Rows>
         )}
+        </Section>
+        <GroupLabel>Model defaults</GroupLabel>
         <Section title={<>Edit model <InfoTip text="A painted mask routes the edit to the masked lane; no mask runs the whole-frame lane. Whole-frame releases differ in encoder node, not just weights — the graph switches on the filename, so any compatible generation works. Klein keeps skin texture and runs 4 steps; Qwen/FireRed are the Lightning-distilled lanes." /></>}>
           {/* Two named lanes (9.29): whole frame runs when there is no mask,
               masked area when a mask is painted. Until tonight the second one
@@ -1836,7 +1374,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           {editCfg ? (
             <Rows>
             <Field className="px-ghost-in"
-                   label={<>Whole frame <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}
+                   label={<>Whole frame <InfoTip text="An undistilled build runs ~20 steps and takes about five times longer." /></>}
                    hint={`Runs instruction edits. ${(editCfg.installed || []).length + (editCfg.inpaint_installed || []).length} whole-frame, ${(editCfg.inpaint_installed || []).length} masked compatible installed.`}>
               <Picker hug label="whole frame edit model"
                 value={editCfg.model || ""}
@@ -1852,7 +1390,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         name ? "edit model applied" : "recipe default restored");
                 }} />
             </Field>
-            <Field className="px-ghost-in" label={<>Masked area <InfoTip size={12} text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
+            <Field className="px-ghost-in" label={<>Masked area <InfoTip text="An undistilled build runs ~20 steps and takes about five times longer." /></>}>
               <Picker hug label="masked area edit model"
                 value={editCfg.inpaint_model || ""}
                 placeholder="recipe default"
@@ -1867,8 +1405,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 }} />
             </Field>
             <Field className="px-ghost-in"
-                   label={<>Inpaint color match <InfoTip size={12} text="The inpainted region can come back desaturated; this matches it to the source before compositing (mkl 0.95)." /></>}
-                   hint="Matches the redrawn area's color to the frame">
+                   label={<>Inpaint color match <InfoTip text="The inpainted region can come back desaturated; this matches it to the source before compositing (mkl 0.95)." /></>}>
               <Switch label="Inpaint color match"
                 on={!!editCfg.inpaint_color_match}
                 onChange={(on) => {
@@ -1880,7 +1417,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Rows>
           ) : (
             <Rows>
-            {/* the ghost IS the control's own box: the 24px value pill
+            {/* the ghost IS the control's own box: the HEIGHT.rail value pill
                 (PickerGhost), one per lane */}
             <Field label="Whole frame"
                    hint={<>Runs instruction edits. <ValueGhost w={128} /></>}>
@@ -1889,8 +1426,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             <Field label="Masked area">
               <PickerGhost />
             </Field>
-            <Field label="Inpaint color match"
-                   hint="Matches the redrawn area's color to the frame">
+            <Field label={<>Inpaint color match <InfoTip text="The inpainted region can come back desaturated; this matches it to the source before compositing." /></>}>
               <SwitchGhost />
             </Field>
             </Rows>
@@ -1941,7 +1477,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 segmented rows, so the two-row rule in
                 tests/test_settings_tabs.py does not apply; the move is
                 word-neutral against the panel's 150-word budget. */}
-            <Field className="px-ghost-in" label={<>Text encoder <InfoTip size={12} text="The 32B encoder is the one MiniMax H3 was measured with. A 4B or 8B encoder with a ClipProj projection stands in for it: several GB freed and a faster render, and likeness is slightly less reliable with it. Automatic is the 32B. An option appears only when its encoder and its projection are both on disk; a pick whose files leave runs Automatic until they return." /></>}>
+            <Field className="px-ghost-in" label={<>Text encoder <InfoTip text="The 32B encoder is the one MiniMax H3 was measured with. A 4B or 8B encoder with a ClipProj projection stands in for it: several GB freed and a faster render, and likeness is slightly less reliable with it. Automatic is the 32B. An option appears only when its encoder and its projection are both on disk; a pick whose files leave runs Automatic until they return." /></>}>
               <Picker hug label="Text encoder"
                 value={h3Cfg.text_encoder || ""}
                 placeholder="Automatic"
@@ -1955,7 +1491,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </Rows>
           ) : (
             <Rows>
-            {/* the edit pickers' ghost shape: the 24px value pill
+            {/* the edit pickers' ghost shape: the HEIGHT.rail value pill
                 (PickerGhost), one per lane, so nothing below moves on land */}
             <Field label="Reference model">
               <PickerGhost />
@@ -1993,40 +1529,22 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         seatDll(e.target.files && e.target.files[0]);
                         e.target.value = "";
                       }} />
-                    <button type="button" disabled={dllBusy}
+                    <Btn size="sm" disabled={dllBusy}
                       title="Copies your own nvngx_dlssnr.dll into the node's runtime folder, SHA-256 checked against the known 310.8.0.0 build."
-                      onClick={() => dllInputRef.current && dllInputRef.current.click()}
-                      style={{ height: 24, padding: "0 10px",
-                               background: "var(--bg3)",
-                               border: "1px solid var(--border)",
-                               borderRadius: RADIUS.pill, color: "var(--textSec)",
-                               fontFamily: FONT, fontSize: TYPE.label,
-                               fontWeight: W.nav,
-                               cursor: dllBusy ? "default" : "pointer" }}>
-                      {dllBusy ? "checking…" : "Add DLL"}
-                    </button>
+                      onClick={() => dllInputRef.current && dllInputRef.current.click()}>
+                      {dllBusy ? "Checking…" : "Add DLL"}
+                    </Btn>
                   </>
                 ) : null}
                 {stillCfg.dlss5 && stillCfg.dlss5_available ? (
                   <>
-                    <select value={stillCfg.dlss5_style ?? "default"}
-                      aria-label="DLSS 5 style"
-                      title="The re-render's grade."
-                      style={{ height: 24, padding: "0 8px",
-                               background: "var(--bg3)",
-                               border: "1px solid var(--border)",
-                               borderRadius: RADIUS.pill, color: "var(--text)",
-                               fontFamily: FONT, fontSize: TYPE.label,
-                               fontWeight: W.nav }}
-                      onChange={(e) => {
-                        const v = e.target.value;
+                    <Picker hug label="DLSS 5 style"
+                      value={stillCfg.dlss5_style ?? "default"}
+                      options={DLSS5_STYLES}
+                      onChange={(v) => {
                         setStillCfg((s) => ({ ...(s || {}), dlss5_style: v }));
                         apply({ still: { dlss5_style: v } }, "DLSS 5 style");
-                      }}>
-                      <option value="default">default</option>
-                      <option value="natural">natural</option>
-                      <option value="cinematic">cinematic</option>
-                    </select>
+                      }} />
                     {/* Tone, not intensity. The node declares an `intensity`
                         input and ignores it - 0.4, 1.0 and 2.0 render files
                         identical to the pixel - so that control was dead from
@@ -2044,7 +1562,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         tells a stranger nothing (Jesse, 2026-09-03). Tips are
                         outside the 150-word visible budget, so the rule lives
                         here rather than as a subline. */}
-                    <InfoTip size={12} text="Contrast and saturation of the DLSS 5 re-render, 0 to 2. Lower is punchier and more saturated, higher is flatter and cooler. There is no neutral value — it slides continuously, so every setting moves both. 1.5 is the default because taking both down slightly is what pulls the plastic sheen off skin, picked from a 14-arm sweep." />
                   </>
                 ) : null}
                 <Switch label="Nvidia DLSS 5"
@@ -2079,7 +1596,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       setStillCfg((s) => ({ ...(s || {}), film_grain_amount: v }));
                       apply({ still: { film_grain_amount: v } }, "film grain amount");
                     }} />
-                  <InfoTip size={12} text="How much grain, 0.1 to 8. It is strongest in the midtones the way negative film behaves, and seeded from the render so a re-render matches. 1.6 is the judged default; past about 3 it reads as noise rather than film." />
                   </>
                 ) : null}
                 <Switch label="Film grain"
@@ -2100,7 +1616,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 on the delivered frame, nothing to install. Label + tip,
                 no gloss and no hint - the budget sat at 149/150
                 (tests/test_settings_copy.py). */}
-            <Field className="px-ghost-in" label={<>Shine removal <InfoTip size={12} text="Lowers specular highlights on the face toward the tone around them — the shiny hotspots on foreheads, cheeks and noses. A face detector from ComfyUI's ultralytics folder keeps the pass inside the face, so arms, hands and chests keep their light; a frame with no face is left alone. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
+            <Field className="px-ghost-in" label={<>Shine removal <InfoTip text="Lowers specular highlights on the face toward the tone around them — the shiny hotspots on foreheads, cheeks and noses. A face detector from ComfyUI's ultralytics folder keeps the pass inside the face, so arms, hands and chests keep their light; a frame with no face is left alone. It only darkens, eyes and teeth fall outside the skin range, and it runs on the finished frame, before any upscale." /></>}>
               {/* 10.9: the strength dial rides inline like grain's amount -
                   only while the toggle is on, the same 34px beat. */}
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -2114,7 +1630,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                       setStillCfg((s) => ({ ...(s || {}), de_shine_strength: v }));
                       apply({ still: { de_shine_strength: v } }, "shine removal strength");
                     }} />
-                  <InfoTip size={12} text="How far a highlight is pulled toward the skin around it, 0.1 to 1. At 1 the hotspot matches its surroundings completely, which can read flat; 0.85 is the judged default. It only ever darkens, and only inside a detected face." />
                   </>
                 ) : null}
                 <Switch label="Shine removal"
@@ -2243,8 +1758,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             terms"). The hint had the mirror fault: it described the 4x snap
             whichever way the control was set, so the state that needed
             explaining and the state that did not got the same sentence. */}
-        <Rows cont>
-          <Field label={<>VAE decode <InfoTip maxWidth={300} text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}
+        <Rows>
+          <Field label={<>VAE decode <InfoTip text="Identity Edit only — no other recipe reads this. Every render ends by decoding the sampler's latent into pixels; normally that is the Wan VAE, at the canvas you picked. PiD hands that last step to NVIDIA's pixel-diffusion decoder instead, which repaints the latent at 4× in a 4-step pass — so the canvas first snaps to a preset it accepts, and a 2:3 comes back 2688×4032. The identity photo still encodes through the real VAE either way; only the decode changes." /></>}
                  hint={pidCfg?.identity_finish
                    ? "Experimental: canvas snaps to 1024-class presets, returns 4×."
                    : "Wan VAE decode at your canvas."}>
@@ -2275,73 +1790,62 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             finally shows the user what they own and what each thing can and
             cannot do here; the choosing stays on the medium tabs. */}
         <GroupLabel>What you own</GroupLabel>
-        <Section title={<>The library <InfoTip text="A profile is what Pixal knows about a file — its family, its variant, and the lanes it can run — and a LoRA without one is skipped at render time rather than stacked blindly." /></>}
-                 gloss={store.options ? (
-                   <span className="px-ghost-in">{`${lib.length} models · ${libLoras.length} LoRAs · ${unprofiled} have no profile`}</span>
-                 ) : (
-                   /* the whole line is late, not just the numbers - a
-                      half-loaded count would read as a real total */
-                   <LineGhost w="70%" />
-                 )}>
-          {store.options && (
-            <span className="px-ghost-in" style={{ fontSize: TYPE.label,
-                         fontWeight: W.label, color: "var(--textTer)",
-                         lineHeight: 1.5 }}>
-              {detectedGb > 0
-                ? `The card reads as ${Math.round(detectedGb)} GB. `
-                : "Card not read yet — weights are disk size. "}
-              <InfoTip text="A build heavier than the card still runs — it offloads to system memory and crawls — so a row's weight is advisory, never a block." />
-            </span>
-          )}
-        </Section>
-        <Section title={<>By family <InfoTip text="A family is an architecture, not a brand — every build in one shares a text encoder and a VAE, so a LoRA trained for one fits them all." /></>}>
+        <div className="px-library-summary">
+          {[{ count: lib.length, label: "Models" }, { count: libLoras.length, label: "LoRAs" },
+            { count: unprofiled, label: "Without a profile" }].map((item) => (
+            <div key={item.label}><strong>{store.options ? item.count : <ValueGhost w={36} />}</strong>
+              <span>{item.label}{item.label === "Without a profile" && <InfoTip text="A profile identifies a model's family and compatible recipes. LoRAs without one are skipped at render time." />}</span>
+            </div>
+          ))}
+        </div>
+        <GroupLabel>Model families <InfoTip text="A family is an architecture, not a brand. Builds in a family share compatible recipes. A model larger than the card offloads to system memory and runs more slowly; size is advisory, never a block." /></GroupLabel>
           {store.options ? (
-            /* Nested px-set: the GroupLabel rhythm (48 above a heading, 12
-               below it) is a .px-set direct-child rule, and the fragments
-               keep the headings as direct children. */
-            <div className="px-set px-ghost-in" style={{ display: "flex",
-                          flexDirection: "column", gap: SPACE[32] }}>
+            <div className="px-library-families px-ghost-in">
               {familyGroups.map((g) => (
-                <Fragment key={g.key}>
-                  <GroupLabel badge={g.rows
-                    ? <Badge>Installed</Badge>
-                    : <Badge action>Install</Badge>}>
-                    {g.key === "other" ? "Other" : familyName(g.key)}
-                  </GroupLabel>
-                  {g.rows && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                g.rows ? <LibraryFamily key={g.key} title={g.key === "other" ? "Other" : familyName(g.key)}
+                    count={g.rows.length} size={g.size} lanes={g.lanes}
+                    open={!!libraryOpen[g.key]}
+                    onToggle={() => setLibraryOpen((state) => ({ ...state, [g.key]: !state[g.key] }))}
+                    onSearchReveal={() => setLibraryOpen((state) => ({ ...state, [g.key]: true }))}>
                       {g.rows.map((rel) => (
                         <LibraryRow key={rel} rel={rel} name={g.names[rel]}
-                          meta={libMeta[rel] || {}} detectedGb={detectedGb} />
+                          meta={libMeta[rel] || {}} detectedGb={detectedGb} sharedLanes={g.lanes} />
                       ))}
-                    </div>
-                  )}
-                </Fragment>
+                </LibraryFamily> : <div className="px-library-absent" key={g.key}>
+                  <span>{familyName(g.key)}</span><span>Not installed</span>
+                </div>
               ))}
               {libGroups.length === 0 && (
                 <div style={{ fontSize: TYPE.label, color: "var(--textTer)" }}>
-                  no models found in your model folders
+                  No models found in your model folders.
                 </div>
               )}
             </div>
           ) : (
             /* one row ghost - the list's height is the user's own data, so
-               no ghost can match it; one 30px row is the smallest honest
-               hold (same call as the brain tab's model list) */
-            <Bar h={30} />
+               no ghost can match it; one HEIGHT.row line is the smallest
+               honest hold (same call as the brain tab's model list) */
+            <Bar h={HEIGHT.row} />
           )}
-        </Section>
         </>)}
 
         {tab === "brain" && (<>
-        <GroupLabel>Chat</GroupLabel>
-        <Section title={<>Chat brain <InfoTip text="The AI you talk to — it writes the prompts and drives ComfyUI. Local runs entirely on this PC; Pixal starts and stops it for you." /></>}>
+        <GroupLabel>Chat brain</GroupLabel>
+        <Section>
           {/* API | Local swaps the whole panel below it — a control that
               changes what else is on the screen is navigation, so it wears
               the same tab strip as the top-level settings nav, not a pill
-              row (Jesse, 2026-08-22). The value controls stay segmented controls. */}
+              row (Jesse, 2026-08-22). The value controls stay segmented controls.
+              It is the FIRST thing under the break now, and it carries the
+              tip for whichever source is live (Jesse, 2026-09-04: "that tab
+              should be up at the top of that page … the info could be on
+              whatever tab is active"). A second heading between the break
+              and the strip only said the same word twice. */}
           {cfg ? (
             <TabStrip className="px-ghost-in" ariaLabel="Chat brain source"
+              info={mode === "local"
+                ? "Runs the model on this PC — Pixal starts and stops it for you, and nothing leaves the machine."
+                : "Talks to an OpenAI-compatible endpoint you name. The key and the address stay in this install's config."}
               tabs={[{ id: "api", label: "API" }, { id: "local", label: "Local" }]}
               value={mode}
               onChange={(m) => {
@@ -2373,7 +1877,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 defect. id = the gguf path the row posted; the VISION / NSFW
                 chips ride the description so the filter still finds them. */}
             {!cfg ? (
-              /* the ghost IS the control's own box: the 24px value
+              /* the ghost IS the control's own box: the HEIGHT.rail value
                  pill (PickerGhost), labelled so the search still finds it */
               <Rows>
                 <Field label="Model">
@@ -2417,8 +1921,8 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                           keep ? "model stays loaded - fast replies"
                                : "will unload after each reply - frees VRAM for renders");
                   }}
-                  options={[{ v: true, label: "Keep in memory" },
-                            { v: false, label: "Unload after reply" }]} />
+                  options={[{ v: true, label: "Keep loaded" },
+                            { v: false, label: "Unload" }]} />
               ) : (
                 <SegGhost segments={2} />
               )}
@@ -2453,25 +1957,34 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 no state of their own. */}
             <div style={{ display: "flex", gap: SPACE[6] }}>
               {QUICK_APIS.map((q) => (
-                <Btn key={q.label} onClick={() => {
+                <Btn size="sm" key={q.label} onClick={() => {
                   setBaseUrl(q.url);
                   if (q.model) setModel(q.model);
                   applyApi(q.url, q.model || model);
                 }}>{q.label}</Btn>
               ))}
             </div>
+            <Rows>
+            <Field label="Endpoint">
             <input style={inputStyle} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
+                   aria-label="API endpoint"
                    autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                    onBlur={() => apiDirty && applyApi()}
                    onKeyDown={(e) => e.key === "Enter" && apiDirty && applyApi()}
                    placeholder="server address (e.g. https://api.deepseek.com/v1)" />
+            </Field>
+            <Field label="Model name">
             <input style={inputStyle} value={model} onChange={(e) => setModel(e.target.value)}
+                   aria-label="API model name"
                    autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                    onBlur={() => apiDirty && applyApi()}
                    onKeyDown={(e) => e.key === "Enter" && apiDirty && applyApi()}
                    placeholder="model name (e.g. deepseek-chat)" />
+            </Field>
+            <Field label="API key">
             <div style={{ position: "relative" }}>
               <input style={{ ...inputStyle, paddingRight: 40 }}
+                     aria-label="API key"
                      type={showKey ? "text" : "password"} value={apiKey}
                      autoComplete="off" autoCorrect="off" autoCapitalize="off"
                      spellCheck={false}
@@ -2488,10 +2001,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                        ? `API key saved (ends …${cfg.llm.key_tail}) - blank keeps it`
                        : "API key (sk-…)"} />
               <button type="button" onClick={() => setShowKey(!showKey)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey}
                       title={showKey ? "hide key" : "show key"}
                       style={{
                         position: "absolute", right: 6, top: "50%",
-                        transform: "translateY(-50%)", width: 28, height: 28,
+                        transform: "translateY(-50%)", width: HEIGHT.rail, height: HEIGHT.rail,
                         display: "inline-flex", alignItems: "center", justifyContent: "center",
                         background: "none", border: "none", color: "var(--textTer)",
                         cursor: "pointer",
@@ -2499,15 +2014,19 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                 {showKey ? <EyeSlash size={14} weight="duotone" /> : <Eye size={14} weight="duotone" />}
               </button>
             </div>
+            </Field>
+            </Rows>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 5,
                           fontSize: TYPE.label, color: "var(--textTer)", lineHeight: 1.5 }}>
               <LockKey size={11} weight="duotone" style={{ flexShrink: 0, marginTop: 4 }} />
               Only your provider sees the key — never the PNG metadata.
             </div>
           </>)}
-          <div style={{ display: "flex" }}>
-            <Btn onClick={test} disabled={busy}>Test connection</Btn>
-          </div>
+          <Rows>
+            <Field label="Connection">
+            <Btn size="sm" onClick={test} disabled={busy}>Test</Btn>
+          </Field>
+          </Rows>
         </Section>
 
         {/* 9.60: whose rulebook the writer runs. Its own row, not one inside
@@ -2515,7 +2034,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             carrying an official file), so it rides the row's hint slot,
             ghosted until cfg lands. 10.0: an on/off default is a pixal
             toggle, not a two-option pill. */}
-        <Rows cont>
+        <Rows>
           <Field label={<>Official prompting <InfoTip text="Writes scenes the way the model's makers recommend — Krea 2's own expansion prompt on Krea 2 recipes. A family with no official file is unchanged either way. Off uses Pixal's photo-craft rules." /></>}
                  hint={officialGloss}>
             {cfg ? (
@@ -2572,12 +2091,6 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Rows>
         </>)}
 
-        {tab === "about" && aboutUpdateHost && createPortal(
-          <AboutUpdate upd={upd} install={updInstall}
-            transferring={updTransferring} pct={updPct} amount={updAmount}
-            onBegin={beginUpdate} onCancel={cancelUpdate} onLaunch={launchUpdate} />,
-          aboutUpdateHost
-        )}
         {tab === "about" && (
         /* The credits card. Centered hero composition — wordmark, the human
            behind it, the beer, the shoulders it stands on. Deliberately the
@@ -2761,42 +2274,15 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
           </div>
         </div>
         )}
-      </div>
-      {/* Every control auto-saves; this strip is where the save talks back.
-          Pinned under the scroll so feedback is visible from any tab.
-
-          It floats ABOVE the layout rather than joining it. As a flex child
-          it changed the card's height every time a save spoke, and both card
-          shapes are anchored from the bottom - so the whole panel jumped
-          under the cursor on every keystroke that saved. A toast that moves
-          the control you are still using is worse than no toast. Absolute,
-          so the resting panel is byte-identical to before and nothing ever
-          reflows; it covers the last row of the scroll for a moment, which
-          is what a toast is for. */}
-      <div aria-live="polite" style={{
-        position: "absolute", left: 0, right: 0, bottom: 0,
-        padding: `${SPACE[8]}px ${SPACE[20]}px`,
-        borderTop: `1px solid ${note ? "var(--border)" : "transparent"}`,
-        background: note ? "var(--surface)" : "transparent",
-        backdropFilter: note ? "blur(18px)" : "none",
-        WebkitBackdropFilter: note ? "blur(18px)" : "none",
-        opacity: note ? 1 : 0,
-        transition: `opacity ${MOTION.state}`,
-        pointerEvents: "none",
-      }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                       fontSize: TYPE.label,
-                       color: note && !note.ok ? "#E3A7B0" : "#7BB495" }}>
-          {note && note.ok && <Check size={11} weight="bold" />}
-          {note ? note.text : ""}
-        </span>
-      </div>
-    </SettingsQuery.Provider>
+    </>
   );
+
+  const panel = <SettingsWorkspace pages={TABS.map((item) => ({ ...item, content: page(item.id) }))}
+    tab={tab} onTab={pickTab} onClose={onClose} query={query} onQuery={setQuery}
+    searchRef={searchRef} bodyRef={settingsBodyRef} note={note} busy={busy} activity={activity} loaded={!!cfg} />;
 
   return (
     <>
-      <style>{CSS}</style>
       <SkeletonStyle />
       <OverlayMotionStyle />
       {/* The CARD owns the shape (overflow hidden); the SCROLL lives on an
@@ -2805,15 +2291,12 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
       {docked ? (
         // Docked: a sibling of the content surface — same card language, no
         // scrim, non-modal, so the theme toggle previews against live chat.
-        <div style={{
+        <div className="px-settings" style={{
           width: "100%", height: "100%",
-          // The save strip is absolute (see the note row); this is what it
-          // pins to in the docked shape. ModalShell's box is already fixed.
           position: "relative",
-          background: "var(--surface)", border: "1px solid var(--border)",
+          background: renderBusy ? "var(--surfaceSolid)" : "var(--surface)",
+          border: "1px solid var(--border)",
           borderRadius: RADIUS.surface,
-          // Render-quiet, Chat.jsx's surface discipline — reuses the 9.46
-          // renderBusy signal; an 18px blur mid-render fights the job.
           backdropFilter: renderBusy ? "none" : "blur(18px)",
           WebkitBackdropFilter: renderBusy ? "none" : "blur(18px)",
           display: "flex", flexDirection: "column", overflow: "hidden",
@@ -2836,17 +2319,23 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
             // Phone: a bottom sheet - full width, hugging the safe-area edge.
             left: 8, right: 8,
             bottom: "calc(8px + env(safe-area-inset-bottom))", height: "82dvh",
-            background: "var(--bg1)", border: "1px solid var(--borderHov)",
+            background: renderBusy ? "var(--surfaceSolid)" : "var(--surface)",
+            backdropFilter: renderBusy ? "none" : "blur(18px)",
+            WebkitBackdropFilter: renderBusy ? "none" : "blur(18px)",
+            border: "1px solid var(--borderHov)",
             borderRadius: 20, boxShadow: SHADOW.xl,
             display: "flex", flexDirection: "column", overflow: "hidden",
           } : {
             // Fallback (narrow viewports): buds off the rail's settings button.
-            left: 84, bottom: 16, width: 400, maxWidth: "92vw", height: "86vh",
-            background: "var(--bg1)", border: "1px solid var(--borderHov)",
+            left: 84, bottom: 16, width: SETTINGS.defaultWidth, maxWidth: "calc(100vw - 100px)", height: "90vh",
+            background: renderBusy ? "var(--surfaceSolid)" : "var(--surface)",
+            backdropFilter: renderBusy ? "none" : "blur(18px)",
+            WebkitBackdropFilter: renderBusy ? "none" : "blur(18px)",
+            border: "1px solid var(--borderHov)",
             borderRadius: 20, boxShadow: SHADOW.xl,
             display: "flex", flexDirection: "column", overflow: "hidden",
           }}>
-          {panel}
+          <div className="px-settings" style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>{panel}</div>
         </ModalShell>
       )}
     </>

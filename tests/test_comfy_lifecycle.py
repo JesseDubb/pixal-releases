@@ -156,6 +156,86 @@ class NoRivalBackendTests(unittest.TestCase):
         find.assert_not_called()
 
 
+class LostBootReleasesTheDoorTests(unittest.TestCase):
+    """A boot whose ComfyUI is stopped under it must let go, not hold the door.
+
+    2026-09-04: /api/comfy/restart stopped ComfyUI and started nothing. The
+    watcher re-read COMFY_BOOT["proc"] every tick, stop_comfy() had nulled that
+    field, so it never noticed its own child was dead and rode out a grace
+    worth up to 15 minutes of wall clock - while kick_comfy_boot's
+    one-at-a-time guard handed that same lost task to the retry button, the
+    page reload and the status poll alike. The screen said "waiting for
+    ComfyUI" with no meter and no button that did anything.
+    """
+
+    def setUp(self):
+        server.COMFY_BOOT.update(proc=None, at=None, task=None, error=None)
+
+    def tearDown(self):
+        server.COMFY_BOOT.update(proc=None, at=None, task=None, error=None)
+
+    def test_the_watcher_returns_once_its_console_is_no_longer_ours(self):
+        launched = SimpleNamespace(pid=7, poll=lambda: None)
+
+        async def drive():
+            # Reachable never, so the only way out is the ownership check.
+            with patch.object(server, "comfy_reachable",
+                              AsyncMock(return_value=False)), \
+                    patch.object(server, "find_comfy_launcher",
+                                 return_value=Path("run.bat")), \
+                    patch.object(server, "comfy_launch_command",
+                                 return_value=(["x"], ".", {})), \
+                    patch.object(server.subprocess, "Popen",
+                                 return_value=launched), \
+                    patch.object(server, "_nt", return_value=False):
+                task = asyncio.create_task(server.ensure_comfy_running())
+                await asyncio.sleep(0)           # let it reach its watch loop
+                self.assertIs(server.COMFY_BOOT["proc"], launched)
+                server.COMFY_BOOT["proc"] = None            # stop_comfy() ran
+                await asyncio.wait_for(task, timeout=10)
+
+        asyncio.run(drive())
+        # It let go quietly: the next owner writes the error and the meter.
+        self.assertIsNone(server.COMFY_BOOT["error"])
+
+    def test_cancel_clears_the_slot_so_the_next_kick_actually_starts(self):
+        async def drive():
+            forever = asyncio.create_task(asyncio.sleep(3600))
+            server.COMFY_BOOT["task"] = forever
+            await server.cancel_comfy_boot()
+            self.assertIsNone(server.COMFY_BOOT["task"])
+            self.assertTrue(forever.cancelled())
+
+        asyncio.run(drive())
+
+    def test_cancel_is_a_no_op_when_nothing_is_in_flight(self):
+        async def drive():
+            await server.cancel_comfy_boot()             # task is None
+            done = asyncio.create_task(asyncio.sleep(0))
+            await done
+            server.COMFY_BOOT["task"] = done
+            await server.cancel_comfy_boot()             # task is done
+            self.assertIs(server.COMFY_BOOT["task"], done)
+
+        asyncio.run(drive())
+
+    def test_restart_cancels_the_attempt_before_it_stops_anything(self):
+        """Order is the whole fix: cancel, THEN stop. The other way round lets
+        the dying watcher hand COMFY_BOOT a proc we have already killed."""
+        order = []
+
+        async def cancel():
+            order.append("cancel")
+
+        with patch.object(server, "cancel_comfy_boot", cancel), \
+                patch.object(server, "stop_comfy",
+                             lambda: order.append("stop") or []), \
+                patch.object(server, "kick_comfy_boot",
+                             lambda: order.append("kick")):
+            asyncio.run(server.restart_comfy(None))
+        self.assertEqual(order, ["cancel", "stop", "kick"])
+
+
 class ClosedByUserTests(unittest.TestCase):
     """/api/status polls every second and used to restart ComfyUI whenever it
     found it down, which made the console window impossible to close - it came

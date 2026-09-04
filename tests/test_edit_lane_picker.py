@@ -109,7 +109,7 @@ class GhostTests(unittest.TestCase):
     def test_the_ghost_is_the_triggers_own_box(self):
         # the shared trigger is a fixed 28px; the loading hold finally
         # matches it instead of PickerGhost's 38px ScrollPicker stand-in
-        self.assertIn("height: 24", PICKER)
+        self.assertIn("height: HEIGHT.rail", PICKER)
         self.assertEqual(EDIT.count("<PickerGhost />"), 2)
         self.assertNotIn("<Bar h={28}", EDIT)
 
@@ -205,7 +205,8 @@ class RetentionTests(unittest.TestCase):
     def test_scrollpicker_survives_for_the_other_four_rows(self):
         # video default, VAE, upscale, reviewer
         self.assertIn("const ScrollPicker", SRC)
-        self.assertIn("const PickRow", SRC)
+        self.assertNotIn("const PickRow", SRC)
+        self.assertIn("<Picker hug label={placeholder", SRC)
         self.assertEqual(SRC.count("<ScrollPicker"), 4)
         self.assertIn('placeholder="first available"', SRC)
         self.assertIn('placeholder="stock Z-Image VAE (recommended)"', SRC)
@@ -220,9 +221,9 @@ class RetentionTests(unittest.TestCase):
 
     def test_picker_jsx_keeps_its_contract(self):
         # the options contract is unchanged; 10.0 restyled the trigger to
-        # the control family's value pill (24px, bg3, pill radius)
+        # the control family's value pill (HEIGHT.rail, bg3, pill radius)
         self.assertIn("[{ id, label, description?, group? }]", PICKER)
-        self.assertIn("height: 24", PICKER)   # 10.0's value pill
+        self.assertIn("height: HEIGHT.rail", PICKER)   # 10.0's value pill
 
 
 if __name__ == "__main__":

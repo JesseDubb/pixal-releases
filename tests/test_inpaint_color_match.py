@@ -233,7 +233,7 @@ class InpaintColorMatchSettingsUiTests(unittest.TestCase):
     def test_edit_settings_uses_the_shared_switch_and_apply(self):
         self.assertIn('import { Switch } from "../lib/Switch.jsx";', SETTINGS)
         self.assertIn("Inpaint color match", EDIT_SETTINGS)
-        self.assertIn(
+        self.assertNotIn(
             'hint="Matches the redrawn area\'s color to the frame"',
             EDIT_SETTINGS)
         self.assertIn(

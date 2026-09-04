@@ -27,6 +27,7 @@ export const DARK = {
   accentDim: "rgba(214,243,47,0.58)", accentDimMut: "rgba(214,243,47,0.07)",
   surface: "rgba(16,19,22,0.72)",    // the floating content panel
   surfaceSolid: "rgba(16,19,22,0.93)", // history bento / opaque overlays
+  surfaceInset: "rgba(255,255,255,0.03)", // existing chat composer / nested cards
   photon: "238,241,235",             // background dot-field rgb triplet
   lamp: "214,243,47",                // top-glow rgb triplet
   success: "#7BB495", successHot: "#6BA585", successMut: "rgba(123,180,149,0.10)",
@@ -50,6 +51,7 @@ export const LIGHT = {
   accentDim: "rgba(110,139,0,0.58)", accentDimMut: "rgba(110,139,0,0.07)",
   surface: "rgba(255,255,255,0.74)",
   surfaceSolid: "rgba(255,255,255,0.95)",
+  surfaceInset: "rgba(255,255,255,0.03)",
   photon: "44,52,38",
   lamp: "110,139,0",
   success: "#059669", successHot: "#047857", successMut: "rgba(5,150,105,0.07)",
@@ -64,6 +66,7 @@ export const LOGO_FONT = "'Syne', -apple-system, BlinkMacSystemFont, sans-serif"
 // Weight hierarchy — single source of truth
 export const W = {
   heading: 600,   // page titles, section headings
+  emphasis: 550,  // ink that sits ON the accent - see below
   nav: 500,       // nav labels, brand names, buttons
   body: 400,      // body text, input values
   label: 300,     // field labels, slugs, hex codes, metadata, timestamps
@@ -155,15 +158,65 @@ export const RADIUS = {
   pill: 999,      // Avatars, status dots, true pills, the primary CTA
 };
 
-// Component height ladder — interactive elements (buttons,
-// inputs, selects) line up because they share this scale.
-// Non-interactive heights (dividers, progress bars) stay as
-// raw values; this ladder is for things you click.
+// ──────────────────────────────────────────────────────────────
+// HEIGHT — three heights, by ROLE, and nothing you click is any
+// other height. Reconciled 2026-09-04: the old xs/sm/md/lg ladder
+// used 24/28/32/40 while DESIGN.md declared a
+// 34px row beat that was on no ladder at all, so 24, 26, 28, 30, 32,
+// 34, 38 and 40 all lived on one Settings panel and every one of
+// them could cite an authority. A size ladder invites picking; a
+// role ladder answers the question. Ask what the control IS:
+//
+//   rail  a passenger on a row's right-hand rail — the value pill,
+//         the picker trigger, the number field, the pill selector's
+//         track, a small button beside them. 26 inside a 34 row is
+//         4px of air above and below, even, and the rail reads as
+//         ONE line of controls.
+//   row   the row itself, and any field or button that owns its own
+//         line: a text input, a form button, an icon button beside a
+//         34 input. DESIGN.md's beat; CharacterForm's FIELD_H.
+//   cta   the ONE primary call to action a surface is allowed. Taller
+//         because it is alone; two of these on a surface is a design
+//         error, not a size question.
+//
+// Not on the ladder, on purpose: the toggle track (42x16, lib/Switch)
+// and chips — they are not boxes a row lines up on. When a control
+// does not match its neighbours, RAISE it to its role; never shrink
+// the correct ones to meet it. tests/test_design_ladder.py holds this.
 export const HEIGHT = {
-  xs: 24,         // Tag-style chips, dense table buttons
-  sm: 28,         // Secondary buttons, compact selects
-  md: 32,         // Default buttons, default inputs, default selects
-  lg: 40,         // Primary CTAs, hero inputs
+  rail: 26,
+  row:  34,
+  cta:  40,
+};
+
+// RHYTHM — the vertical distances between things, by RELATIONSHIP.
+// SPACE below is the whole scale the app may draw from; this is the
+// subset a SURFACE is allowed to stack with, and each step has one
+// job. The ratios are the rule: each grouping step is twice the one
+// below it (8 -> 16 -> 32) or the eye reads no grouping (20 against 10
+// was the original Settings defect - "nothing felt like it had a start
+// and an end"). A heading's air is asymmetric on purpose - 56 above, 16
+// below, 3.5 to 1 - so it opens the group beneath it instead of
+// floating between two. Rows in a run TOUCH - HEIGHT.row is their
+// spacing.
+//
+//   control  6   inside one control: label -> control -> its footnote
+//   rows     8   a sub label -> its rows; block -> block in a sub-section
+//   run     16   under a section break; above a run that continues its
+//                sub-section after one
+//   cluster 32   between sub-sections
+//   break   56   above a section break (cluster + 24, 7 steps of 8)
+//
+// Every value is even and on the 8-point grid except `control`, which
+// is inside a control where nothing lines up against it. A distance
+// not in this table is not a rhythm, it is a nudge - and a nudge is
+// always the wrong fix (DESIGN.md §3).
+export const RHYTHM = {
+  control: 6,
+  rows:    8,
+  run:     16,
+  cluster: 32,
+  break:   56,
 };
 
 // Motion — three timings cover everything. All ease-out (no

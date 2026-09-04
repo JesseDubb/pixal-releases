@@ -1,24 +1,8 @@
-"""Brief 10.0 — Settings speaks the pill language on a strict beat.
+"""Settings retains the shared Pixal controls in the roomier 2026 workspace.
 
-The blessed mockup (briefs/ref/settings-pills/v6-blessed.png) defines one
-control family — the pixal toggle (42x16, dark-ink knob on chartreuse), the
-pill selector (2-4 options hugging their labels on a right-hand rail), the
-value pill (24px picker trigger) and the two badge registers — and one
-rhythm: every setting row is ONE 34px line, the label with its one-fact
-subline inline, the control on the right rail; section titles take the
-cluster register (micro caps, hairline right). Restyle centrally: the shared
-Switch / SegmentedControl / Section / Field carry the skin, callsites
-migrate onto them.
-
-These tests are static in the style of test_composer_canvas.py - this repo
-has no JS runner, so the contracts assert the structure of the source. Every
-behaviour test here was proven RED against the pre-fix tree (3d56e64): the
-old Switch was a 30x17 accentMut-wash toggle, SegmentedControl had no pill
-variant, the pickers were 38/28px input-radius triggers, the panel was a
-stacked wall with micro-caps Field labels above full-width controls, the tab
-read "Brain", there was no search and no badge. The two guard tests (About
-byte-identity, no --success) pass on both trees; their teeth were proven by
-mutation.
+These source contracts cover component wiring. Executable search/index/width
+cases live in test_settings_workspace.mjs; visual geometry is a separate audit.
+The About content remains frozen, independently of the new outer frame.
 """
 
 import hashlib
@@ -33,12 +17,12 @@ SWITCH = (ROOT / "web" / "src" / "lib" / "Switch.jsx").read_text(encoding="utf-8
 SEG = (ROOT / "web" / "src" / "lib" / "SegmentedControl.jsx").read_text(encoding="utf-8")
 PICKER = (ROOT / "web" / "src" / "lib" / "Picker.jsx").read_text(encoding="utf-8")
 TOKENS = (ROOT / "web" / "src" / "lib" / "design-tokens.js").read_text(encoding="utf-8")
+WORKSPACE = (ROOT / "web/src/components/SettingsWorkspace.jsx").read_text(encoding="utf-8")
+SEARCH = (ROOT / "web/src/lib/settings-search.js").read_text(encoding="utf-8")
 
-# The About tab is frozen by the brief ("I like the about page so dont touch
-# that"): this is the sha256 of its extracted JSX region on the start commit
-# 3d56e64. One changed byte inside the region - a space, a comma - and the
-# hash misses.
-ABOUT_SHA256 = "c74849e9252fc22ed11eee01f83dd87d2b643120e297336a84f76dc4d75ae478"
+# The JSX below matches HEAD (1ee7850) byte-for-byte. The extraction now
+# excludes the old scroll-container closing tag, which belongs to the frame.
+ABOUT_SHA256 = "ca86785a1a40e98a5d35bca30ab1da081890cdf78e7af083ce385628c0c6b9ef"
 
 COLOR_LITERAL = re.compile(r"#[0-9A-Fa-f]{3,8}\b|rgba?\(")
 
@@ -129,7 +113,7 @@ class PixalToggleGeometry(unittest.TestCase):
 class PillSelectorSpecs(unittest.TestCase):
     """variant="pill" on the one shared SegmentedControl: the bg3 track with
     a hairline border and 2px padding/gap, options hugging their label at
-    3px 11px, idle ink textSec, the active option full accent with
+    PILL_OPTION_H tall and 11px at the sides, idle ink textSec, the active option full accent with
     accentInk text - the full-intensity register of the one color story."""
 
     def test_the_pill_variant_exists_on_the_shared_component(self):
@@ -146,9 +130,14 @@ class PillSelectorSpecs(unittest.TestCase):
 
     def test_the_option_spec(self):
         opt = _region(SEG, "const pillStyle", "};")
-        self.assertIn('"3px 11px"', opt)
+        self.assertIn('height: PILL_OPTION_H, padding: "0 11px"', opt)
         self.assertIn("fontSize: TYPE.label", opt)
-        self.assertIn("fontWeight: W.nav", opt)
+        # 550, not 500: dark ink on full chartreuse read thin, and 600 was
+        # bold - "I dont want bold I just wanted slightly thicker … split the
+        # difference" (Jesse, 2026-09-04). A half step only renders because
+        # Geist is variable and now actually LOADS; under the Arial fallback
+        # this shipped with, 550 rounded straight to bold.
+        self.assertIn("fontWeight: W.emphasis", opt)
         self.assertIn('"var(--textSec)"', opt)
         self.assertIn('background: active ? "var(--accent)" : "transparent"', opt)
         self.assertIn('"var(--accentInk)"', opt)
@@ -164,24 +153,23 @@ class PillSelectorSpecs(unittest.TestCase):
 
 
 class ValuePillSpecs(unittest.TestCase):
-    """The picker trigger is the value pill: 24px, bg3, pill radius, label
+    """The picker trigger is the value pill: HEIGHT.rail, bg3, pill radius, label
     type at nav weight, the picked value in --text, the chevron in
     --textTer. Both pickers settings uses carry it - the panel's own
     ScrollPicker and the shared lib Picker."""
 
-    def test_the_scrollpicker_trigger_is_the_value_pill(self):
-        trigger = _region(SRC, "const ScrollPicker", "// One edit-lane option")
-        self.assertIn("height: 24", trigger)
-        self.assertIn('background: "var(--bg3)"', trigger)
-        self.assertIn("borderRadius: RADIUS.pill", trigger)
-        self.assertIn("fontSize: TYPE.label", trigger)
-        self.assertIn("fontWeight: W.nav", trigger)
-        self.assertIn('"var(--textTer)"', trigger)   # the chevron's ink
+    def test_the_scrollpicker_delegates_to_the_shared_value_pill(self):
+        adapter = _region(SRC, "const ScrollPicker", "// One edit-lane option")
+        self.assertIn("<Picker hug", adapter)
+        self.assertIn("id: item.name", adapter)
+        self.assertIn("onChange={onPick}", adapter)
+        self.assertNotIn("<button", adapter)
+        self.assertNotIn("useState", adapter)
 
     def test_the_shared_picker_trigger_is_the_value_pill(self):
-        trigger = _region(PICKER, '<button type="button" aria-haspopup="listbox"',
+        trigger = _region(PICKER, '<button ref={triggerRef} type="button" aria-haspopup="listbox"',
                           "</button>")
-        self.assertIn("height: 24", trigger)
+        self.assertIn("height: HEIGHT.rail", trigger)
         self.assertIn('background: "var(--bg3)"', trigger)
         self.assertIn("borderRadius: RADIUS.pill", trigger)
         self.assertIn("fontSize: TYPE.label", trigger)
@@ -193,92 +181,66 @@ class ValuePillSpecs(unittest.TestCase):
                           "a color literal crept into lib/Picker.jsx")
 
 
-class BadgeRegisters(unittest.TestCase):
-    """Two badge registers, both pill micro type: state-satisfied (Installed)
-    is the DIMMED chartreuse - never --success, the old sage was the wrong
-    green; action (Install) is the outlined-mid register. The dim values are
-    tokens (accentDim/accentDimMut) so light mode flips them with the theme;
-    no color literals in the component."""
+class LibraryPresentation(unittest.TestCase):
+    """Status is honest, quiet and distinct from an available action."""
 
-    def test_the_dim_chartreuse_register_is_a_token(self):
+    def test_the_dim_chartreuse_register_is_still_shared(self):
         self.assertIn('accentDim: "rgba(214,243,47,0.58)"', TOKENS)
-        self.assertIn('accentDimMut: "rgba(214,243,47,0.07)"', TOKENS)
-        # light mode: the same register derived from the olive accent
         self.assertIn('accentDim: "rgba(110,139,0,0.58)"', TOKENS)
-        self.assertIn('accentDimMut: "rgba(110,139,0,0.07)"', TOKENS)
 
-    def test_the_badge_component_carries_both_registers(self):
-        badge = _region(SRC, "const Badge", ");")
-        self.assertIn('"var(--accentDim)"', badge)
-        self.assertIn('"var(--accentDimMut)"', badge)
-        self.assertIn('"var(--accent)"', badge)
-        self.assertIn('"var(--accentMut)"', badge)
-        self.assertIn("var(--accentStr)", badge)   # the 1px outline
+    def test_absence_does_not_advertise_a_nonexistent_install_action(self):
+        self.assertIn(">Not installed<", SRC)
+        self.assertNotIn(">Install<", SRC)
+        self.assertNotIn("const Badge", SRC)
 
-        self.assertIn("fontSize: TYPE.micro", badge)
-        self.assertIn("fontWeight: W.nav", badge)
-        self.assertIn('"0.04em"', badge)
-        self.assertIn("borderRadius: RADIUS.pill", badge)
-        self.assertIsNone(COLOR_LITERAL.search(badge),
-                          "the badge mixes its own colors instead of the tokens")
+    def test_families_disclose_readable_names_paths_and_sizes(self):
+        family = _region(SRC, "const LibraryFamily", "LibraryFamily.settingsKind")
+        self.assertIn("<Disclosure", family)
+        self.assertIn("onToggle={onToggle}", family)
+        row = _region(SRC, "const LibraryRow", "LibraryRow.settingsKind")
+        for part in ("px-library-name", "px-library-file", "px-library-size"):
+            self.assertIn(part, row)
+        self.assertIn("sharedLanes", row)
+        self.assertIn("overflow-wrap:anywhere", WORKSPACE)
 
-    def test_installed_never_wears_success_green(self):
-        self.assertNotIn("--success", SRC)
-        self.assertIn(">Installed<", SRC)
-
-    def test_the_action_register_renders_where_absence_is_known(self):
-        # visual state only: no install flow in this brief, so no handler
-        badge = _region(SRC, "const Badge", ");")
-        self.assertNotIn("onClick", badge)
-        self.assertNotIn("cursor", badge)   # not even a pointer - it is not a button
-        self.assertIn(">Install<", SRC)
-
+    def test_settings_reuses_the_chat_surface_palette(self):
+        chat = (ROOT / "web/src/components/Chat.jsx").read_text(encoding="utf-8")
+        self.assertIn('background: rendering ? "var(--surfaceSolid)" : "var(--surface)"', chat)
+        self.assertIn('background: renderBusy ? "var(--surfaceSolid)" : "var(--surface)"', SRC)
+        self.assertIn('background: "var(--surfaceInset)"', chat)
+        self.assertIn("background:var(--surfaceInset)", WORKSPACE)
+        self.assertEqual(TOKENS.count('surfaceInset: "rgba(255,255,255,0.03)"'), 2)
+        self.assertNotIn("settingsSurface:", TOKENS)
+        self.assertNotIn("settingsCard:", TOKENS)
+        self.assertNotIn("--bg1:", WORKSPACE)
 
 class TheRowBeat(unittest.TestCase):
-    """Every setting row is ONE 34px line: label TYPE.body at body weight,
-    the one-fact subline inline at TYPE.label/300 in textTer, nowrap with
-    ellipsis, the control on a right-hand rail. Section titles take the
-    cluster register: TYPE.micro, W.nav, uppercase, .09em, textTer, hairline
-    running right."""
+    """Reading rows can grow; shared controls keep their compact height."""
 
-    def test_the_row_is_34px_with_the_inline_subline(self):
-        field = _region(SRC, "const Field", "// Cluster heading")
-        self.assertIn("height: 34", field)
-        self.assertIn("fontSize: TYPE.body", field)
-        self.assertIn("fontWeight: W.body", field)
-        self.assertIn("fontSize: TYPE.label", field)
-        self.assertIn("fontWeight: W.label", field)
-        self.assertIn('"var(--textTer)"', field)
-        self.assertIn('whiteSpace: "nowrap"', field)
-        self.assertIn('textOverflow: "ellipsis"', field)
-        self.assertIn('marginLeft: "auto"', field)   # the right-hand rail
+    def test_labels_and_live_hints_are_not_forced_into_one_clipped_line(self):
+        field = _region(SRC, "const Field", "Field.settingsKind")
+        self.assertIn("px-setting-label", field)
+        self.assertIn("px-setting-hint", field)
+        self.assertIn("px-setting-rail", field)
+        self.assertNotIn("height:", field)
+        self.assertIn("min-height:${SETTINGS.row}px", WORKSPACE)
+        self.assertIn("overflow-wrap:anywhere", WORKSPACE)
 
-    def test_section_titles_take_the_cluster_register(self):
-        # 2026-09-01: the register lives in TITLE_STYLE, ONE style shared
-        # by Section titles and GroupLabel headings (Jesse: "why would you
-        # make a one off style") - so the literals are asserted there, and
-        # both consumers are asserted to reference it.
-        reg = _region(SRC, "const TITLE_STYLE", "const GroupLabel")
-        self.assertIn("fontSize: TYPE.micro", reg)
-        self.assertIn("fontWeight: W.nav", reg)
-        self.assertIn('"uppercase"', reg)
-        self.assertIn('"0.09em"', reg)
-        self.assertIn('"var(--textTer)"', reg)
-        self.assertIn('borderTop: "1px solid var(--border)"', reg)
-        section = _region(SRC, "const Section", "const inputStyle")
-        self.assertIn("TITLE_STYLE", section)
-        self.assertIn("<Hairline />", section)
-        group = _region(SRC, "const GroupLabel", "const Badge")
-        self.assertIn("TITLE_STYLE", group)
-        self.assertIn("<Hairline />", group)
+    def test_one_header_divider_not_a_line_between_every_row(self):
+        self.assertIn("px-settings-card-header", SRC)
+        header = _region(WORKSPACE, ".px-settings-card-header {", "}")
+        self.assertIn("border-bottom:1px", header)
+        row = _region(WORKSPACE, ".px-setting {", "}")
+        self.assertNotIn("border-top", row)
+        self.assertNotIn("border-bottom", row)
+        self.assertNotIn(".px-setting + .px-setting", WORKSPACE)
+        group = _region(WORKSPACE, ".px-settings-group-heading {", "}")
+        self.assertNotIn("border", group)
 
-    def test_rows_travel_in_named_runs(self):
-        # consecutive rows touch; a run continuing its cluster after a
-        # Section sits 16 under it, not a full section gap away
-        self.assertIn('"px-set-rows px-set-rows--cont"', SRC)
-        self.assertIn("<Rows>", SRC)
-        css = _region(SRC, "const CSS = `", "`;")
-        self.assertIn(".px-set-rows--cont", css)
+    def test_rows_travel_in_named_cards(self):
+        self.assertIn('const Rows = ({ children }) => <div className="px-set-rows">', SRC)
+        self.assertIn(".px-settings-group-body > .px-set-rows", WORKSPACE)
+        self.assertIn("gap:${SETTINGS.cardGap}px", WORKSPACE)
 
 
 class ToggleMigration(unittest.TestCase):
@@ -324,38 +286,52 @@ class ChatTabLabel(unittest.TestCase):
 
 
 class SearchSettings(unittest.TestCase):
-    """The header carries the search field; '/' focuses it; the filter is a
-    case-insensitive match on section titles AND row labels, hiding
-    non-matching rows and empty sections while typing and restoring
-    everything on an empty query. Client-side only - no config writes."""
+    """Search is global, navigational and never a configuration mutation."""
 
     def test_the_field_sits_in_the_header_with_the_slash_hint(self):
-        self.assertIn('placeholder="Search settings"', SRC)
-        self.assertIn("<kbd", SRC)
+        self.assertIn('aria-label="Search all settings"', WORKSPACE)
+        self.assertIn("<kbd>/</kbd>", WORKSPACE)
 
-    def test_slash_focuses_the_field(self):
-        self.assertIn('e.key !== "/"', SRC)   # the guard that keys on "/"
+    def test_slash_focuses_the_field_without_stealing_an_input_keystroke(self):
+        self.assertIn('e.key !== "/"', SRC)
         self.assertIn("searchRef.current?.focus()", SRC)
+        self.assertIn('t.tagName === "INPUT"', SRC)
+        self.assertIn("t.isContentEditable", SRC)
 
-    def test_the_filter_is_case_insensitive_and_covers_titles_and_labels(self):
-        self.assertIn(".toLowerCase()", SRC)
-        section = _region(SRC, "const Section", "const inputStyle")
-        field = _region(SRC, "const Field", "// Cluster heading")
-        self.assertIn("textOf(title)", section)
-        self.assertIn("textOf(label)", field)
+    def test_all_pages_and_installed_models_feed_the_index(self):
+        self.assertIn("pages={TABS.map", SRC)
+        self.assertIn("matchSettings(indexPages(pages), query)", WORKSPACE)
+        self.assertIn('kind === "model"', SEARCH)
+        self.assertIn("optionText(props.children)", SEARCH)
+        self.assertNotIn("props.value", SEARCH)
 
-    def test_non_matching_rows_and_empty_sections_hide(self):
-        section = _region(SRC, "const Section", "const inputStyle")
-        field = _region(SRC, "const Field", "// Cluster heading")
-        self.assertIn("return null", section)
-        self.assertIn("return null", field)
+    def test_results_reveal_the_target_and_keep_the_tabstrip_visible(self):
+        self.assertIn("entry.reveal?.()", WORKSPACE)
+        self.assertIn("onTab(entry.tab)", WORKSPACE)
+        self.assertIn("node.scrollIntoView", WORKSPACE)
+        self.assertIn("node.focus({ preventScroll: true })", WORKSPACE)
+        self.assertIn('role="tablist"', WORKSPACE)
+        self.assertIn('role={searching ? "region" : "tabpanel"}', WORKSPACE)
 
     def test_the_search_writes_no_config(self):
-        # the field's onChange only sets local state - an apply() on
-        # keystrokes would spam config.json (the live-machine rule)
-        self.assertIn("onChange={(e) => setQuery(e.target.value)}", SRC)
-        search = _region(SRC, 'placeholder="Search settings"', "</div>")
-        self.assertNotIn("apply(", search)
+        self.assertIn("onChange={(e) => onQuery(e.target.value)}", WORKSPACE)
+        self.assertNotIn("fetch(", WORKSPACE)
+        self.assertNotIn("apply(", WORKSPACE)
+        self.assertNotIn("localStorage", SEARCH)
+
+    def test_escape_clears_search_then_closes_and_a_picker_gets_first_refusal(self):
+        self.assertIn('event.key !== "Escape" || event.defaultPrevented', WORKSPACE)
+        self.assertIn('else onClose()', WORKSPACE)
+        self.assertIn('if (query) { onQuery("");', WORKSPACE)
+        self.assertIn('window.addEventListener("keydown", escape, true)', PICKER)
+        self.assertIn("e.preventDefault(); e.stopPropagation();", PICKER)
+        self.assertIn("triggerRef.current?.focus()", PICKER)
+
+    def test_footer_reserves_its_space_and_keeps_the_full_message_accessible(self):
+        footer = _region(WORKSPACE, ".px-settings-footer {", "}")
+        self.assertIn("height:42px", footer)
+        self.assertNotIn("min-height", footer)
+        self.assertIn("<span title={status}>{status}</span>", WORKSPACE)
 
 
 class SentenceCaseLabels(unittest.TestCase):
@@ -371,15 +347,11 @@ class SentenceCaseLabels(unittest.TestCase):
 
 
 class AboutByteIdentical(unittest.TestCase):
-    """The About tab ships byte-identical to the start commit (Jesse: "I
-    like the about page so dont touch that"). The region runs from the
-    `{tab === "about" && (` mark to the auto-saves comment; the hash pins
-    every byte of it, and the markers + a known string pin the extraction
-    itself, so an empty or shifted region fails too."""
+    """Freeze About content, not the surrounding workspace markup."""
 
     def test_the_about_region_is_untouched(self):
         region = _region(SRC, '{tab === "about" && (',
-                         "{/* Every control auto-saves")
+                         "\n    </>\n  );").rstrip()
         self.assertIn("Developed by Jesse", region)
         self.assertEqual(hashlib.sha256(region.encode("utf-8")).hexdigest(),
                          ABOUT_SHA256,

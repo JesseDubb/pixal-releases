@@ -1318,7 +1318,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                         fontSize: TYPE.body, fontWeight: W.nav, color: "var(--text)",
                         lineHeight: 1.35 }}>
             Sampler
-            <InfoTip size={12} text={"Sampler, scheduler and step overrides for this render, on "
+            <InfoTip text={"Sampler, scheduler and step overrides for this render, on "
               + "this recipe. “model” applies the settings from the model's own page. Save "
               + "the composer as a style to keep them; another recipe or style starts clean."} />
           </div>
@@ -1402,7 +1402,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                              fontSize: TYPE.micro, fontWeight: W.heading,
                              color: "var(--textTer)" }}>
                 Combos
-                <InfoTip size={11} text={"Sampler and scheduler pairs to try, stepped with the "
+                <InfoTip text={"Sampler and scheduler pairs to try, stepped with the "
                   + "arrows. Yours come first, then the MiniMax H3 community table ranked on "
                   + "graphic quality - two to five votes a row, so read those as leads to "
                   + "render, not as measurements. The star keeps the pair you are on, "
@@ -1433,7 +1433,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                   format={(v) => Number(v).toFixed(1)}
                   onChange={(v) => change("cfg", Math.round(v * 2) / 2)} />,
                 seat.cfg_locked && (
-                  <InfoTip size={11} text={"Distilled build - guidance is baked in at cfg 1. "
+                  <InfoTip text={"Distilled build - guidance is baked in at cfg 1. "
                     + "Above 1 doubles the render time and burns the image, so it stays put."} />
                 ))}
             </div>
@@ -1443,7 +1443,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
               emphasis={isSet("shift")} ariaLabel="shift"
               format={(v) => Number(v).toFixed(2)}
               onChange={(v) => change("shift", Math.round(v * 4) / 4)} />,
-            <InfoTip size={11} text={"How much of the schedule is spent on "
+            <InfoTip text={"How much of the schedule is spent on "
               + "composition rather than detail. Lower locks the layout early "
               + "and sharpens texture; higher rearranges more and comes out "
               + "softer. Raise it as you raise resolution."} />)}
@@ -1452,7 +1452,7 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
               emphasis={isSet("eta")} ariaLabel="eta"
               format={(v) => Number(v).toFixed(2)}
               onChange={(v) => change("eta", Math.round(v * 20) / 20)} />,
-            <InfoTip size={11} text={"How much fresh noise an SDE sampler re-injects each step "
+            <InfoTip text={"How much fresh noise an SDE sampler re-injects each step "
               + "(0 = none). Only SDE samplers read it."} />)}
         </div>
       </AccordionPanel>
@@ -1830,7 +1830,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                      gap: SPACE[6], fontSize: TYPE.label, fontWeight: W.label,
                      color: "var(--textSec)" }}>
         {dial.label}
-        <InfoTip size={12} text={dial.help} />
+        <InfoTip text={dial.help} />
         {isSet(dial.key) && (
           <span title={`double-click the slider to return to ${dialValueLabel(dial, dial.default)}`}
                 style={{ marginLeft: "auto",
@@ -2197,7 +2197,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
                 visible is the label, the override state, and the recipe's
                 own number to come back to. */}
             {recipeCardDials.length > 0 && (
-              <InfoTip size={12} text={"These override the recipe for this render only. Put a "
+              <InfoTip text={"These override the recipe for this render only. Put a "
                 + "dial back on the recipe's own number, or double-click a slider, and "
                 + "the override goes away."} />
             )}
@@ -3511,7 +3511,7 @@ export const ComposerBar = ({ opts, setOpts, selectCharacter,
                     </span>
                     <Tag>{opts.accessories !== false
                       ? `${sel.accessories} wired` : "off"}</Tag>
-                    <InfoTip size={11} text={"The anchor's accessory references wire "
+                    <InfoTip text={"The anchor's accessory references wire "
                       + "beside its identity photo on the MiniMax H3 lanes. Every "
                       + "wired reference rides every sampling step, so off is the "
                       + "fast render. Per-accessory switches live on the character "

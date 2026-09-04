@@ -395,19 +395,21 @@ class UpdateInstallTests(unittest.TestCase):
                       "/api/update/launch"):
             self.assertIn(f'"{route}"', SERVER_SRC)
 
-    def test_about_tab_drives_progress_cancel_verify_and_handoff(self):
-        about = MENU_SRC[
-            MENU_SRC.index("const AboutUpdate"):
-            MENU_SRC.index("export const SettingsMenu")]
-        self.assertIn('from "../transport.js"', MENU_SRC)
-        self.assertIn("update_fetch", MENU_SRC)
-        self.assertIn("createPortal(", MENU_SRC)
-        self.assertIn("<AboutUpdate", MENU_SRC)
-        for route in ("/api/update/download", "/api/update/cancel",
-                      "/api/update/launch"):
-            self.assertIn(route, MENU_SRC)
-        for copy in ("Downloading", "Verifying", "Cancel", "Pixal will close"):
-            self.assertIn(copy, about)
+    def test_about_tab_is_advisory_only(self):
+        """The About slot names the release and links to it - nothing more.
+
+        Removed 2026-09-04: the in-app download-and-run-the-installer control.
+        Handing the user a wizard meant killing the sidecar AND ComfyUI before
+        the install had started, so a cancelled or failed wizard left a dead
+        studio with no way back. Until an update can install itself and bring
+        Pixal back on its own, the panel does not offer to try.
+        """
+        self.assertIn("/api/update-check", MENU_SRC)
+        self.assertIn("Get Pixal ", MENU_SRC)          # the release link
+        for gone in ("/api/update/download", "/api/update/cancel",
+                     "/api/update/launch", "update_fetch", "AboutUpdate",
+                     "px-about-update"):
+            self.assertNotIn(gone, MENU_SRC)
 
 
 if __name__ == "__main__":

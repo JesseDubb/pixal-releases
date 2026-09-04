@@ -481,7 +481,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.3.0b"
+PIXAL_VERSION = "1.3.1b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -13583,7 +13583,7 @@ class Hub:
                     if ram is not None and ram < RAM_FLOOR else "")
         self.broadcast(
             type="text", cid=job.get("cid"),
-            text=(f"*this render is crawling - {now - prev:.0f}s per step, and "
+            text=(f"*This render is crawling - {now - prev:.0f}s per step, and "
                   f"{room}.* The model is being streamed from system memory "
                   f"rather than sitting on the card.{ram_note} It will finish "
                   f"and it will look right, and Pixal will clear cached models "
@@ -13657,7 +13657,7 @@ class Hub:
                                 if not j.get("_paging_warned"):
                                     j["_paging_warned"] = True
                                     self.broadcast(type="text", cid=j["cid"], text=(
-                                        "*this render is paging - the card is full, "
+                                        "*This render is paging - the card is full, "
                                         "so the GPU is streaming weights from system "
                                         "RAM instead of computing. It will crawl; "
                                         "cancelling and asking smaller, or closing "
@@ -13947,7 +13947,7 @@ class Hub:
             usual = self.lane_median_elapsed(job["template"], exclude=job["id"])
             if usual and job["elapsed"] - usual >= 1:
                 self.broadcast(type="text", cid=job["cid"], text=(
-                    f"*rendered at a full card - {job['elapsed'] - usual:.0f} "
+                    f"*Rendered at a full card - {job['elapsed'] - usual:.0f} "
                     "s slower than usual*"))
         # The finish chain (dlss5 / deshine / grain) and an upscaler are
         # recorded into info AFTER the first jobinfo went out - at delivery,
@@ -14155,14 +14155,14 @@ class Hub:
             plan = self.oom_retry_plan(job)
             if not plan:
                 self.broadcast(type="text", cid=job["cid"],
-                               text=f"*that render ran out of VRAM and there is "
+                               text=f"*That render ran out of VRAM and there is "
                                     f"nothing smaller to try automatically. The "
                                     f"card is clear now, so running it again may "
                                     f"well land.{brain}*")
                 return
             spec, note = plan
             self.broadcast(type="text", cid=job["cid"],
-                           text=f"*that render ran out of VRAM. Cleared the card "
+                           text=f"*That render ran out of VRAM. Cleared the card "
                                 f"and trying again {note}.{brain} Ask for it again "
                                 f"if you want the full-size version.*")
             await self.submit(job["cid"], "reroll", job["template"],
@@ -14405,7 +14405,7 @@ class Hub:
         self._mark_used(heavy, template, seq)   # the flush cleared the ledger
         job["model_switch"] = True   # weights went; the lane should say "loading"
         self.broadcast(type="text", cid=job["cid"], text=(
-            f"*freed {idle_bytes / 2**30:.0f} GB of idle {lane} weights*"))
+            f"*Freed {idle_bytes / 2**30:.0f} GB of idle {lane} weights*"))
         print(f"[pixal] butler: evicted idle {lane} weights "
               f"({idle_bytes / 2**30:.1f}GB) for {template}", flush=True)
         return True
@@ -14432,7 +14432,7 @@ class Hub:
         brain_gb = next((r["gb"] for r in table if r["role"] == "brain"), None)
         gb = brain_gb if brain_gb is not None else est / 2**30
         self.broadcast(type="text", cid=job["cid"], text=(
-            note or f"*brain rested for the render ({gb:.1f} GB)*"))
+            note or f"*Brain rested for the render ({gb:.1f} GB)*"))
         print(f"[pixal] butler: rested the brain ({gb:.1f}GB) for the render",
               flush=True)
         return True
@@ -14445,7 +14445,7 @@ class Hub:
         desktop = sum(r["gb"] for r in table if r["role"] == "desktop")
         if desktop * 2**30 >= DESKTOP_WATCH_BYTES:
             self.broadcast(type="text", cid=job["cid"], text=(
-                f"*desktop holds {desktop:.1f} GB - Clean up → Reset desktop*"))
+                f"*Desktop holds {desktop:.1f} GB - Maintenance → Desktop → Reset*"))
 
     def lane_median_elapsed(self, template, exclude=None):
         """Median elapsed seconds for `template` in the ledger - 'usual' for
@@ -14505,7 +14505,7 @@ class Hub:
                 # 20GB critic pass is missing.
                 if (freed or 0) < CRITIC_VRAM_NEED and await free_brain_vram():
                     self.broadcast(type="text", cid=job["cid"],
-                                   text="*rested the chat brain to fit the "
+                                   text="*Rested the chat brain to fit the "
                                         "critic - it returns on your next "
                                         "message*")
             return
@@ -14520,7 +14520,7 @@ class Hub:
                 # queue first is noise; at the deadline it proceeds as before.
                 job["_draining"] = True
                 self.broadcast(type="text", cid=job["cid"], text=(
-                    "*waiting for the current render to finish so this clip "
+                    "*Waiting for the current render to finish so this clip "
                     "starts from a clean card*"))
                 waited = 0.0
                 while waited < VIDEO_DRAIN_WAIT and self.busy_elsewhere(job):
@@ -14629,7 +14629,7 @@ class Hub:
                             self.resident_heavies = dict(pheavy)
                         elif await free_brain_vram():
                             self.broadcast(type="text", cid=job["cid"], text=(
-                                "*rested the chat brain for headroom - the "
+                                "*Rested the chat brain for headroom - the "
                                 "last render ended at "
                                 f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
                         else:
@@ -14696,7 +14696,7 @@ class Hub:
                         self.resident_heavies = dict(heavy)
                     elif await free_brain_vram():
                         self.broadcast(type="text", cid=job["cid"], text=(
-                            "*rested the chat brain for headroom - the last "
+                            "*Rested the chat brain for headroom - the last "
                             "render ended at "
                             f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
                     else:
@@ -14767,7 +14767,7 @@ class Hub:
                         self.resident_heavies = dict(heavy)
                     elif await free_brain_vram():
                         self.broadcast(type="text", cid=job["cid"], text=(
-                            "*rested the chat brain for headroom - the last "
+                            "*Rested the chat brain for headroom - the last "
                             "render ended at "
                             f"{self.prev_job_free_min / 2**30:.1f}GB free*"))
                     else:
@@ -14837,7 +14837,7 @@ class Hub:
                                  "next message")
                     free = await asyncio.to_thread(gpu_free_bytes) or 0
             job["model_switch"] = True   # narration: "clearing vram · loading the model"
-            msg = (f"*making room - this render stages ~{(weights + act) / 2**30:.0f}GB: "
+            msg = (f"*Making room - this render stages ~{(weights + act) / 2**30:.0f}GB: "
                    + "; ".join(notes))
             if free < need:
                 # Name the squatters only when the driver proves them (WDDM
@@ -18884,7 +18884,7 @@ async def _brain_vl_fetch(entry, dest, label, cid=None):
     total, got, said = entry["bytes"], 0, 0
     if cid:
         HUB.broadcast(type="text", cid=cid,
-                      text=f"*downloading {label}: {dest.name} "
+                      text=f"*Downloading {label}: {dest.name} "
                            f"({total / 2**30:.1f} GB) - one time, then the look "
                            f"stays on the brain*")
     try:
@@ -19070,13 +19070,13 @@ async def frame_inventory(frame, ref_id, cid=None):
                 # optional; the brief rides the caption and the lane says why.
                 if cid:
                     HUB.broadcast(type="text", cid=cid,
-                                  text=f"*the look is skipped: {reason} - and "
+                                  text=f"*The look is skipped: {reason} - and "
                                        f"the critic ({critic}) is not downloaded, "
                                        f"so the brief rides the caption*")
                 return ""
             if cid:
                 HUB.broadcast(type="text", cid=cid,
-                              text=f"*the brain could not look ({reason}) - the "
+                              text=f"*The brain could not look ({reason}) - the "
                                    f"critic on disk reads the frame instead*")
             job = await HUB.submit(cid or uuid.uuid4().hex[:8], "look", "vl_look",
                                    f"look at #{ref_id}", {"image": name}, 1)
@@ -19097,7 +19097,7 @@ async def frame_inventory(frame, ref_id, cid=None):
             # lets the user catch a misread frame BEFORE the render spends
             # minutes animating somebody else's picture.
             HUB.broadcast(type="text", cid=cid,
-                          text=f"*what the camera sees: {text}*")
+                          text=f"*What the camera sees: {text}*")
         return text
     except Exception:
         return ""
@@ -20686,7 +20686,7 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                     and not scene_text
                 if echoed_brief:
                     HUB.broadcast(type="text", cid=cid, text=(
-                        "*the writer answered with its own brief instead of a "
+                        "*The writer answered with its own brief instead of a "
                         "scene, so there was nothing to render \u2014 say that "
                         "again and I'll retry*"))
                     return
@@ -22771,7 +22771,7 @@ async def animate(req):
     # cuts; only longer pieces fall back to chaining. See h3_cut_plan().
     cut_plan = h3_cut_plan(shots, seconds) if engine == "h3" else None
     if script:
-        HUB.broadcast(type="text", cid=cid, text=f"*your script:* {motion}")
+        HUB.broadcast(type="text", cid=cid, text=f"*Your script:* {motion}")
         written = split_shot_script(script)
         if cut_plan and len(written) == shots:
             motion = compile_cut_script(written, cut_plan[1])
@@ -22779,7 +22779,7 @@ async def animate(req):
         motion, directed = await look_and_direct(body, prep, cut_plan, cid)
         # show the brief in the lane - the user should SEE what their note became
         HUB.broadcast(type="text", cid=cid,
-                      text=(f"*the brief:* {motion}" if directed else
+                      text=(f"*The brief:* {motion}" if directed else
                             f"*motion director unreachable - going with:* {motion}"))
     if cut_plan:
         args["seconds"] = cut_plan[0]      # per-shot seconds became the whole take
@@ -22833,7 +22833,7 @@ async def animate(req):
             motion = await repair_h3_speech_in_progress(motion, cid)
         if ref_warnings:
             HUB.broadcast(type="text", cid=cid,
-                          text="*ref2va: " + "; ".join(ref_warnings) + "*")
+                          text="*Ref2va: " + "; ".join(ref_warnings) + "*")
     if engine == "h3":
         # 9.38: the standing dialogue format is spelled LAST, after every
         # tag-keyed repair above - and on scripts too, since only the syntax
@@ -23152,7 +23152,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
             "or pass explicit shots"))
         return
     HUB.broadcast(type="text", cid=cid, text=(
-        f"*trailer: {len(shots)} shots x {per}s. Stills first, then sound "
+        f"*Trailer: {len(shots)} shots x {per}s. Stills first, then sound "
         f"and motion, then the stitch - this takes a while.*"))
     # phase 1: every still on one realism residency. A shot may bring its own
     # image instead ("file": a poster, a title card) - letterboxed, not rendered.
@@ -23167,7 +23167,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                 stills.append((i, shot, card, None))
             except (OSError, ValueError) as exc:
                 HUB.broadcast(type="text", cid=cid,
-                              text=f"*shot {i} card unreadable ({exc}) - dropping it*")
+                              text=f"*Shot {i} card unreadable ({exc}) - dropping it*")
             continue
         HUB.broadcast(type="thinking", cid=cid,
                       note=f"trailer still {i}/{len(shots)}")
@@ -23188,7 +23188,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                     if im.get("media", "image") == "image"), None) if ok else None
         if not img:
             HUB.broadcast(type="text", cid=cid,
-                          text=f"*shot {i} still failed - dropping it*")
+                          text=f"*Shot {i} still failed - dropping it*")
             continue
         stills.append((i, shot, CDIR / "output" / (img.get("subfolder") or "")
                        / img["filename"], sjob["id"]))
@@ -23196,7 +23196,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
         # look-dev dry run: the stills are already lane cards and ledger
         # entries - judge the grade, then run the full cut
         HUB.broadcast(type="text", cid=cid,
-                      text=f"*stills-only pass done: {len(stills)} frames*")
+                      text=f"*Stills-only pass done: {len(stills)} frames*")
         return
     reused = [s for s in shots if s.get("clip")]
     if len(stills) + len(reused) < 2:
@@ -23212,7 +23212,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
             frame, w, h = prepare_h3_frame(src)
         except (OSError, ValueError) as exc:
             HUB.broadcast(type="text", cid=cid,
-                          text=f"*shot {i} frame prep failed ({exc}) - dropping it*")
+                          text=f"*Shot {i} frame prep failed ({exc}) - dropping it*")
             continue
         if shot.get("script"):
             motion = assemble_h3_prompt(shot["script"], user_script=True,
@@ -23240,7 +23240,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
     rendered = {}
     for n_, (i, shot, motion, frame, w, h, parent) in enumerate(briefs, 1):
         HUB.broadcast(type="text", cid=cid,
-                      text=f"*shot {n_}/{len(briefs)}: rolling H3*")
+                      text=f"*Shot {n_}/{len(briefs)}: rolling H3*")
         vjob = await HUB.submit(cid, "chat", "h3_i2v", motion,
                                 {"seconds": per, "model": h3_model,
                                  "image": frame, "width": w, "height": h},
@@ -23250,7 +23250,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                     if im.get("media") == "video"), None) if ok else None
         if not vid:
             HUB.broadcast(type="text", cid=cid,
-                          text=f"*shot {n_} clip failed - dropping it*")
+                          text=f"*Shot {n_} clip failed - dropping it*")
             continue
         made = (CDIR / "output" / (vid.get("subfolder") or "") / vid["filename"])
         card = shot.get("title") or {}
@@ -23264,10 +23264,10 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                                  out_at=card.get("out_at"))
                 made = burned
                 HUB.broadcast(type="text", cid=cid,
-                              text=f"*shot {i}: title composited over the plate*")
+                              text=f"*Shot {i}: title composited over the plate*")
             except (RuntimeError, OSError, ValueError) as exc:
                 HUB.broadcast(type="text", cid=cid,
-                              text=f"*shot {i} title burn failed ({exc}) - using the clean plate*")
+                              text=f"*Shot {i} title burn failed ({exc}) - using the clean plate*")
         rendered[i] = made
     # phase 4: re-interleave. Reused clips never entered phases 1-3, so the
     # cut is assembled back in SHOT order, not render order.
@@ -23281,7 +23281,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
                 clips.append(p)
             else:
                 HUB.broadcast(type="text", cid=cid,
-                              text=f"*shot {i}: approved clip {p.name} is gone - dropping it*")
+                              text=f"*Shot {i}: approved clip {p.name} is gone - dropping it*")
         elif i in rendered:
             clips.append(rendered[i])
     if len(clips) < 2:
@@ -23319,7 +23319,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
     # whole stitch in would put ~1600 frames in one tensor; 124 will not fall
     # over. The 1x cut above is already saved and stays saved.
     HUB.broadcast(type="text", cid=cid, text=(
-        f"*now the 2x pass: {len(clips)} clips through RTX {upscale}. "
+        f"*Now the 2x pass: {len(clips)} clips through RTX {upscale}. "
         f"The original stays where it is.*"))
     ups = []
     for n_, c in enumerate(clips, 1):
@@ -23338,7 +23338,7 @@ async def run_trailer(cid, concept, shots_in=None, seconds_total=60,
         # concat needs one canvas for every clip, so a VSR miss gets a plain
         # lanczos 2x rather than being dropped - the cut stays complete.
         HUB.broadcast(type="text", cid=cid,
-                      text=f"*clip {n_} VSR failed - lanczos 2x instead*")
+                      text=f"*Clip {n_} VSR failed - lanczos 2x instead*")
         alt = c.with_name(c.stem + "-2x.mp4")
         code, err = await _run_ffmpeg(
             [_ffmpeg_exe(), "-y", "-i", str(c), "-vf",
@@ -23683,7 +23683,7 @@ async def review(req):
                     HUB.broadcast(type="thinkingdone", cid=cid)
                     HUB.broadcast(
                         type="text", cid=cid,
-                        text=(f"*the review cannot run: {why} - and the "
+                        text=(f"*The review cannot run: {why} - and the "
                               f"reviewer ({critic}{size}) is not downloaded; "
                               f"pick another in Settings or download it, "
                               f"then click review again*"))
@@ -23704,7 +23704,7 @@ async def review(req):
             # "reading the shot" spinner forever. Say what happened instead.
             HUB.broadcast(type="thinkingdone", cid=cid)
             HUB.broadcast(type="text", cid=cid,
-                          text=f"*the review failed: {exc}*")
+                          text=f"*The review failed: {exc}*")
 
     asyncio.create_task(_review())
     return web.json_response({"ok": True, "cid": cid})
@@ -25811,7 +25811,7 @@ async def access_gate(request, handler):
             resp.set_cookie("pixal_key", ACCESS_KEY, max_age=30 * 86400,
                             httponly=True, samesite="Lax")
         return resp
-    return web.Response(status=403, text="pixal: key required")
+    return web.Response(status=403, text="Pixal: key required")
 
 # The ONLY ComfyUI paths a browser may pull through the sidecar. This was
 # `{tail:.*}` until 2026-08-14 - i.e. every GET route on a ComfyUI carrying ~50
@@ -26210,8 +26210,22 @@ async def ensure_comfy_running():
     # reachable poll then subtracted None and took the whole task down
     # (sidecar.log, 2026-08-26, mid H3 2x clip).
     started = COMFY_BOOT["at"]
+    # Our OWN handle on the console we just opened. Re-reading COMFY_BOOT["proc"]
+    # every tick looked equivalent and was not: stop_comfy() nulls that field,
+    # so the moment anything stopped ComfyUI this watcher went blind to the
+    # death of the very child it had launched. It then polled a dead port for
+    # the rest of its grace - up to 15 minutes of wall clock, because each tick
+    # is a 2s sleep plus a 3s probe timeout - while kick_comfy_boot's
+    # one-attempt-at-a-time guard handed that same lost task back to every
+    # later caller. Retry, reload and /api/comfy/restart all became no-ops
+    # behind a meterless "waiting for ComfyUI" (2026-09-04).
+    mine = COMFY_BOOT.get("proc")
     for _ in range(180):                                    # 6 minutes of grace
         await asyncio.sleep(2)
+        # Someone stopped or replaced this boot: it is no longer ours to report
+        # on, and whoever owns COMFY_BOOT now owns its error and its meter too.
+        if COMFY_BOOT.get("proc") is not mine:
+            return
         if await comfy_reachable(timeout=3):
             stamp = COMFY_BOOT["at"] or started
             took = round(time.time() - stamp, 1) if stamp else None
@@ -26234,7 +26248,7 @@ async def ensure_comfy_running():
         # crashed boot reports in seconds instead of riding out the grace.
         # (A .bat parked on `pause` after a crash keeps cmd.exe alive; that
         # shape still takes the timeout - poll() catches the clean exits.)
-        proc = COMFY_BOOT.get("proc")
+        proc = mine
         if proc is not None and proc.poll() is not None:
             # "its console window has the error" was true and useless: by the
             # time anyone reads this the window is gone. The wrapper leaves the
@@ -26337,7 +26351,14 @@ async def restart_comfy(_req):
 
     For the state no endpoint can fix - a wedged sampler, a custom node that
     needs reloading.
+
+    This endpoint IS the user saying "start over", so an attempt already in
+    flight is cancelled rather than joined. Without that, stop_comfy() killed
+    the ComfyUI the running attempt had just launched and kick_comfy_boot()
+    handed that same orphaned attempt straight back - a restart that stopped
+    ComfyUI and started nothing, for as long as the old grace had left to run.
     """
+    await cancel_comfy_boot()
     try:
         pids = stop_comfy()
     except (OSError, subprocess.SubprocessError) as exc:
@@ -26412,6 +26433,25 @@ def comfy_closed_by_user():
     proc = COMFY_BOOT.get("proc")
     return bool(proc is not None and proc.poll() is not None
                 and not COMFY_BOOT.get("at"))
+
+
+async def cancel_comfy_boot():
+    """Stop an attempt in flight and wait for it to actually let go.
+
+    An explicit "start it again" must not join a boot that is already lost.
+    Cancelling BEFORE stop_comfy matters: the other order lets the cancelled
+    watcher hand COMFY_BOOT a proc we have already killed.
+    """
+    task = COMFY_BOOT.get("task")
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    if COMFY_BOOT.get("task") is task:
+        COMFY_BOOT["task"] = None
 
 
 def kick_comfy_boot():
@@ -27076,6 +27116,10 @@ def main():
     app.router.add_get("/api/comfy/manager/status", manager_status)
     app.router.add_get("/api/comfy/{tail:.*}", comfy_asset)
     app.router.add_static("/vendor", HERE / "web" / "vendor")
+    # Self-hosted Geist and Syne. Without this route the @font-face src 404s
+    # and every string in Pixal silently falls back to Arial - which is what
+    # it had been doing for the life of the app (2026-09-04).
+    app.router.add_static("/fonts", HERE / "web" / "fonts")
     app.router.add_get("/app.js", lambda r: web.FileResponse(
         HERE / "web" / "app.js", headers={"Content-Type": "application/javascript"}))
     app.on_startup.append(on_start)

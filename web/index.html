@@ -48,7 +48,37 @@ addEventListener("appinstalled", function () { window.__pixalInstall = null; });
 <link rel="icon" type="image/png" sizes="16x16" href="/icons/tile-16.png">
 <link rel="apple-touch-icon" href="/icons/block-192.png">
 <title>Pixal</title>
+<link rel="preload" href="/fonts/geist-variable-latin.woff2" as="font"
+      type="font/woff2" crossorigin>
 <style>
+  /* The design system has named Geist since day one and the app had never
+     loaded it: no @font-face, nothing vendored, so the stack fell through
+     -apple-system and BlinkMacSystemFont (neither of which resolves on
+     Windows) to plain sans-serif, and CSS.getPlatformFontsForNode reported
+     ArialMT for every string in Pixal. Jesse spotted it by eye on
+     2026-09-04: "what font is that text? … looks like ARIAL".
+
+     It also silently broke the weight scale. Arial ships regular and bold
+     only, so W.label 300 and W.body 400 both drew regular and W.nav 500 and
+     W.heading 600 both drew BOLD - which is why asking for one step heavier
+     produced full bold with nothing between.
+
+     Variable faces (100-900), self-hosted: a local studio must not need
+     fonts.googleapis.com to render its own settings panel. */
+  @font-face {
+    font-family: 'Geist';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('/fonts/geist-variable-latin.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'Syne';
+    font-style: normal;
+    font-weight: 400 800;
+    font-display: swap;
+    src: url('/fonts/syne-variable-latin.woff2') format('woff2');
+  }
   html, body { margin: 0; height: 100%; background: #03080A; }
   #root { min-height: 100dvh; }
 </style>

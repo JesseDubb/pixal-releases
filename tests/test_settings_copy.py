@@ -415,42 +415,46 @@ class CtaSentenceCase(unittest.TestCase):
     def test_every_cta_starts_with_a_capital(self):
         ctas = list(self._segment_option_labels()) + list(self._button_texts())
         self.assertGreater(len(ctas), 20, "the CTA sweep went blind")
-        offenders = [s for s in ctas if s[0].islower()]
+        offenders = [s for s in ctas if s[0].islower() and "@" not in s]  # an address is a place, not a verb
         self.assertEqual(offenders, [],
                          "CTA labels starting lowercase: %s" % offenders)
 
 
-class CleanUpSection(unittest.TestCase):
-    """9.46: Clean up gives memory back and says how much. Five actions in
+class MemorySection(unittest.TestCase):
+    """9.46: Memory gives it back and says how much. Five actions in
     the pinned order, every toast naming the GB it actually freed; the
     brain's idle window is the one setting; everything sleeps while a
     render is in flight. The wording is Jesse's - these are pins, not
     suggestions."""
 
     @staticmethod
-    def _block():
+    def _block(title="Memory"):
         for props, block in _sections():
-            if "Clean up" in props.get("title", ""):
+            if title in props.get("title", ""):
                 return props, block
-        raise AssertionError("the Clean up section is gone")
+        raise AssertionError("the Memory section is gone")
 
-    def test_the_section_carries_its_tip_and_gloss(self):
-        props, _ = self._block()
-        self.assertIn("Nothing hands memory back until asked. "
-                      "Each button says what it freed.", props["title"])
-        # 10.0: the gloss moved into the tip - "A full card is a slow render."
-        # states a rule, and a rule rides the tip, not the subline
-        self.assertIn("A full card is a slow render.", props["title"])
+    def test_memory_explains_automatic_release_and_maintenance_is_separate(self):
+        props, block = self._block()
+        self.assertIn("Pixal releases idle models automatically", props["title"])
+        self.assertIn("<MemoryOverview gpu={store.gpu}", block)
+        maintenance, _ = self._block("Maintenance")
+        self.assertEqual(maintenance["gloss"].strip('"'), "Release cached models and memory.")
 
     def test_the_five_actions_in_their_order(self):
-        _, block = self._block()
+        _, block = self._block("Maintenance")
         labels = []
         for m in re.finditer(r"<Btn\s", block):
             end = _tag_end(block, m.start())
             text = block[end:block.index("</Btn>", end)].strip()
             labels.append(" ".join(text.split()))
-        self.assertEqual(labels, ["Free VRAM", "Free brain", "Free RAM",
-                                  "Reset desktop", "Free all"])
+        # 2026-09-04: the wall of five wrapping pills became five rows, so
+        # the target moved from the button to the row label and the button
+        # says only the verb.
+        self.assertEqual(labels, ["Free", "Free", "Free", "Reset", "Free all"])
+        for row in ("Video memory", "Chat brain", "System RAM",
+                    "Desktop", "Everything"):
+            self.assertIn(row, block)
 
     def test_every_action_reports_what_it_freed(self):
         # the single buttons name the resource; Free all toasts the total
@@ -475,14 +479,14 @@ class CleanUpSection(unittest.TestCase):
                       "next message wakes it in seconds.", block)
 
     def test_the_buttons_sleep_while_a_render_is_in_flight(self):
-        _, block = self._block()
+        _, block = self._block("Maintenance")
         self.assertIn("renderBusy", block)
         self.assertIn('"wait for the render"', block)
         self.assertIn("store.liveJobs", SRC)
 
     def test_the_frees_moved_out_of_compute(self):
         # Compute keeps the address, Restart, and the boot behaviour - the
-        # flush buttons live in Clean up now.
+        # flush buttons live in Memory now.
         for props, block in _sections():
             if "Compute" in props.get("title", ""):
                 self.assertNotIn("/api/comfy/free", block)
@@ -510,13 +514,13 @@ class ModelsLibraryTab(unittest.TestCase):
     def test_the_summary_line_counts_the_profileless(self):
         # 141 of 416 on the machine this shipped from — the single most
         # useful fact the app had never told anyone
-        self.assertIn("have no profile", SRC)
+        self.assertIn('{ count: unprofiled, label: "Without a profile" }', SRC)
 
     def test_the_three_required_tips_ship(self):
         tips = _tip_texts()
         self.assertTrue(any(t and "architecture, not a brand" in t
                             for t in tips), "the family tip is missing")
-        self.assertTrue(any(t and "A profile is what Pixal knows" in t
+        self.assertTrue(any(t and "A profile identifies" in t
                             for t in tips), "the profile tip is missing")
         self.assertTrue(any(t and "offloads to system memory" in t
                             and "never a block" in t for t in tips),
@@ -547,15 +551,16 @@ class H3Upscale2xSection(unittest.TestCase):
     render's own latent, so it can never be a button on a finished clip)
     and it costs roughly 3× the render time."""
 
-    def test_the_section_sits_in_finishing_right_after_the_upscaler(self):
+    def test_render_time_upscale_sits_with_render_defaults_not_finished_clip_actions(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
-        fin = video.index("<GroupLabel>Finishing</GroupLabel>")
-        upscaler = video.index('<Section title={<>Upscaler', fin)
-        # 10.0: the 2x default is a ROW now, immediately after the section
-        nxt = video.index("<Field ", video.index("</Section>", upscaler))
-        # 2026-09-01: the factor renders as the little Chip, not label prose
-        self.assertIn("H3 <Chip>2×</Chip> upscale", video[nxt:nxt + 300],
-                      "the row right after Upscaler is not the H3 2× one")
+        defaults = video.index('<Section title="MiniMax H3 render defaults">')
+        upscale = video.index('label={<>H3 upscale')
+        finishing = video.index("<GroupLabel>Post processing</GroupLabel>")
+        self.assertLess(defaults, upscale)
+        self.assertLess(upscale, finishing)
+        field = video[upscale:video.index("</Field>", upscale)]
+        self.assertNotIn("<Chip>", field)
+        self.assertNotIn("hint=", field)
 
     def test_the_infotip_names_both_undiscoverable_facts(self):
         tips = [t for t in _tip_texts() if t and "inside the render" in t]
@@ -579,7 +584,7 @@ class H3ResolutionSection(unittest.TestCase):
 
     def test_the_section_sits_next_to_the_2x_one(self):
         video = SRC[SRC.index('{tab === "video" &&'):]
-        two_x = video.index('label={<>H3 <Chip>2×</Chip> upscale')
+        two_x = video.index('label={<>H3 upscale')
         nxt = video.index("<Field ", two_x + 1)
         self.assertIn("H3 resolution", video[nxt:nxt + 300],
                       "the row right after H3 2× upscale is not the "
@@ -596,10 +601,13 @@ class H3ResolutionSection(unittest.TestCase):
 
     def test_the_gloss_is_the_per_clip_contract(self):
         section = SRC[SRC.index('label={<>H3 resolution'):]
-        # 10.0: the gloss is the row's inline subline now, same words
+        # 2026-09-04: the subline is gone. It repeated its own tip in fewer
+        # words and then truncated to nothing readable - "the job of the info
+        # bubbles was to reduce those" (Jesse). The contract lives in the tip.
         section = section[:section.index("</Field>")]
-        self.assertIn("The popup still decides per clip — this sets the default.",
-                      section)
+        self.assertIn("The Animate popup still decides per clip; this only "
+                      "sets the default.", section)
+        self.assertNotIn("hint=", section)
         self.assertIn("<SegmentedControl", section)
         self.assertIn("<InfoTip", section)
         self.assertIn("detail comes from the model, not an upscaler", section)

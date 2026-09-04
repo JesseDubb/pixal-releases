@@ -34,7 +34,7 @@
 // changed nothing must not POST, or tabbing through Settings would save
 // everything it passed.
 import { useEffect, useRef, useState } from "react";
-import { FONT, RADIUS, TYPE, W } from "./design-tokens.js";
+import { FONT, HEIGHT, RADIUS, TYPE, W } from "./design-tokens.js";
 
 const decimals = (step) => {
   const s = String(step);
@@ -100,7 +100,7 @@ export const NumberField = ({ value, onCommit, label, title, step = 0.05,
         else if (e.key === "ArrowUp") { e.preventDefault(); nudge(+step); }
         else if (e.key === "ArrowDown") { e.preventDefault(); nudge(-step); }
       }}
-      style={{ width, height: 24, padding: "0 8px", boxSizing: "border-box",
+      style={{ width, height: HEIGHT.rail, padding: "0 8px", boxSizing: "border-box",
                background: "var(--bg3)",
                border: "1px solid var(--border)",
                borderRadius: RADIUS.pill, color: "var(--text)",

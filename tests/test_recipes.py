@@ -1753,8 +1753,8 @@ class VramButlerBehavior(unittest.TestCase):
         brain.assert_not_awaited()          # the flush alone made room
         self.assertTrue(job.get("model_switch"))
         self.assertEqual(hub.texts,
-                         ["*freed 12 GB of idle lane weights*",
-                          "*making room - this render stages ~13GB: "
+                         ["*Freed 12 GB of idle lane weights*",
+                          "*Making room - this render stages ~13GB: "
                           "cleared cached models*"])
 
     def test_a_stack_too_big_for_the_flush_rests_the_brain(self):
@@ -1846,7 +1846,7 @@ class VramButlerBehavior(unittest.TestCase):
         self.assertFalse(hub.critic_hot)     # the flush evicted it too
         priced.assert_not_awaited()
         brain.assert_awaited_once()
-        self.assertTrue(any("rested the chat brain" in t for t in hub.texts))
+        self.assertTrue(any("Rested the chat brain" in t for t in hub.texts))
         self.assertNotIn("model_switch", job)
 
 
@@ -1999,7 +1999,7 @@ class VramPrevFloorTrim(unittest.TestCase):
         self.assertEqual(hub.resident_heavies,      # the stack stays resident
                          {"Krea 2\\m.safetensors": 12 * 2**30})
         self.assertEqual(hub.texts,
-                         ["*rested the chat brain for headroom - the last "
+                         ["*Rested the chat brain for headroom - the last "
                           "render ended at 0.9GB free*"])
 
     def test_a_comfortable_last_job_costs_the_next_one_nothing(self):
@@ -2092,7 +2092,7 @@ class VramButlerBrainRest(unittest.TestCase):
         self.assertEqual(hub.resident_heavies,
                          {"ZiT\\new.safetensors": 12 * 2**30})
         self.assertEqual(hub.texts,
-                         ["*brain rested for the render (6.0 GB)*"])
+                         ["*Brain rested for the render (6.0 GB)*"])
         self.assertNotIn("model_switch", job)
 
     def test_a_rest_that_falls_short_still_flushes_without_repeating(self):
@@ -2105,8 +2105,8 @@ class VramButlerBrainRest(unittest.TestCase):
         self.assertTrue(hub.flushed)
         self.assertTrue(job.get("model_switch"))
         self.assertEqual(hub.texts, [
-            "*brain rested for the render (6.0 GB)*",
-            "*making room - this render stages ~13GB: cleared cached models. "
+            "*Brain rested for the render (6.0 GB)*",
+            "*Making room - this render stages ~13GB: cleared cached models. "
             "Still tight (13.0GB free) - something outside Pixal holds the "
             "rest, so this one may crawl*"])
 
@@ -2237,7 +2237,7 @@ class WarmVideoRerun(unittest.TestCase):
         self.assertFalse(hub.flushed)           # rest, not trim
         self.assertEqual(hub.resident_heavies, warm)
         self.assertEqual(hub.texts,
-                         ["*rested the chat brain for headroom - the last "
+                         ["*Rested the chat brain for headroom - the last "
                           "render ended at 0.9GB free*"])
 
     def test_a_near_miss_without_a_brain_trims_without_unloading(self):

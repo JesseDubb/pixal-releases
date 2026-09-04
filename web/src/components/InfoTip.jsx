@@ -15,7 +15,20 @@ import { OverlayMotionStyle } from "../lib/ModalShell.jsx";
 // Geometry uses a callback ref + getBoundingClientRect at attach time so
 // the measurement happens the moment the portal node enters the DOM —
 // no flash, no second render needed.
-export const InfoTip = ({ text, size = 14, maxWidth = 260, side = "bottom" }) => {
+//
+// ONE size, ONE width - by construction, not by convention. The icon is 14
+// and the tip is 260 wide everywhere, and neither is a prop: `size` and
+// `maxWidth` were, and within two weeks two call sites had grown their own
+// 300 and 320 to fit a longer paragraph (Jesse, 2026-09-04: "changes info
+// bubble size whenever he likes"). A tip that needs a wider box has too many
+// words in it - it is a RULE in one sentence, not a manual (DESIGN.md §4).
+// A component that can be resized will be; this one cannot.
+const ICON = 14;
+const WIDTH = 260;
+
+export const InfoTip = ({ text, side = "bottom" }) => {
+  const size = ICON;
+  const maxWidth = WIDTH;
   const [show, setShow] = useState(false);
   const iconRef = useRef(null);
   const tipNodeRef = useRef(null);

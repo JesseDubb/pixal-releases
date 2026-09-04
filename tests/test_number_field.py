@@ -86,24 +86,21 @@ class NumberFieldIsTypeable(unittest.TestCase):
 
 
 class PanelDoesNotResize(unittest.TestCase):
-    def test_the_save_strip_is_out_of_flow(self):
-        """The toast floats over the card instead of joining its column.
-
-        Both card shapes are bottom-anchored flex columns, so a strip that
-        appears and disappears in normal flow moves the whole panel - under
-        the cursor, on the control still being edited."""
-        strip = SETTINGS[SETTINGS.index("this strip is where the save talks back"):]
-        strip = strip[:strip.index("</div>")]
-        self.assertIn('position: "absolute"', strip)
-        self.assertNotIn("{note && (", strip)
-        self.assertIn("opacity: note ? 1 : 0", strip)
+    def test_the_save_strip_reserves_a_fixed_slot(self):
+        """A permanent fixed-height footer cannot resize the settings body."""
+        workspace = (ROOT / "web/src/components/SettingsWorkspace.jsx").read_text(encoding="utf-8")
+        strip = workspace.split(".px-settings-footer {", 1)[1].split("}", 1)[0]
+        self.assertIn("height:42px", strip)
+        self.assertIn("flex:none", strip)
+        self.assertIn('<footer className="px-settings-footer"', workspace)
+        self.assertIn("Changes save automatically", workspace)
 
     def test_the_floating_shapes_hold_one_height(self):
         """A cap alone lets the card size to its CONTENT, so it resized on
         every tab change - and both floating shapes are anchored from the
         bottom, so the panel jumped on the way to the tab being aimed at.
         The docked shape was always height:100%; these two match it now."""
-        for token in ('height: "82dvh"', 'height: "86vh"'):
+        for token in ('height: "82dvh"', 'height: "90vh"'):
             with self.subTest(shape=token):
                 self.assertIn(token, SETTINGS)
         self.assertNotIn('maxHeight: "82dvh"', SETTINGS)

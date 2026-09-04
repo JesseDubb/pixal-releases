@@ -260,7 +260,7 @@ class IdleLaneFirstTests(EvictionOrderTests):
                                       "gb": 21.0, "role": "comfy"}])
         self.assertEqual(hub.calls, [("flush", False)])   # soft, never free_memory
         hub.brain.assert_not_awaited()
-        self.assertEqual(hub.texts, ["*freed 21 GB of idle edit weights*"])
+        self.assertEqual(hub.texts, ["*Freed 21 GB of idle edit weights*"])
         self.assertEqual(hub.resident_heavies,
                          {"ZiT\\new.safetensors": 12 * GB})
         self.assertTrue(job.get("model_switch"))          # cleared, then loads
@@ -272,8 +272,8 @@ class IdleLaneFirstTests(EvictionOrderTests):
                                 "gb": 21.0, "role": "comfy"}])
         self.assertEqual(hub.calls, [("flush", False), "brain"])  # the order
         self.assertEqual(hub.texts,
-                         ["*freed 21 GB of idle edit weights*",
-                          "*brain rested for the render (6.0 GB)*"])
+                         ["*Freed 21 GB of idle edit weights*",
+                          "*Brain rested for the render (6.0 GB)*"])
 
     def test_a_lane_used_by_the_last_two_jobs_is_still_in_play(self):
         # N=2: the edit lane ran 2 jobs ago - ping-ponging lanes must never
@@ -284,7 +284,7 @@ class IdleLaneFirstTests(EvictionOrderTests):
         self.assertIn(("flush", True), hub.calls)          # the hard flush ran
         hub.brain.assert_not_awaited()                     # no brain to rest
         self.assertEqual(len(hub.texts), 1)
-        self.assertTrue(hub.texts[0].startswith("*making room"))
+        self.assertTrue(hub.texts[0].startswith("*Making room"))
 
     def test_the_desktop_is_named_but_never_touched(self):
         hub = self.hub_with_idle_edit_lane()
@@ -295,14 +295,14 @@ class IdleLaneFirstTests(EvictionOrderTests):
         self.assertEqual(hub.calls, [("flush", False)])    # no desktop action
         self.assertEqual(
             hub.texts[-1],
-            "*desktop holds 2.6 GB - Clean up → Reset desktop*")
+            "*Desktop holds 2.6 GB - Maintenance → Desktop → Reset*")
 
     def test_a_quiet_desktop_gets_no_line(self):
         hub = self.hub_with_idle_edit_lane()
         self.run_butler(hub, [10, 25], brain_est_gb=6, table=[
             {"pid": 10, "name": "python.exe", "gb": 21.0, "role": "comfy"},
             {"pid": 20, "name": "dwm.exe", "gb": 1.0, "role": "desktop"}])
-        self.assertEqual(hub.texts, ["*freed 21 GB of idle edit weights*"])
+        self.assertEqual(hub.texts, ["*Freed 21 GB of idle edit weights*"])
 
 
 class WarmRerunAtTheWallTests(EvictionOrderTests):
@@ -329,7 +329,7 @@ class WarmRerunAtTheWallTests(EvictionOrderTests):
                 table=[{"pid": 10, "name": "python.exe",
                         "gb": 30.0, "role": "comfy"}])
         self.assertEqual(hub.calls, [("flush", False)])
-        self.assertEqual(hub.texts, ["*freed 21 GB of idle edit weights*"])
+        self.assertEqual(hub.texts, ["*Freed 21 GB of idle edit weights*"])
         self.assertEqual(hub.resident_heavies,
                          {"ZiT\\new.safetensors": 12 * GB})
         self.assertTrue(job.get("model_switch"))
@@ -340,7 +340,7 @@ class WarmRerunAtTheWallTests(EvictionOrderTests):
             self.run_butler(hub, [2, 10], brain_est_gb=6, brain_kills=[True],
                             gpu_free_gb=1, table=[])
         self.assertEqual(hub.calls, ["brain"])
-        self.assertEqual(hub.texts, ["*brain rested for the render (6.0 GB)*"])
+        self.assertEqual(hub.texts, ["*Brain rested for the render (6.0 GB)*"])
         self.assertEqual(hub.resident_heavies,     # the warm stack stayed
                          {"ZiT\\new.safetensors": 12 * GB})
 
@@ -363,7 +363,7 @@ class GuardEvictsTheIdleLaneTests(EvictionOrderTests):
         self.run_butler(hub, [8], brain_est_gb=6, gpu_free_gb=1, table=[])
         self.assertEqual(hub.calls, [("flush", False)])
         hub.brain.assert_not_awaited()
-        self.assertEqual(hub.texts, ["*freed 21 GB of idle edit weights*"])
+        self.assertEqual(hub.texts, ["*Freed 21 GB of idle edit weights*"])
         self.assertEqual(hub.resident_heavies,
                          {"ZiT\\new.safetensors": 12 * GB})
 
@@ -411,13 +411,13 @@ class FullCardTellTests(unittest.TestCase):
 
     def test_a_slow_job_at_the_wall_is_told(self):
         hub, job = self.run_finalize()
-        tells = [t for t in hub.texts if "rendered at a full card" in t]
+        tells = [t for t in hub.texts if "Rendered at a full card" in t]
         self.assertEqual(len(tells), 1)
         seconds = int(tells[0].split(" - ")[1].split(" ")[0])
         # ~130s against a 27.5s median: N ~= 103.
         self.assertTrue(100 <= seconds <= 105)
         self.assertEqual(tells[0],
-                         f"*rendered at a full card - {seconds} s slower "
+                         f"*Rendered at a full card - {seconds} s slower "
                          "than usual*")
 
     def test_a_comfortable_free_min_says_nothing(self):

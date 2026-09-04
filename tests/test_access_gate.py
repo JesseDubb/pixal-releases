@@ -117,7 +117,7 @@ class KeyedAccessTests(unittest.TestCase):
                 response, handler = run_gate(request(peer=("192.168.50.20", 51000),
                                                      query=query, cookies=cookies))
                 self.assertEqual(response.status, 403)
-                self.assertEqual(response.text, "pixal: key required")
+                self.assertEqual(response.text, "Pixal: key required")
                 handler.assert_not_awaited()
 
     def test_an_unset_access_key_does_not_open_the_gate(self):

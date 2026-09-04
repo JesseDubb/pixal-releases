@@ -680,7 +680,11 @@ returns 4×."
 Open Settings from the rail's gear. Six tabs — **General**, **Image**,
 **Video**, **Models**, **Chat**, **About** — and every control saves the moment you
 change it; the strip at the bottom confirms ("saved", "upscaler applied", …).
-The tab you used last is remembered.
+The tab you used last is remembered. Search at the top finds settings across
+all six tabs and installed models; choosing a result takes you to it. `/`
+focuses search. Escape closes an open picker first, clears an active search
+next, then closes Settings. On desktop, drag the panel's right edge to resize;
+double-click the edge to restore its default width.
 
 ### General
 
@@ -699,14 +703,17 @@ GPU." **Restart** restarts ComfyUI itself ("ComfyUI restarting - the boot
 meter takes it from here"): the fix for a wedged sampler or a node that
 will not let go.
 
-**Clean up** — "A full card is a slow render." Nothing hands memory back
-until asked, and each button says what it freed:
+**Memory** — live video-memory and system-memory readings, the local brain's
+idle timeout, and the VRAM profile. "A full card is a slow render." Pixal can
+release idle models automatically when a render needs room.
 
-- **Free VRAM** — drops the models ComfyUI has cached on the card.
-- **Free brain** — unloads the chat model; the next message brings it back.
-- **Free RAM** — resets ComfyUI's node cache and trims Pixal's and
+**Maintenance** — release cached memory immediately. Each button says what it freed:
+
+- **Video memory → Free** — drops the models ComfyUI has cached on the card.
+- **Chat brain → Free** — unloads the chat model; the next message brings it back.
+- **System RAM → Free** — resets ComfyUI's node cache and trims Pixal's and
   ComfyUI's working sets; the next render reloads the cache.
-- **Reset desktop** — restarts Explorer and the Windows compositor, which
+- **Desktop → Reset** — restarts Explorer and the Windows compositor, which
   hoard video memory: one screen flash, Explorer windows close, admin prompt.
 - **Free all** — the four in order, one toast with the total.
 
@@ -716,12 +723,12 @@ fast. **Brain idles after** sets when the local brain unloads itself
 (5 min, 10 min, 30 min, Never) — a warmed brain holds ~8 GB; idle, it
 unloads, and the next message wakes it in seconds.
 
-**When ComfyUI boots** — "Quiet" or "Open the graph editor". The tip:
+**On startup** — "Quiet" or "Open editor". The tip:
 ComfyUI likes to pop its node editor in a browser tab when it starts; quiet
 keeps that from interrupting, and the editor is always at the compute
 address above.
 
-**ComfyUI's console window** — "Meters" or "Plain console". The tip: meters
+**Console window** — "Meters" or "Plain console". The tip: meters
 wrap the launcher in a boot dashboard and keep an errors-only log at
 logs\comfy-errors.log; plain console is the raw ComfyUI output. Either way,
 closing that window stops ComfyUI. The Meters console has keys: `E` opens
@@ -735,7 +742,7 @@ GB to preview what that tier honestly gets. The tip: what the machine can
 hold resident is advisory — pickers flag what a tier holds poorly; the card
 itself is still managed at render time.
 
-**H3 text encoder** — same section, one picker. "Automatic — Qwen3-VL 32B"
+**H3 text encoder** — in Image → Model defaults → MiniMax H3. "Automatic — Qwen3-VL 32B"
 is the encoder MiniMax H3 was measured with, and the option names what it
 weighs, because the row is a VRAM control. A 4B or 8B encoder with a
 ClipProj projection stands in for the 32B: several GB freed and a faster
@@ -749,7 +756,7 @@ the same answer.
 **Model folders** — "Where checkpoints and LoRAs live." plus the count
 it indexed ("Found 412 files."). The list is every folder Pixal scans: your
 ComfyUI's `models` tree plus anything you add. Add a folder ("add a folder,
-e.g. D:\models"), remove one with its ×, then **Rescan folders** — the note
+e.g. D:\models"), remove one with its ×, then **Rescan** — the note
 says "rescanning - watch the status row" and the status row above the message
 box narrates the scan. This is how your existing checkpoint and LoRA library
 joins Pixal without moving a file.
@@ -882,7 +889,8 @@ with a half-second of gibberish.
 **Upscaler** — "The upscale button on finished clips." The "video
 clips" engine (VSR, or LTX 2.5 2x); walked in Section 5.
 
-**H3 2× upscale** — "The popup still decides per clip — this sets the
+**H3 upscale** — in MiniMax H3 render defaults, alongside H3 resolution,
+before Post processing. "The popup still decides per clip — this sets the
 default." The MiniMax 2× pass runs inside the render — it re-samples the
 render's own latent, so it can never be a button on a finished clip — and
 costs roughly 3× the render time. Greyed until the MMH3 Ultimate Upscale
@@ -898,14 +906,13 @@ upscale.
 ### Models
 
 The library — read-only; choosing per lane stays on the Image and Video
-tabs. The summary line counts what you own ("47 models · 416 LoRAs · 141
-have no profile") beside what the card measured ("The card reads as
-32 GB."); the tip there explains that a LoRA with no profile is skipped at
-render time rather than stacked blindly. Below it, every build you own
+tabs. Three summary values count models, LoRAs and LoRAs without a profile.
+The tip explains that a LoRA with no profile is skipped at render time rather
+than stacked blindly. Below it, every build you own is
 grouped by family — Krea 2, Z-Image, Klein, Qwen Image Edit, Qwen Image,
-Anima, Video, then Other — one line each: the product name (the raw
-filename is the tooltip; a Civitai-matched name links out), the lanes it
-runs, and its weight on disk. A build heavier than the card says so in its
+Anima, MiniMax H3, Video, then Other. Expand a family to see complete product
+names and filenames; a Civitai-matched name links out. Shared compatible lanes
+appear once per family, with each build's weight at the right. A build heavier than the card says so in its
 tooltip — it will offload and run slowly; nothing is blocked. A model
 nothing here can run says why ("a Flux model — no lane here runs it yet"),
 and video models point at the Animate lanes.
@@ -1138,7 +1145,7 @@ Pixal watches the card and manages it in the open. The notes you can meet:
   right … If it is unbearable, restarting ComfyUI is the quick way out.*"
 
 What to do, in escalating order: let it finish (it will be right, just
-slow); **Free VRAM** and **Free brain** in Settings → General → Clean up;
+slow); **Video memory → Free** and **Chat brain → Free** in Settings → General → Maintenance;
 set the chat
 brain to "Unload after reply" or CPU; drop the megapixels or the clip
 length; use the Animate dialog's "find a lighter build".
@@ -1285,7 +1292,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.3.0b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.3.1b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

@@ -708,7 +708,7 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
             <span style={{ fontSize: TYPE.label, fontWeight: W.label,
                            color: "var(--textSec)" }}>
               Anchor
-              <InfoTip size={12} text={"The anchor keeps identity outside the mask from drifting. "
+              <InfoTip text={"The anchor keeps identity outside the mask from drifting. "
                 + "Dropping it lets the attached reference drive the masked area. "
                 + "The composite still returns untouched pixels bit-identical."} />
             </span>

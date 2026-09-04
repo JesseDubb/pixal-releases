@@ -195,7 +195,7 @@ class FrameInventoryRouting(unittest.TestCase):
             out, mocks = _inventory(td, read=read, models=[])  # critic absent too
         self.assertEqual(out, "a red mug on the counter")
         mocks.submit.assert_not_awaited()
-        self.assertTrue(any("what the camera sees" in t
+        self.assertTrue(any("What the camera sees" in t
                             for t in _lane_texts(mocks.broadcast)))
 
     def test_a_missing_critic_is_never_downloaded_inside_a_render(self):
@@ -223,7 +223,7 @@ class FrameInventoryRouting(unittest.TestCase):
         lane = _lane_texts(mocks.broadcast)
         self.assertTrue(any("critic on disk reads the frame instead" in t
                             for t in lane), lane)
-        self.assertTrue(any("what the camera sees" in t for t in lane), lane)
+        self.assertTrue(any("What the camera sees" in t for t in lane), lane)
 
 
 class FrameInventoryNeverDies(unittest.TestCase):

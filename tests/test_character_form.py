@@ -134,16 +134,28 @@ class SexIsTheSharedControl(unittest.TestCase):
         effect and the job's own step counter - the SAME DotMatrix and bar a
         job card shows, subscribed per job so a step repaints only the tile."""
         self.assertIn("const EditingVeil = ", SRC)
-        self.assertIn('import { api, useJobLive } from "../store.js";', SRC)
+        self.assertIn('import { api, useJobLive, useStore } from "../store.js";', SRC)
         self.assertIn('import { DotMatrix } from "../lib/DotMatrix.jsx";', SRC)
         veil = SRC[SRC.index("const EditingVeil = "):]
         veil = veil[:veil.index("\n};")]
+        # The id is derived INSIDE the veil: the form does not subscribe to
+        # the store, so an id passed down was a snapshot taken before the job
+        # existed and the veil sat on "queued…" forever (2026-09-04).
+        self.assertIn("const store = useStore();", veil)
+        self.assertIn("(store.liveJobs || [])[0]", veil)
         self.assertIn("useJobLive(jobId)", veil)
-        self.assertIn("<DotMatrix preview={live.preview}", veil)
+        # `fill`, not an aspect: the tile is already 3/4, so an aspect-held
+        # canvas inside its padding letterboxed twice and left an un-dotted
+        # margin ("the dot effect isnt even covering the full frame").
+        self.assertIn("<DotMatrix preview={live.preview} fill />", veil)
         self.assertIn("sampling ${p.value}/${p.max}", veil)
         self.assertIn("GLASS_SOLID.background", veil,
                       "the face dims under the effect")
         self.assertRegex(SRC, r"pendingEdit \? \(\s*<EditingVeil")
+        # The veil owns the tile while it runs. The filename strip is a later
+        # sibling in the same stacking context, so it painted its name through
+        # the veil's status line - "queued…" on top of Zara_ref_crop.png.
+        self.assertIn("{!pendingEdit && (", SRC)
 
     def test_a_profile_edit_never_posts_into_the_chat(self):
         """The photo edit renders where the user is looking. It used to post a

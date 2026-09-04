@@ -17,7 +17,7 @@ import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { Switch } from "../lib/Switch.jsx";
 import { characterPreview, characterRecord, inputFullUrl, inputImages,
          inputImgUrl, stageInput, upload } from "../transport.js";
-import { api, useJobLive } from "../store.js";
+import { api, useJobLive, useStore } from "../store.js";
 import { DotMatrix } from "../lib/DotMatrix.jsx";
 import { EditDirector } from "./EditDirector.jsx";
 import { InfoTip } from "./InfoTip.jsx";
@@ -406,7 +406,17 @@ const CHARACTER_FORM_CSS = `
 // preview's structure, then the 2px accent bar and the step counter. Same
 // telemetry channel too - subscribed per job, so a step tick repaints this
 // tile and nothing else in the dialog.
-const EditingVeil = ({ jobId, label }) => {
+const EditingVeil = ({ label }) => {
+  // The id is read HERE, not passed in. The form does not subscribe to the
+  // store, so a jobId derived up there was a snapshot taken before the job
+  // existed: useJobLive(null) subscribes to nothing, no step ever arrives,
+  // and the veil sat on "queued…" for the whole render (Jesse, 2026-09-04:
+  // "there is no status update to the fact it is doing anything"). Reading
+  // it inside the veil also keeps the repaint here - a store subscription on
+  // the form would re-render the whole dialog on every sampling tick, which
+  // is exactly what render-quiet forbids.
+  const store = useStore();
+  const jobId = (store.liveJobs || [])[0] || null;
   const live = useJobLive(jobId);
   const p = live.progress || {};
   const pct = p.max ? Math.round((100 * p.value) / p.max) : 0;
@@ -414,11 +424,11 @@ const EditingVeil = ({ jobId, label }) => {
     <div aria-hidden="true"
       style={{ position: "absolute", inset: 0, overflow: "hidden",
                borderRadius: RADIUS.dialog,
-               background: GLASS_SOLID.background,
-               display: "flex", flexDirection: "column",
-               alignItems: "stretch", justifyContent: "center",
-               padding: SPACE[12], gap: SPACE[10] }}>
-      <DotMatrix preview={live.preview} aspect="3 / 4" />
+               background: GLASS_SOLID.background }}>
+      {/* Edge to edge: the tile is already 3/4, so an aspect-held canvas
+          inside its padding letterboxed inside a box that had no room to
+          give. */}
+      <DotMatrix preview={live.preview} fill />
       <div style={{ position: "absolute", left: SPACE[12], right: SPACE[12],
                     bottom: SPACE[12] }}>
         <span style={{ display: "block", marginBottom: SPACE[6],
@@ -788,9 +798,6 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
   // Armed when an edit render is in flight for the reference: a snapshot of
   // history ids at launch, so the one entry that appears after it is ours.
   const [pendingEdit, setPendingEdit] = useState(null);
-  // Renders run serially (store.js), so while this modal waits for its edit
-  // the live job IS that edit - the id a JobCard would subscribe to.
-  const editJobId = (api.liveJobs || [])[0] || null;
   // 9.83: the accessory reference rows — {k, image, description, enabled}.
   // `k` is a dialog-local uid so a removed row never shifts another's key;
   // it is stripped at save (the server stores image/description/enabled).
@@ -1051,9 +1058,9 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                              height: "calc(100% + 2px)",
                              objectFit: "cover" }} />
                   {pendingEdit ? (
-                    <EditingVeil jobId={editJobId}
-                      label={pendingEdit.label || "Editing her photo"} />
+                    <EditingVeil label={pendingEdit.label || "Editing her photo"} />
                   ) : null}
+                  {!pendingEdit && (
                   <div aria-hidden="true"
                     style={{ position: "absolute", left: -1, right: -1, bottom: -1,
                              height: 64,
@@ -1070,6 +1077,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                       {ref.split("/").pop()}
                     </span>
                   </div>
+                  )}
                 </div>
               ) : (
                 <label className={"px-cast-drop" + (busy ? " is-busy" : "")}
@@ -1229,7 +1237,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
               </div>
             </div>
 
-            <Group label={<>Always true <InfoTip size={11}
+            <Group label={<>Always true <InfoTip
                      text="only what is true in every picture — what changes shot to shot belongs in the prompt" /></>}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
                             gap: SPACE[10], columnGap: SPACE[12], minWidth: 0 }}>
@@ -1244,7 +1252,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                   </Field>
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <Field label={<>Build <InfoTip size={11} text={"The photo already carries the "
+                  <Field label={<>Build <InfoTip text={"The photo already carries the "
                            + "build — prose here fights it. This field is skipped when a reference "
                            + "photo is wired."} /></>}>
                     <input className="px-input px-cast-control"
@@ -1256,7 +1264,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                   </Field>
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <Field label={<>Hair <InfoTip size={11} text="always sent — state the colour" /></>}>
+                  <Field label={<>Hair <InfoTip text="always sent — state the colour" /></>}>
                     <input className="px-input px-cast-control"
                       style={{ ...inputStyle, height: 34, borderRadius: RADIUS.card,
                                padding: 0, paddingLeft: SPACE[12],
@@ -1291,7 +1299,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                 the identity mechanism - the wired photograph is, and in a
                 two-up she also gets half the pixels. Nothing in the data
                 changed; the label was the whole barrier. */}
-            <Group label={<>Wired references <InfoTip size={11} text={"On references are wired into "
+            <Group label={<>Wired references <InfoTip text={"On references are wired into "
                      + "every render of this anchor and ride every sampling step. Switch one "
                      + "off to keep it on the anchor but out of the graph, never sent to the "
                      + "model. Eight references fill the nine slots beside the identity photo. "
@@ -1355,7 +1363,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
               </div>
             </Group>
 
-            <Group label={<>For the writer <InfoTip size={11}
+            <Group label={<>For the writer <InfoTip
                      text="look and identity only, not jobs or lifestyle" /></>}
               style={{ flex: "1 1 auto" }}>
               <textarea className="px-input px-cast-control px-scroll px-cast-notes"
@@ -1390,7 +1398,7 @@ export const CharacterForm = ({ options, onClose, onSaved, refreshOptions,
                     fontSize: TYPE.body }}
                   value={wardrobe} onChange={(e) => setWardrobe(e.target.value)}
                   placeholder="She is fully dressed in the clothing described above." />
-                <InfoTip size={11} text={"The wardrobe clause closes the caption because "
+                <InfoTip text={"The wardrobe clause closes the caption because "
                   + "the last clause is the strongest one — leave it blank for the generic "
                   + "lock. An explicit NSFW ask lifts it."} />
               </div>

@@ -1,9 +1,11 @@
-const CACHE = "pixal-dm-dbd40803";
+const CACHE = "pixal-dm-c47d9144";
 const SHELL = [
   "/",
   "/app.js",
   "/manifest.webmanifest",
   "/vendor/three.module.js",
+  "/fonts/geist-variable-latin.woff2",
+  "/fonts/syne-variable-latin.woff2",
   "/icons/tile-16.png",
   "/icons/tile-24.png",
   "/icons/tile-32.png",

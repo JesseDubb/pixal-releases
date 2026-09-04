@@ -240,7 +240,7 @@ class SettingsRow(unittest.TestCase):
     def test_the_row_offers_add_dll_only_when_the_pack_is_there(self):
         self.assertIn("!stillCfg.dlss5_available && stillCfg.dlss5_node", UI)
         self.assertIn(">Add DLL<", UI.replace("\n", "").replace(" ", "")
-                      .replace('{dllBusy?"checking…":"AddDLL"}', ">Add DLL<"),
+                      .replace('{dllBusy?"Checking…":"AddDLL"}', ">Add DLL<"),
                       "the Add DLL affordance is gone")
 
     def test_the_hints_split_by_missing_half(self):

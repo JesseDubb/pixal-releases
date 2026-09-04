@@ -394,7 +394,7 @@ export const StyleForm = ({ options, opts, draft, editId = "", onClose, onSaved 
             {sampler?.reason || "Choose a model to see its sampler settings."}
           </span>
         )}
-        <Field label={<>Negative <InfoTip size={12} text="Only does anything above cfg 1.0." /></>}
+        <Field label={<>Negative <InfoTip text="Only does anything above cfg 1.0." /></>}
                hint="What the sampler steers away from">
           <input {...hoverable} value={negative}
             onChange={(e) => setNegative(e.target.value)}

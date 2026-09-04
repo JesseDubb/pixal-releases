@@ -25,8 +25,8 @@ PICKER = (ROOT / "web" / "src" / "lib" / "Picker.jsx").read_text(encoding="utf-8
 # The Chat brain section: from its heading to the next section (9.60's
 # Official prompting). The reviewer ScrollPicker sits further down the tab
 # and is NOT this brief's control.
-CHAT_BRAIN = SRC.split("<Section title={<>Chat brain", 1)[1] \
-               .split("<Rows cont>", 1)[0]   # 10.0: Official prompting is a row run now
+CHAT_BRAIN = SRC.split("<GroupLabel>Chat brain</GroupLabel>", 1)[1] \
+               .split("</Section>", 1)[0]
 
 
 class SharedPickerTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class GhostTests(unittest.TestCase):
     def test_the_ghost_is_the_triggers_own_box(self):
         # the shared trigger is a fixed 28px; the loading hold finally
         # matches it instead of the list's one-36px-row stand-in
-        self.assertIn("height: 24", PICKER)   # 10.0's value pill
+        self.assertIn("height: HEIGHT.rail", PICKER)   # 10.0's value pill
         self.assertIn("<PickerGhost />", CHAT_BRAIN)
         self.assertNotIn("h={36}", CHAT_BRAIN)
 

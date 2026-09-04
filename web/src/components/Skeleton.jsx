@@ -10,7 +10,7 @@
 // This file injects its own copy of the keyframes so Settings never depends
 // on HistoryGrid having mounted first; identical definitions dedupe in the
 // cascade.
-import { SPACE, RADIUS } from "../lib/design-tokens.js";
+import { SPACE, RADIUS, HEIGHT } from "../lib/design-tokens.js";
 
 const CSS = `
 @keyframes px-shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
@@ -41,8 +41,8 @@ export const Bar = ({ w = "100%", h = 14, style }) => (
 );
 
 // Pill-selector ghost (brief 10.0): the variant="pill" box SegmentedControl
-// renders - 1px border + 2px padding around 22px options, 28 outside to
-// outside. The options hug their labels now, so the bars are fixed-width
+// renders - 1px border + 2px padding around (HEIGHT.rail - 6) options,
+// HEIGHT.rail outside to outside. The options hug their labels now, so the bars are fixed-width
 // approximations on the row's right rail; HEIGHT identity is the contract
 // (the swap is opacity-only), the widths were never knowable anyway.
 export const SegGhost = ({ segments = 3 }) => (
@@ -51,7 +51,7 @@ export const SegGhost = ({ segments = 3 }) => (
     border: "1px solid var(--border)", borderRadius: RADIUS.pill, padding: 2,
   }}>
     {Array.from({ length: segments }).map((_, i) => (
-      <Bar key={i} w={36} h={22} style={{ borderRadius: RADIUS.pill }} />
+      <Bar key={i} w={36} h={HEIGHT.rail - 6} style={{ borderRadius: RADIUS.pill }} />
     ))}
   </div>
 );
@@ -61,11 +61,11 @@ export const SwitchGhost = () => (
   <Bar w={42} h={16} style={{ borderRadius: RADIUS.pill }} />
 );
 
-// Picker ghost: the 24px value-pill trigger with a shimmer bar where the
+// Picker ghost: the HEIGHT.rail value-pill trigger with a shimmer bar where the
 // value text will sit.
 export const PickerGhost = () => (
   <div aria-hidden="true" style={{
-    height: 24, width: 180, boxSizing: "border-box", display: "flex",
+    height: HEIGHT.rail, width: 180, boxSizing: "border-box", display: "flex",
     alignItems: "center", padding: `0 ${SPACE[12]}px`, background: "var(--bg3)",
     border: "1px solid var(--border)", borderRadius: RADIUS.pill,
   }}>

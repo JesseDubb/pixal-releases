@@ -27,7 +27,13 @@ const makeSprite = (rgb) => {
 
 const decode = (b64) => Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
 
-export const DotMatrix = ({ preview, aspect = "9 / 16" }) => {
+// `fill` — cover the positioned parent edge to edge instead of holding an
+// aspect. A tile that already IS 3/4 and then puts a 3/4 canvas inside its
+// own padding letterboxes twice, which is the un-dotted margin Jesse saw
+// around the edit veil ("the dot effect isnt even covering the full frame",
+// 2026-09-04). The loop measures with getBoundingClientRect, so a
+// height-driven box needs nothing else.
+export const DotMatrix = ({ preview, aspect = "9 / 16", fill = false }) => {
   const canvasRef = useRef(null);
   const gridRef = useRef(null);    // { cols, rows, target: Float32Array }
 
@@ -136,7 +142,10 @@ export const DotMatrix = ({ preview, aspect = "9 / 16" }) => {
 
   return (
     <canvas ref={canvasRef}
-      style={{ width: "100%", aspectRatio: aspect, display: "block",
-               background: "var(--bg0)", borderRadius: 8 }} />
+      style={fill
+        ? { position: "absolute", inset: 0, width: "100%", height: "100%",
+            display: "block", background: "var(--bg0)" }
+        : { width: "100%", aspectRatio: aspect, display: "block",
+            background: "var(--bg0)", borderRadius: 8 }} />
   );
 };

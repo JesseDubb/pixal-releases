@@ -29,6 +29,15 @@ const EXAMPLES_MASK = [
   "empty background, nothing here",
   "legible sign that reads OPEN",
 ];
+// Mask plus reference is the swap: the painted area is redrawn FROM the
+// attached image. Same rule as EXAMPLES_MASK - name what should be there,
+// and name which part of the attachment it comes from.
+const EXAMPLES_MASK_REF = [
+  "her face from the reference image, same lighting",
+  "the jacket from the reference image",
+  "the hairstyle from the reference image",
+  "the logo from the reference image, following the fabric",
+];
 const ZOOM_MAX = 8;
 const BRUSH_MIN = 4, BRUSH_MAX = 128;
 const UNDO_DEPTH = 12;
@@ -382,8 +391,10 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
     setBusy(true);
     try {
       const extra = {};
-      // The masked lane can't take a reference; the mask the user painted wins.
-      if (refImg && !masked) extra.reference = refImg;
+      // A mask and a reference together is the face/garment swap: paint the
+      // region, attach who or what goes in it. Both lanes take a reference
+      // now, so neither one drops the other's attachment.
+      if (refImg) extra.reference = refImg;
       if (masked) extra.mask = exportMask();
       if (imgDims && crop) extra.cropBlob = await exportCrop();
       onAction(text, extra);
@@ -393,7 +404,7 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
 
   const lane = useMemo(() => {
     if (masked) return refImg
-      ? "painted mask wins - the attached image is not sent · Klein inpaint"
+      ? "the painted area is redrawn from the attached image · Klein inpaint"
       : "only the painted area redraws · Klein inpaint";
     if (refImg) return "your words can point at the attached image as “image 2”";
     if (crop) return "edits just the cropped region";
@@ -533,10 +544,9 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
           <input ref={refFile} type="file" accept="image/*" hidden
                  onChange={attachRef} />
           {!refImg ? (
-            <button type="button" style={{ ...toolBtn(false),
-                      opacity: masked ? 0.5 : 1 }} disabled={masked}
+            <button type="button" style={toolBtn(false)}
                     onClick={() => refFile.current?.click()}
-                    title={masked ? "clear the painted mask first"
+                    title={masked ? "attach the face or garment that goes in the painted area"
                                   : "attach a logo or reference the words can point at"}>
               <ImageSquare size={13} weight="bold" /> add logo / reference
             </button>
@@ -569,7 +579,8 @@ export const EditDirector = ({ onClose, onAction, available = true, missing = []
                            textTransform: "uppercase", letterSpacing: "0.08em" }}>
               for example
             </span>
-            {(masked ? EXAMPLES_MASK : refImg ? EXAMPLES_REF : EXAMPLES).map((item) => (
+            {(masked ? (refImg ? EXAMPLES_MASK_REF : EXAMPLES_MASK)
+                     : refImg ? EXAMPLES_REF : EXAMPLES).map((item) => (
               <button key={item} type="button" onClick={() => setInstruction(item)}
                 style={{
                   padding: `${SPACE[4]}px ${SPACE[10]}px`, cursor: "pointer",

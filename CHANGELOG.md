@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.2.3b — 2026-09-03
+
+**FLUX.2 Klein makes pictures now, not just edits.** Klein is one model that
+does two jobs — it writes a picture from nothing, and it edits one you already
+have — and Pixal only ever used the second half. Its builds were marked as
+edit-only, so they never appeared in the composer's model list at all. They do
+now, as **Klein**: the same checkpoint, the same text encoder, the same VAE
+already sitting on your disk, so nothing new is downloaded to turn it on. The
+schedule follows the build rather than the lane — the distilled release runs
+its native four steps with guidance off, an undistilled one runs twenty with a
+real negative prompt behind it — because on this family those are two different
+graphs, not two numbers, and picking the wrong pair is most of what "the model
+looks bad" means here.
+
+**Klein edits take a reference image.** Attach a face, a garment, a logo, and
+the edit is built from it instead of from your description of it. That already
+worked on the Qwen lane; on Klein it was refused outright, so injecting a real
+photo meant leaving the model that keeps skin texture. The whole-frame lane is
+the one that swaps a face — attach a **head crop**, not a full-body shot, and
+the face, hair and skin tone come across while the pose, the room and the
+clothes stay put. A reference alongside a painted mask is allowed now too,
+which is the "put this face in this spot" case, though the masked lane holds
+the original identity much harder by design and moves far less; use the
+whole-frame lane when you want the swap to actually land.
+
+**Choosing a Klein model rendered on a different model entirely.** With Klein
+picked, the composer fell through to the Realism recipe and rendered on Krea 2.
+Nothing on the job card said so — the picture simply was not made by the model
+you chose. Fixed, and the same fall-through is now closed for every family that
+owns its own graph.
+
+**The number boxes in Settings can be typed in.** Film grain, shine removal and
+the DLSS 5 tone would not accept a number from the keyboard. Clearing one
+snapped it straight back, and typing a decimal ate the point — so 0.75 was
+unreachable however you typed it, and the arrow keys were the only thing that
+ever worked. They also saved on every keystroke, and the little "saved" line at
+the bottom of the panel pushed the panel as it appeared, so the control moved
+out from under the cursor mid-edit. One control now, everywhere: it holds what
+you type until you finish, saves on Enter, Tab or an arrow key, and the panel
+does not move.
+
 ## 1.2.2b — 2026-09-03
 
 **DLSS 5 was not running at all.** Last night's release took the `intensity`

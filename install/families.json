@@ -86,11 +86,10 @@
     },
     {
       "id": "klein",
-      "note": "FLUX.2 Klein 9B: masked inpainting only - like qwen_edit it is reachable from a finished frame, never from the composer.",
+      "note": "FLUX.2 Klein: one unified model - text-to-image from the composer (klein_t2i) AND whole-frame, masked and reference edits from a finished frame. It was source_only until 2026-09-03 only because Pixal had no t2i graph for it, never because the model lacked one.",
       "base_model": ["klein"],
       "path_contains": ["klein"],
-      "variant": {"model": "edit", "lora": "any"},
-      "source_only": true
+      "variant": {"model": "any", "lora": "any"}
     }
   ]
 }

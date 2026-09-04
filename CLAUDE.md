@@ -61,7 +61,7 @@ POST http://127.0.0.1:8190/api/chat
 {
   "text": "<the scene, exactly as it should render>",
   "opts": {
-    "template": "h3_ref_still",
+    "engine": "h3_ref_still",
     "character": "zara",
     "prompt_enhance": false,
     "model": "minimax_h3_hybrid_fl2va_ref2va_b30-49-int8",
@@ -89,8 +89,17 @@ wrong lane or the wrong day, which reads exactly like a result. `info.writer`
 says who wrote the caption: `pixal` / `official` is the brain, `verbatim` is
 whatever you sent with `prompt_enhance: false`.
 
-Four things that will bite you:
+Five things that will bite you:
 
+- **The lane key is `engine`, not `template`.** `opts.template` is read
+  NOWHERE on this path - it is the brain's own render-tool argument, and in
+  `opts` it is silently ignored. This page said `template` until 2026-09-03,
+  and it looked correct because the `model` beside it did the routing:
+  `effective_recipe` sends an H3 ref2va build to `h3_ref_still` on its own.
+  Send a lane with no model to match and the job renders on **Realism**, which
+  reads exactly like a lane that ignored your settings. `engine` must name a
+  recipe in `GET /api/options`; a character, a saved style or an identity
+  reference outrank it.
 - **Aspect names are exact strings.** `3:4 (Portrait Standard)`,
   `2:3 (Portrait Photo)`, `4:3 (Standard)`. A near miss is a 400.
 - **`recipe_revision` must match the server's.** Read it from

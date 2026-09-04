@@ -1,0 +1,104 @@
+{
+  "kt:unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Flux\\flux-2-klein-9b_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "kt:clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "Qwen\\qwen_3_8b_fp8mixed_abliterated.safetensors",
+      "type": "flux2",
+      "device": "default"
+    }
+  },
+  "kt:vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "Flux\\flux2-vae.safetensors"
+    }
+  },
+  "kt:pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["kt:clip", 0],
+      "text": "TEMPLATE_PLACEHOLDER_SCENE"
+    }
+  },
+  "kt:negtext": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["kt:clip", 0],
+      "text": ""
+    }
+  },
+  "kt:neg": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["kt:pos", 0]
+    }
+  },
+  "kt:latent": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "kt:sched": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 4,
+      "width": 1024,
+      "height": 1024
+    }
+  },
+  "kt:guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["kt:unet", 0],
+      "positive": ["kt:pos", 0],
+      "negative": ["kt:neg", 0],
+      "cfg": 1.0
+    }
+  },
+  "kt:noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 11111
+    }
+  },
+  "kt:sampler_sel": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "kt:sampler": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["kt:noise", 0],
+      "guider": ["kt:guider", 0],
+      "sampler": ["kt:sampler_sel", 0],
+      "sigmas": ["kt:sched", 0],
+      "latent_image": ["kt:latent", 0]
+    }
+  },
+  "kt:decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["kt:sampler", 0],
+      "vae": ["kt:vae", 0]
+    }
+  },
+  "kt:save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["kt:decode", 0],
+      "filename_prefix": "pixal_dm/klein_t2i"
+    }
+  }
+}

@@ -17,6 +17,7 @@ import { Picker } from "../lib/Picker.jsx";
 import { Chip } from "../lib/Chip.jsx";
 import { SegmentedControl } from "../lib/SegmentedControl.jsx";
 import { Switch } from "../lib/Switch.jsx";
+import { NumberField } from "../lib/NumberField.jsx";
 import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/BrandMarks.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, SwitchGhost, ValueGhost } from "./Skeleton.jsx";
@@ -1777,19 +1778,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                         identical to the pixel - so that control was dead from
                         the day it shipped. `tone` is the one that moves:
                         0 is punchy and saturated, 2 is flat and cool. */}
-                    <input type="number" step="0.05" min="0" max="2"
+                    <NumberField step={0.05} min={0} max={2}
                       value={stillCfg.dlss5_tone ?? 1.5}
-                      aria-label="DLSS 5 tone"
+                      label="DLSS 5 tone"
                       title="Contrast and saturation of the re-render. Lower is punchier, higher is flatter. 1.5 is the shipped default."
-                      style={{ width: 52, height: 24, padding: "0 8px",
-                               background: "var(--bg3)",
-                               border: "1px solid var(--border)",
-                               borderRadius: RADIUS.pill, color: "var(--text)",
-                               fontFamily: FONT, fontSize: TYPE.label,
-                               fontWeight: W.nav, textAlign: "center" }}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value);
-                        if (!Number.isFinite(v)) return;
+                      onCommit={(v) => {
                         setStillCfg((s) => ({ ...(s || {}), dlss5_tone: v }));
                         apply({ still: { dlss5_tone: v } }, "DLSS 5 tone");
                       }} />
@@ -1818,19 +1811,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   appears once the toggle is on - one row, the 34px beat. */}
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {stillCfg.film_grain ? (
-                  <input type="number" step="0.1" min="0.1" max="8"
+                  <NumberField step={0.1} min={0.1} max={8}
                     value={stillCfg.film_grain_amount ?? 1.6}
-                    aria-label="Film grain amount"
+                    label="Film grain amount"
                     title="Grain strength. 1.6 is the judged default."
-                    style={{ width: 52, height: 24, padding: "0 8px",
-                             background: "var(--bg3)",
-                             border: "1px solid var(--border)",
-                             borderRadius: RADIUS.pill, color: "var(--text)",
-                             fontFamily: FONT, fontSize: TYPE.label,
-                             fontWeight: W.nav, textAlign: "center" }}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isFinite(v)) return;
+                    onCommit={(v) => {
                       setStillCfg((s) => ({ ...(s || {}), film_grain_amount: v }));
                       apply({ still: { film_grain_amount: v } }, "film grain amount");
                     }} />
@@ -1858,19 +1843,11 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
                   only while the toggle is on, the same 34px beat. */}
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 {stillCfg.de_shine ? (
-                  <input type="number" step="0.05" min="0.1" max="1"
+                  <NumberField step={0.05} min={0.1} max={1}
                     value={stillCfg.de_shine_strength ?? 0.85}
-                    aria-label="Shine removal strength"
+                    label="Shine removal strength"
                     title="How far highlights are pulled toward the skin around them. 0.85 is the judged default; 1 is all the way."
-                    style={{ width: 52, height: 24, padding: "0 8px",
-                             background: "var(--bg3)",
-                             border: "1px solid var(--border)",
-                             borderRadius: RADIUS.pill, color: "var(--text)",
-                             fontFamily: FONT, fontSize: TYPE.label,
-                             fontWeight: W.nav, textAlign: "center" }}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!Number.isFinite(v)) return;
+                    onCommit={(v) => {
                       setStillCfg((s) => ({ ...(s || {}), de_shine_strength: v }));
                       apply({ still: { de_shine_strength: v } }, "shine removal strength");
                     }} />
@@ -2515,17 +2492,34 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         )}
       </div>
       {/* Every control auto-saves; this strip is where the save talks back.
-          Pinned under the scroll so feedback is visible from any tab. */}
-      {note && (
-        <div style={{ padding: `${SPACE[8]}px ${SPACE[20]}px`,
-                      borderTop: "1px solid var(--border)" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                         fontSize: TYPE.label,
-                         color: note.ok ? "#7BB495" : "#E3A7B0" }}>
-            {note.ok && <Check size={11} weight="bold" />}{note.text}
-          </span>
-        </div>
-      )}
+          Pinned under the scroll so feedback is visible from any tab.
+
+          It floats ABOVE the layout rather than joining it. As a flex child
+          it changed the card's height every time a save spoke, and both card
+          shapes are anchored from the bottom - so the whole panel jumped
+          under the cursor on every keystroke that saved. A toast that moves
+          the control you are still using is worse than no toast. Absolute,
+          so the resting panel is byte-identical to before and nothing ever
+          reflows; it covers the last row of the scroll for a moment, which
+          is what a toast is for. */}
+      <div aria-live="polite" style={{
+        position: "absolute", left: 0, right: 0, bottom: 0,
+        padding: `${SPACE[8]}px ${SPACE[20]}px`,
+        borderTop: `1px solid ${note ? "var(--border)" : "transparent"}`,
+        background: note ? "var(--surface)" : "transparent",
+        backdropFilter: note ? "blur(18px)" : "none",
+        WebkitBackdropFilter: note ? "blur(18px)" : "none",
+        opacity: note ? 1 : 0,
+        transition: `opacity ${MOTION.state}`,
+        pointerEvents: "none",
+      }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                       fontSize: TYPE.label,
+                       color: note && !note.ok ? "#E3A7B0" : "#7BB495" }}>
+          {note && note.ok && <Check size={11} weight="bold" />}
+          {note ? note.text : ""}
+        </span>
+      </div>
     </SettingsQuery.Provider>
   );
 
@@ -2542,6 +2536,9 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         // scrim, non-modal, so the theme toggle previews against live chat.
         <div style={{
           width: "100%", height: "100%",
+          // The save strip is absolute (see the note row); this is what it
+          // pins to in the docked shape. ModalShell's box is already fixed.
+          position: "relative",
           background: "var(--surface)", border: "1px solid var(--border)",
           borderRadius: RADIUS.surface,
           // Render-quiet, Chat.jsx's surface discipline — reuses the 9.46

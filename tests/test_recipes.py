@@ -79,7 +79,7 @@ class RecipeTests(unittest.TestCase):
             server.PUBLIC_RECIPE_IDS,
             ("realism", "realism_ii", "fantasy", "anime", "zimage", "identity_edit",
              "qwen_edit", "qwen_image", "face_mint", "klein_inpaint", "klein_edit",
-             "anima", "h3_still", "h3_still_2x", "h3_ref_still",
+             "klein_t2i", "anima", "h3_still", "h3_still_2x", "h3_ref_still",
              "h3_ref_still_2x"),
         )
         self.assertTrue(set(server.PUBLIC_RECIPE_IDS).issubset(server.BUILDERS))
@@ -108,13 +108,18 @@ class RecipeTests(unittest.TestCase):
         krea = server.model_profile("Krea 2\\krea2_turbo_mxfp8.safetensors")
         self.assertNotIn("qwen_edit", server.compatible_recipes(krea))
         self.assertFalse(krea.get("source_only", False))
-        # a Klein build serves BOTH klein lanes - the masked picker and the
-        # whole-frame one list the same installs
+        # a Klein build serves ALL THREE klein lanes - the masked picker, the
+        # whole-frame one and the composer list the same installs. Klein is
+        # NOT source_only: FLUX.2 Klein is one unified model and klein_t2i is
+        # its text-to-image half (2026-09-03). The two edit recipes stay in
+        # SOURCE_ONLY_RECIPE_IDS above, which is the distinction that matters:
+        # a RECIPE can need a source image while the MODEL still belongs in
+        # the composer.
         klein = server.model_profile(server.KLEIN_MODEL)
         self.assertEqual(klein["family"], "klein")
-        self.assertTrue(klein["source_only"])
+        self.assertFalse(klein.get("source_only", False))
         self.assertEqual(server.compatible_recipes(klein),
-                         ["klein_inpaint", "klein_edit"])
+                         ["klein_inpaint", "klein_edit", "klein_t2i"])
 
     def test_new_model_badge_reads_the_file_not_pixals_memory(self):
         """The picker's NEW chip must mean "you just downloaded this". Reading the
@@ -3019,10 +3024,8 @@ class EditRoutingTests(unittest.TestCase):
                                "seed": 424242}, self.QWEN)
         self.assertEqual(hub.submit.call_args[0][4].get("seed"), 424242)
 
-    def test_a_reference_is_refused_when_the_lane_cannot_take_one(self):
-        """The reference rides qwen_edit only. Routed to klein_edit it would
-        be silently dropped by the SIGS filter - refuse, the same standard the
-        masked lane's reference guard already sets."""
+    def _edit_with_reference(self, body):
+        """Run /api/edit with a source and a reference staged, Klein configured."""
         with TemporaryDirectory() as td:
             root = Path(td)
             (root / "input").mkdir()
@@ -3045,9 +3048,30 @@ class EditRoutingTests(unittest.TestCase):
                                   side_effect=resolve):
                     return await server.edit(FakeRequest(
                         {"input": "s.png", "instruction": "add the logo",
-                         "reference": "r.png"}))
+                         "reference": "r.png", **body}))
 
-            resp = asyncio.run(go())
+            return asyncio.run(go()), hub
+
+    def test_the_klein_lanes_take_a_reference(self):
+        """A reference on a Klein route is accepted, not refused (2026-09-03).
+
+        It used to be a 400 because no Klein builder had a `reference`
+        parameter. Both do now - the latent chain the official multi-reference
+        arm uses - so the whole-frame lane and, with a mask, the inpaint lane
+        both carry it. A mask alongside a reference is the face-swap case and
+        is explicitly NOT an error any more."""
+        resp, hub = self._edit_with_reference({})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(resp.text)["recipe"], "klein_edit")
+        hub.submit.assert_called_once()
+        self.assertEqual(hub.submit.call_args[0][4].get("reference"), "r.png")
+
+    def test_a_reference_is_refused_when_the_lane_cannot_take_one(self):
+        """face_mint has no reference input, so an attachment routed there
+        would be dropped SILENTLY by the SIGS filter - refuse instead. The
+        guard is keyed on the builder's own signature rather than a list of
+        lane names, so a lane added later is covered by what it accepts."""
+        resp, hub = self._edit_with_reference({"recipe": "face_mint"})
         self.assertEqual(resp.status, 400)
         self.assertIn("reference", json.loads(resp.text)["error"])
         hub.submit.assert_not_called()

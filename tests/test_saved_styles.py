@@ -208,16 +208,29 @@ class SamplerSeatTests(unittest.TestCase):
 
     def test_eta_belongs_to_the_seat_that_has_it(self):
         """eta is RES4LYF's stochasticity dial and only ClownsharKSampler_Beta
-        has the input. A stock KSampler does not, so an eta written into its
-        inputs is a ComfyUI error at queue time - on the user, after the wait.
-        The editor is told which keys exist, and a save is refused by name."""
+        has the input, so an eta written into a stock KSampler's inputs is a
+        ComfyUI error at queue time - on the user, after the wait.
+
+        Since 2026-09-03 a stock seat may still OFFER it (Jesse: "I thought all
+        models should have all ksampler and res4lyf"), because setting one
+        swaps the node for RES4LYF's. What must stay true is that the value is
+        never WRITTEN to the stock node - that is the empty target list below.
+
+        shift is the mirror: real on Z-Image, where ModelSamplingAuraFlow
+        carries it, and absent on Krea 2's graph."""
         self.assertEqual(
             server.seat_tuning_keys(server.SAMPLER_SEATS["realism"]),
             ("steps", "cfg", "sampler_name", "scheduler", "eta"))
         self.assertEqual(
             server.seat_tuning_keys(server.SAMPLER_SEATS["zimage"]),
-            ("steps", "cfg", "sampler_name", "scheduler"))
+            ("steps", "cfg", "sampler_name", "scheduler", "eta", "shift"))
         self.assertEqual(server.seat_tuning_keys(None), ())
+        # Offered, and written by nothing: the swap carries it instead.
+        self.assertEqual(
+            server.seat_targets(server.SAMPLER_SEATS["zimage"], "eta"), [])
+        self.assertEqual(
+            server.seat_targets(server.SAMPLER_SEATS["zimage"], "shift"),
+            [("7", "shift")])
 
         tuning = {"steps": 5, "eta": 0.75}
         with catalog(KREA):
@@ -228,8 +241,10 @@ class SamplerSeatTests(unittest.TestCase):
             self.assertEqual(
                 server.sampler_defaults("realism", KREA["rel"])["eta"],
                 server.TEMPLATES["realism"]["30:51"]["inputs"]["eta"])
-        # A KSampler seat drops it rather than writing an input that is not
-        # there, and says so at save time instead of at queue time.
+        # A KSampler seat still writes NO eta - node 8 has no such input and
+        # putting one there is a queue-time error. What changed on 2026-09-03
+        # is that the value is no longer thrown away: it rides on the node
+        # swap, so saving one is legal where it used to be refused.
         with catalog(ZBASE):
             self.assertEqual(
                 server.tuning_overrides("zimage", ZBASE["rel"], tuning),
@@ -237,8 +252,7 @@ class SamplerSeatTests(unittest.TestCase):
             self.assertNotIn("eta", server.sampler_defaults("zimage", ZBASE["rel"]))
             record = server.validate_saved_style(
                 style(base="zimage", model=ZBASE["rel"], tuning={"eta": 0.75}))
-            with self.assertRaisesRegex(ValueError, "KSampler has no eta setting"):
-                server.check_style_runnable(record)
+            server.check_style_runnable(record)      # no longer refused
 
     def test_probed_enums_are_read_from_the_live_install(self):
         """RES4LYF's sampler names are compound ("linear/euler") and a stock
@@ -603,14 +617,22 @@ class StockSamplerSwapTests(unittest.TestCase):
             groups = server.seat_choice_groups(seat)["sampler_name"]
             self.assertEqual([g["label"] for g in groups], ["RES4LYF", "ComfyUI KSampler"])
             self.assertIn("re_sde", groups[1]["ids"])
-            self.assertEqual(server.seat_choice_groups(server.SAMPLER_SEATS["anima"]), {})
+            # A stock seat reads the same way round the other way: its own
+            # names lead, RES4LYF's follow. It used to offer no split at all,
+            # which is what kept eta and bongmath off every KSampler graph.
+            anima = server.seat_choice_groups(server.SAMPLER_SEATS["anima"])
+            self.assertEqual([g["label"] for g in anima["sampler_name"]],
+                             ["ComfyUI KSampler", "RES4LYF"])
+            self.assertIn("euler", anima["sampler_name"][0]["ids"])
+            self.assertIn("res_2s", anima["sampler_name"][1]["ids"])
 
     def test_a_stock_name_swaps_the_node_and_keeps_the_links(self):
         seat = server.SAMPLER_SEATS["realism"]
         tuning = {"sampler_name": "re_sde", "scheduler": "bong_tangent", "steps": 12, "eta": 0.5}
         with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}), catalog(KREA):
             swap = server.sampler_swap(seat, tuning)
-            self.assertEqual(swap, {"node": "30:51", "sampler_name": "re_sde",
+            self.assertEqual(swap, {"to": "KSampler", "node": "30:51",
+                                    "sampler_name": "re_sde",
                                     "scheduler": "simple"})   # not a KSampler scheduler -> simple
             overrides = server.tuning_overrides("realism", KREA["rel"], tuning)
         self.assertEqual(overrides, [{"node": "30:51", "input": "steps", "value": 12}])
@@ -627,6 +649,55 @@ class StockSamplerSwapTests(unittest.TestCase):
         self.assertEqual(node["inputs"]["sampler_name"], "re_sde")
         self.assertNotIn("eta", node["inputs"])
 
+    def test_an_eta_on_a_stock_seat_swaps_the_other_way(self):
+        """The direction added 2026-09-03. eta and bongmath are inputs on
+        RES4LYF's NODE, not entries in its sampler registry, so a graph running
+        a stock KSampler could never reach them however its sampler was named.
+        Asking for either now brings the node that has them."""
+        seat = server.SAMPLER_SEATS["zimage"]
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            swap = server.sampler_swap(seat, {"sampler_name": "euler", "eta": 0.4})
+        # "euler" is not a RES4LYF name; "linear/euler" is the same sampler.
+        self.assertEqual(swap, {"to": "ClownsharKSampler_Beta", "node": "8",
+                                "sampler_name": "linear/euler",
+                                "scheduler": "beta57", "eta": 0.4})
+        g = {"8": {"class_type": "KSampler", "inputs": {
+            "model": ["m", 0], "positive": ["p", 0], "negative": ["n", 0],
+            "latent_image": ["l", 0], "seed": 7, "steps": 22, "cfg": 4.0,
+            "sampler_name": "euler", "scheduler": "beta", "denoise": 1.0}}}
+        server.swap_sampler_node(g, swap)
+        node = g["8"]
+        self.assertEqual(node["class_type"], "ClownsharKSampler_Beta")
+        self.assertEqual(node["inputs"]["model"], ["m", 0])
+        self.assertEqual(node["inputs"]["latent_image"], ["l", 0])
+        self.assertEqual(node["inputs"]["steps"], 22)
+        self.assertEqual(node["inputs"]["cfg"], 4.0)
+        self.assertEqual(node["inputs"]["eta"], 0.4)
+        self.assertTrue(node["inputs"]["bongmath"])
+        self.assertEqual(node["inputs"]["sampler_mode"], "standard")
+
+    def test_a_stock_seat_with_no_eta_and_a_stock_name_stays_put(self):
+        """The swap is for reaching the other node, not a thing that happens on
+        every render. Nothing asked for here, so nothing moves."""
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            self.assertIsNone(server.sampler_swap(
+                server.SAMPLER_SEATS["zimage"],
+                {"sampler_name": "euler", "scheduler": "beta", "eta": 0.0}))
+
+    def test_a_sampler_with_no_res4lyf_twin_loses_the_eta_rather_than_queueing(self):
+        """seeds_2 has no RES4LYF spelling, so an eta beside it cannot be
+        honoured. Dropping it is the safe end: the alternative is a stock
+        KSampler carrying an input it does not declare."""
+        with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
+            self.assertIsNone(server.sampler_swap(
+                server.SAMPLER_SEATS["zimage"],
+                {"sampler_name": "seeds_2", "eta": 0.5}))
+
+    def test_an_unprobed_comfy_never_guesses_a_swap(self):
+        with patch.dict(server._COMFY_NODES, {"enums": {}}):
+            self.assertIsNone(server.sampler_swap(
+                server.SAMPLER_SEATS["zimage"], {"sampler_name": "euler", "eta": 0.4}))
+
     def test_a_clownshark_name_never_swaps(self):
         with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}):
             self.assertIsNone(server.sampler_swap(server.SAMPLER_SEATS["realism"],
@@ -639,5 +710,6 @@ class StockSamplerSwapTests(unittest.TestCase):
         with patch.dict(server._COMFY_NODES, {"enums": self.ENUMS}), catalog(KREA):
             server._apply_opts(args, opts)
         self.assertEqual(args["_sampler_swap"],
-                         {"node": "30:51", "sampler_name": "er_sde", "scheduler": "karras"})
+                         {"to": "KSampler", "node": "30:51",
+                          "sampler_name": "er_sde", "scheduler": "karras"})
         self.assertIn("_sampler_swap", server._REROLL_COMPOSER_OWNED)

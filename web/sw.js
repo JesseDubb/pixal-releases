@@ -1,4 +1,4 @@
-const CACHE = "pixal-dm-5c50b4f6";
+const CACHE = "pixal-dm-ebab765a";
 const SHELL = [
   "/",
   "/app.js",

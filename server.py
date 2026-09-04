@@ -480,7 +480,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.2.2b"
+PIXAL_VERSION = "1.2.3b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = HERE / "history.jsonl"
@@ -2057,6 +2057,32 @@ KLEIN_SCHEDULES = (
     {"tokens": (), "label": "Klein 4-step distill",
      "steps": 4, "cfg": 1.0},
 )
+# Text-to-image is its own schedule table, not a step count borrowed from the
+# edit lanes, because on this family the distilled and undistilled arms are
+# different GRAPHS and not just different numbers. Comfy-Org's shipped
+# image_flux2_klein_text_to_image ships both, one muted:
+#   base      Flux2Scheduler 20 steps, CFGGuider 5.0, TWO real CLIPTextEncode
+#   distilled Flux2Scheduler  4 steps, CFGGuider 1.0, ConditioningZeroOut
+# So `negative` is a row field and build_klein_t2i wires the branch the row
+# names. A real negative at cfg 1.0 measures nothing (there is no guidance to
+# steer), and a zeroed negative at cfg 5.0 pushes away from an empty prompt -
+# the pair only makes sense together, which is exactly why they travel
+# together here rather than as two independent dials.
+#
+# Klein True is de-distilled, so it gets the undistilled pair. That is
+# reasoning from what the build IS, not a measurement: nobody has A/B'd it
+# here, and its card only documents edit settings (10-25 steps, cfg 1.0).
+# Same fall-through rule as above - the distill row is last and matches
+# everything, so a finetune of the distilled release (DarkBeast) keeps the
+# schedule it already renders edits at.
+KLEIN_T2I_SCHEDULES = (
+    {"tokens": ("base",), "label": "Klein base (undistilled)",
+     "steps": 20, "cfg": 5.0, "negative": "text"},
+    {"tokens": ("true",), "label": "Klein True (de-distilled)",
+     "steps": 20, "cfg": 5.0, "negative": "text"},
+    {"tokens": (), "label": "Klein 4-step distill",
+     "steps": 4, "cfg": 1.0, "negative": "zero"},
+)
 # The sampling canvas is capped even though the OUTPUT stays native. This graph
 # VAE-encodes the source TWICE (masked latent + full-frame reference latent), so
 # an edit on an upscaled frame prices at double the canvas - a 4x upscale asked
@@ -2073,6 +2099,21 @@ KLEIN_INPAINT_STEPS = 16          # flux2 VAE is /16; keep both sides legal
 # independently: there is no mask composite here, so every output pixel has
 # been through the flux2 VAE and over-capping costs real texture.
 KLEIN_EDIT_MP_CAP = 2.0
+# Reference images ride their own canvas, not the source's. 1 MP is the
+# official multi-reference arm's own number (Comfy-Org's
+# image_flux2_klein_image_edit_9b_distilled, subgraph 65c22b29:
+# ImageScaleToTotalPixels at lanczos/1 MP per reference) and it is what the
+# KV template's "Reference Conditioning" block uses too. The one deliberate
+# deviation is resolution_steps: the official arm passes 1 and lets VAEEncode
+# crop to the flux2 VAE's /16 grid, this lane rounds on the /16 grid up front
+# the same way it already does for the source, so nothing is silently cropped.
+KLEIN_REF_MP = 1.0
+# Every reference costs a full VAE encode plus two conditioning copies, and
+# the sampling canvas is already capped at 2 MP for the same reason. Four is
+# where the official templates stop shipping wired slots, and it is a refusal
+# rather than a silent truncation - dropping an attached reference is exactly
+# the failure /api/edit's guards exist to prevent.
+KLEIN_MAX_REFERENCES = 4
 
 # Qwen-Image is the text-to-image line (Qwen-Image, Qwen-Image-2512), separate
 # from the Qwen-Image-Edit line above. It shares the 2.5-VL encoder and the VAE.
@@ -2097,6 +2138,33 @@ ZIMAGE_EXECUTION_PROFILES = {
         "cfg": 4.0, "sampler": "res_2s", "scheduler": "beta",
         "shift": 1.0, "zero_negative": False,
     },
+    # Turbo's default since 2026-09-03. It was the Amazing v4 sigma chain,
+    # which is a faithful port of a good workflow and also a dead end for
+    # everything built on top of it: that graph has no KSampler, so no
+    # scheduler, no shift, and no sampler PAIR can be expressed on it. The seat
+    # could offer sampler/steps/cfg and nothing else, which meant the preset
+    # shelf, the combo stepper and every saved style's tuning were inert on
+    # nine of this box's thirteen Z-Image checkpoints - and the eight community
+    # finetunes among them had inherited a schedule hand-tuned for the stock
+    # build they are not.
+    #
+    # euler/simple at 10 steps is the conservative landing: the same sampler v4
+    # drove, the scheduler a 992-image community grid rates green for it, and
+    # the step count that grid was measured at. cfg stays 1 with the negative
+    # zeroed, which is what Tongyi's own card specifies (9 steps = 8 DiT
+    # forwards, guidance 0.0).
+    "zimage_turbo": {
+        "clip_candidates": ZIMAGE_CLIP_CANDIDATES, "clip_type": "lumina2",
+        "vae_candidates": ZIMAGE_VAE_CANDIDATES,
+        "sampler_graph": "ksampler", "steps": 10,
+        "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
+        "shift": 3.0, "zero_negative": True,
+    },
+    # Kept, and no longer reached by any model by default. Amazing Z Photo v4's
+    # two-pass schedule is still the better-looking thing on the stock turbo
+    # build for some subjects, and this is what it costs to go back: point a
+    # model_meta row at "zimage_turbo_v4" and that checkpoint gets it again,
+    # losing its dials in exchange.
     "zimage_turbo_v4": {
         "clip_candidates": ZIMAGE_CLIP_CANDIDATES, "clip_type": "lumina2",
         "vae_candidates": ZIMAGE_VAE_CANDIDATES,
@@ -2119,6 +2187,10 @@ ZIMAGE_EXECUTION_PROFILES = {
 # merge at 12 steps / cfg 1 with its own matched VAE, and the grid these
 # numbers come from rendered photographic subjects only.
 ZIMAGE_REALISM_PROFILES = ("zimage_base",)
+# ...and Turbo's, which takes the same PAIRS at a quarter to half the steps: it
+# is distilled, runs at cfg 1, and is documented for 8-12 steps, so a 22-step
+# base row pointed at it would be wasted compute at best.
+ZIMAGE_TURBO_PROFILES = ("zimage_turbo",)
 
 # MiniMax H3's fl2va transformers render stills natively (brief 9.58): the
 # h3_still recipe drives the video model prompt-only at its 5-frame floor and
@@ -2451,6 +2523,20 @@ RECIPE_SPECS = {
         "required_vaes": [KLEIN_VAE],
         "needs_source_image": True,
     },
+    # Klein's text-to-image half. Same weights, encoder and VAE as the two
+    # edit lanes above - FLUX.2 Klein is one unified model, so this costs no
+    # new download and is the reason the family stopped being source_only.
+    # 1024x1024 is the official template's own canvas; the family is
+    # documented at 1-2 MP.
+    "klein_t2i": {
+        "label": "Klein", "tag": "photo · one model, edits too",
+        "family": "klein",
+        "default_model": KLEIN_MODEL,
+        "aspect": "1:1 (Square)", "mp": 1.05,
+        "lora_stack_revision": 1, "lora_boundary": "sampler", "lora_stages": [],
+        "required_text_encoders": [KLEIN_CLIP],
+        "required_vaes": [KLEIN_VAE],
+    },
     # Anima has one graph and no style/quality variants, like qwen_image: the
     # model IS the style. 896x1152 is the workflow's own canvas.
     "anima": {
@@ -2745,7 +2831,7 @@ def model_profile(rel, kind="diffusion_models"):
         profile["source_only"] = True
     if family == "zimage":
         profile["execution_profile"] = \
-            "zimage_turbo_v4" if variant == "turbo" else "zimage_base"
+            "zimage_turbo" if variant == "turbo" else "zimage_base"
     if family == "anima":
         profile["execution_profile"] = f"anima_{variant}"
     if family == "minimax_h3":
@@ -3446,6 +3532,15 @@ STYLE_BASE_IDS = tuple(
 # ClownsharKSampler_Beta takes COMPOUND sampler names ("linear/euler") that a
 # stock KSampler would reject - so the editor reads each seat's real options out
 # of ComfyUI's own /object_info instead of shipping a guessed list.
+ZIMAGE_SEAT_MAP = {"steps": [("8", "steps")], "cfg": [("8", "cfg")],
+                   "sampler_name": [("8", "sampler_name")],
+                   "scheduler": [("8", "scheduler")],
+                   "shift": [("7", "shift")],
+                   # Offered, never written: node 8 is a stock KSampler and has
+                   # no eta input. Setting one swaps the node for RES4LYF's,
+                   # which does - see sampler_swap.
+                   "eta": []}
+
 SAMPLER_SEATS = {
     "realism":    {"node": "30:51", "class": "ClownsharKSampler_Beta"},
     # Same seat on the identity graph (Jesse, 2026-08-26: "can I edit even
@@ -3456,9 +3551,17 @@ SAMPLER_SEATS = {
     # stays authored. Jesse, 2026-08-26: tuning "always available in any
     # workflow / recipe".
     "realism_ii": {"node": "265", "class": "ClownsharKSampler_Beta"},
-    "fantasy":    {"node": "8", "class": "KSampler"},
-    "anime":      {"node": "8", "class": "KSampler"},
-    "zimage":     {"node": "8", "class": "KSampler"},
+    # The Z-Image trio. shift is the timestep-schedule warp: how much of the
+    # budget is spent at high noise (composition) against low noise (detail).
+    # It is the dial the community calls the biggest lever on this
+    # architecture, and it was unreachable until 2026-09-03 - on the graph
+    # since day one, but absent from TUNING_KEYS, so no preset, no saved style
+    # and no control could set it. It sits on ModelSamplingAuraFlow, not on the
+    # sampler, which is why these three seats carry a map and the bare
+    # node/class rows above do not.
+    "fantasy":    {"node": "8", "class": "KSampler", "map": ZIMAGE_SEAT_MAP},
+    "anime":      {"node": "8", "class": "KSampler", "map": ZIMAGE_SEAT_MAP},
+    "zimage":     {"node": "8", "class": "KSampler", "map": ZIMAGE_SEAT_MAP},
     "anima":      {"node": "8", "class": "KSampler"},
     "qwen_image": {"node": "qi:sampler", "class": "KSampler"},
     # h3_still's sampler is a KSamplerSelect whose steps and scheduler live
@@ -3489,7 +3592,7 @@ SAMPLER_SEATS = {
                                 "steps": [("8", "steps")],
                                 "scheduler": [("8", "scheduler")]}},
 }
-TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta")
+TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta", "shift")
 # Which of those a seat can actually take, by the node class sitting in it. eta
 # is RES4LYF's stochasticity dial and exists ONLY on ClownsharKSampler_Beta - a
 # stock KSampler has no such input, and writing one into its inputs is a
@@ -3512,9 +3615,13 @@ ZIMAGE_V4_SEAT = {
 
 
 def seat_targets(seat, key):
-    """(node, input) pairs one tuning key writes to on this seat."""
+    """(node, input) pairs one tuning key writes to on this seat.
+
+    A key mapped to the EMPTY list is offered by the seat and written by
+    nothing: eta on a stock KSampler is the case - the node has no such input,
+    and the value rides on the node swap instead of being written here."""
     mapped = (seat.get("map") or {}).get(key)
-    return list(mapped) if mapped else [(seat["node"], key)]
+    return list(mapped) if mapped is not None else [(seat["node"], key)]
 
 
 def seat_tuning_keys(seat):
@@ -3562,8 +3669,8 @@ def fixed_schedule_reason(base_id, model=None):
     if RECIPE_SPECS[base_id]["family"] == "zimage":
         if not (resolve_model_entry(model) if model else None):
             return "Choose an installed model to see its sampler settings."
-        return ("Z-Image Turbo runs the Amazing v4 two-stage sigma schedule "
-                "instead of a KSampler, so there are no steps to set.")
+        return ("This build runs a fixed two-stage sigma schedule instead of a "
+                "KSampler, so there is no sampler pair to set.")
     return "This model's schedule is fixed."
 
 
@@ -3581,7 +3688,10 @@ def sampler_defaults(base_id, model=None):
     if RECIPE_SPECS[base_id]["family"] == "zimage":
         _profile, s = _zimage_settings(resolve_model_entry(model))
         found = {"steps": s["steps"], "cfg": s["cfg"],
-                 "sampler_name": s["sampler"], "scheduler": s.get("scheduler", "simple")}
+                 "sampler_name": s["sampler"],
+                 "scheduler": s.get("scheduler", "simple"),
+                 "shift": s.get("shift")}
+        found = {k: v for k, v in found.items() if v is not None}
         return {k: v for k, v in found.items() if k in seat_tuning_keys(seat)}
     if base_id == "anima":
         entry = resolve_model_entry(model) or {}
@@ -3619,36 +3729,73 @@ def sampler_choices(node_class):
 # (model / positive / negative / latent_image -> LATENT) when the graph is
 # built - eta and bongmath do not exist there and are simply not applied.
 STOCK_SAMPLER_CLASS = "KSampler"
+# RES4LYF's sampler node. Its SAMPLERS register into ComfyUI's global list, so
+# res_2s and seeds_2 are already on every stock KSampler - but eta and bongmath
+# are inputs on the NODE, and nothing that runs a stock KSampler could reach
+# them. Jesse, 2026-09-03: "I thought all models should have all ksampler and
+# res4lyf." They can: the seat swap already turns this node into a stock one
+# when a stock name is picked, and since 2026-09-03 it runs the other way too.
+RES4LYF_SAMPLER_CLASS = "ClownsharKSampler_Beta"
+
+
+def _other_sampler_class(seat):
+    """The sampler node this seat can be SWAPPED INTO, or None.
+
+    Narrower than _seat_extra_class below on purpose: a KSamplerSelect takes a
+    stock sampler NAME directly and never needs a node swap, so it is not
+    swappable even though it offers stock names."""
+    if seat["class"] == STOCK_SAMPLER_CLASS:
+        return RES4LYF_SAMPLER_CLASS
+    if seat["class"] == RES4LYF_SAMPLER_CLASS:
+        return STOCK_SAMPLER_CLASS
+    return None
+
+
+def _seat_extra_class(seat):
+    """The class whose names are merged into this seat's picker.
+
+    A stock seat gains RES4LYF's (reachable through the swap); everything else
+    gains ComfyUI's, which is what a KSamplerSelect has always done and must go
+    on doing - all four H3 lanes sit on one."""
+    return (RES4LYF_SAMPLER_CLASS if seat["class"] == STOCK_SAMPLER_CLASS
+            else STOCK_SAMPLER_CLASS)
 
 
 def seat_choices(seat):
-    """sampler/scheduler options a seat accepts, stock names included on a
-    non-stock seat (each list keeps the seat's own names first)."""
+    """sampler/scheduler options a seat accepts, with the other node's names
+    behind its own.
+
+    Newly two-directional: a stock KSampler seat used to answer with only
+    ComfyUI's 63 names, which is why Z-Image could never reach eta or bongmath
+    - the two things that live on RES4LYF's NODE rather than in its sampler
+    registry."""
     own = sampler_choices(seat["class"])
-    if seat["class"] == STOCK_SAMPLER_CLASS:
-        return own
-    stock = sampler_choices(STOCK_SAMPLER_CLASS)
+    other = sampler_choices(_seat_extra_class(seat))
     out = {}
     for key in ("sampler_name", "scheduler"):
         mine = list(own.get(key) or ())
-        out[key] = mine + [v for v in (stock.get(key) or ()) if v not in mine]
+        out[key] = mine + [v for v in (other.get(key) or ()) if v not in mine]
     return out
 
 
 def seat_choice_groups(seat):
     """The same options split by the node they belong to, for the picker's
-    inline labels. Empty on a stock seat - one family, no split."""
-    if seat["class"] == STOCK_SAMPLER_CLASS:
-        return {}
+    inline labels.
+
+    The seat's own names lead, so the two labels swap round with the seat: a
+    Krea 2 seat reads RES4LYF first, a Z-Image seat reads ComfyUI first."""
+    stock_first = seat["class"] == STOCK_SAMPLER_CLASS
+    own_label = "ComfyUI KSampler" if stock_first else "RES4LYF"
+    extra_label = "RES4LYF" if stock_first else "ComfyUI KSampler"
     own = sampler_choices(seat["class"])
-    stock = sampler_choices(STOCK_SAMPLER_CLASS)
+    other = sampler_choices(_seat_extra_class(seat))
     groups = {}
     for key in ("sampler_name", "scheduler"):
         mine = list(own.get(key) or ())
-        extra = [v for v in (stock.get(key) or ()) if v not in mine]
+        extra = [v for v in (other.get(key) or ()) if v not in mine]
         if mine or extra:
-            groups[key] = [{"label": "RES4LYF", "ids": mine},
-                           {"label": "ComfyUI KSampler", "ids": extra}]
+            groups[key] = [{"label": own_label, "ids": mine},
+                           {"label": extra_label, "ids": extra}]
     return groups
 
 
@@ -3667,33 +3814,93 @@ def seat_signature(base_id, model=None):
             "choices": seat_choices(seat)}
 
 
+def _res4lyf_alias(name, options):
+    """RES4LYF's spelling of a stock sampler name, or None.
+
+    Its names are family-qualified - `euler` is `linear/euler` there - so a
+    stock name has to be translated before the node will accept it. Only an
+    unambiguous single match counts; `seeds_2` has no RES4LYF twin and simply
+    does not swap, which costs the eta rather than queueing a broken graph."""
+    if not name:
+        return None
+    hits = [o for o in options if o.rsplit("/", 1)[-1] == name]
+    return hits[0] if len(hits) == 1 else None
+
+
 def sampler_swap(seat, tuning):
-    """The KSampler swap a tuning block asks for on this seat, or None."""
+    """The sampler NODE this tuning needs, when it is not the one in the seat.
+
+    Two directions. A RES4LYF seat given a stock name becomes a stock KSampler
+    (the original case: those 182 compound names are not what a KSampler
+    takes). A stock seat asked for a RES4LYF name, or for any eta at all,
+    becomes RES4LYF's node - which is the only way `eta` and `bongmath` are
+    reachable from Z-Image, Anima or Qwen-Image at all.
+    """
+    if not seat:
+        return None
+    other_class = _other_sampler_class(seat)
+    if not other_class:
+        return None
     name = (tuning or {}).get("sampler_name")
-    if not seat or not name or seat["class"] == STOCK_SAMPLER_CLASS:
+    mine = sampler_choices(seat["class"])
+    theirs = sampler_choices(other_class)
+    their_names = theirs.get("sampler_name") or ()
+    if not their_names:
+        return None                      # unprobed: never guess a swap
+
+    if seat["class"] == STOCK_SAMPLER_CLASS:
+        try:
+            eta = float((tuning or {}).get("eta") or 0.0)
+        except (TypeError, ValueError):
+            eta = 0.0
+        target = name if name in their_names else None
+        if target is None and eta:
+            # An eta on a stock name still means "use the node that has eta".
+            target = _res4lyf_alias(name or "euler", their_names)
+        if not target:
+            return None
+        scheduler = (tuning or {}).get("scheduler")
+        if scheduler not in (theirs.get("scheduler") or ()):
+            scheduler = "beta57"
+        return {"to": other_class, "node": seat["node"],
+                "sampler_name": target, "scheduler": scheduler, "eta": eta}
+
+    if not name or name in (mine.get("sampler_name") or ()):
         return None
-    if name in (sampler_choices(seat["class"]).get("sampler_name") or ()):
-        return None
-    stock = sampler_choices(STOCK_SAMPLER_CLASS)
-    if name not in (stock.get("sampler_name") or ()):
+    if name not in their_names:
         return None
     scheduler = (tuning or {}).get("scheduler")
-    if scheduler not in (stock.get("scheduler") or ()):
+    if scheduler not in (theirs.get("scheduler") or ()):
         scheduler = "simple"
-    return {"node": seat["node"], "sampler_name": name, "scheduler": scheduler}
+    return {"to": other_class, "node": seat["node"],
+            "sampler_name": name, "scheduler": scheduler}
 
 
 def swap_sampler_node(g, swap):
-    """Replace the seat's node with a stock KSampler carrying the same links
-    and the numbers the overrides already wrote (steps, cfg, seed)."""
+    """Replace the seat's node with the other sampler, carrying the same links
+    and the numbers the overrides already wrote (steps, cfg, seed).
+
+    Runs AFTER the builder, so whatever tuning_overrides wrote is read back off
+    the old node here. Keys the new node does not take are simply not copied,
+    which is what makes an eta written for a seat that never swapped harmless.
+    """
     old = g[str(swap["node"])]
     i = old["inputs"]
-    g[str(swap["node"])] = {"class_type": STOCK_SAMPLER_CLASS, "inputs": {
-        "model": i["model"], "positive": i["positive"], "negative": i["negative"],
-        "latent_image": i["latent_image"], "seed": i.get("seed", 0),
-        "steps": i.get("steps", 8), "cfg": i.get("cfg", 1.0),
-        "sampler_name": swap["sampler_name"], "scheduler": swap["scheduler"],
-        "denoise": i.get("denoise", 1.0)}}
+    common = {"model": i["model"], "positive": i["positive"],
+              "negative": i["negative"], "latent_image": i["latent_image"],
+              "seed": i.get("seed", 0), "steps": i.get("steps", 8),
+              "cfg": i.get("cfg", 1.0), "denoise": i.get("denoise", 1.0),
+              "sampler_name": swap["sampler_name"],
+              "scheduler": swap["scheduler"]}
+    if swap.get("to") == RES4LYF_SAMPLER_CLASS:
+        # steps_to_run -1 is "all of them"; sampler_mode standard is the plain
+        # forward pass. bongmath is the pack's own default and its author's
+        # advice is to leave it on - it is the reason to be on this node.
+        g[str(swap["node"])] = {"class_type": RES4LYF_SAMPLER_CLASS, "inputs": {
+            **common, "eta": float(swap.get("eta") or 0.0), "bongmath": True,
+            "steps_to_run": -1, "sampler_mode": "standard"}}
+        return
+    g[str(swap["node"])] = {"class_type": STOCK_SAMPLER_CLASS, "inputs": common}
 
 
 def tuning_overrides(base_id, model, tuning):
@@ -3897,6 +4104,33 @@ SAMPLER_PRESETS = {
          "note": "The cheapest arm that still rates green, on a photorealism "
                  "tester's preferred scheduler. Not measured here.",
          "tuning": {"sampler_name": "euler", "scheduler": "beta57", "steps": 22}},
+        # The same five pairs on Turbo. Separate rows rather than a shared set
+        # because the step counts are not transferable: these are the counts the
+        # community grid actually ran, and the second-order samplers are halved
+        # again because they call the model twice per step.
+        {"id": "turbo_stock", "label": "Stock", "profiles": ZIMAGE_TURBO_PROFILES,
+         "note": "What Turbo ships at - euler/simple at 10, the pairing the "
+                 "992-image community grid was run on. Not measured here.",
+         "tuning": {"sampler_name": "euler", "scheduler": "simple", "steps": 10}},
+        {"id": "turbo_seeds", "label": "Seeds 2", "profiles": ZIMAGE_TURBO_PROFILES,
+         "note": "Top row of that grid - green against every scheduler except "
+                 "karras and exponential. Not measured here.",
+         "tuning": {"sampler_name": "seeds_2", "scheduler": "beta", "steps": 10}},
+        {"id": "turbo_ancestral", "label": "Euler ancestral",
+         "profiles": ZIMAGE_TURBO_PROFILES,
+         "note": "Called best overall by two independent testers on that grid, "
+                 "at one model call per step. Not measured here.",
+         "tuning": {"sampler_name": "euler_ancestral", "scheduler": "beta",
+                    "steps": 10}},
+        {"id": "turbo_sde", "label": "DPM++ SDE", "profiles": ZIMAGE_TURBO_PROFILES,
+         "note": "The grid author's own named pair. Second order, so five steps "
+                 "here costs what ten does above. Not measured here.",
+         "tuning": {"sampler_name": "dpmpp_sde_gpu", "scheduler": "ddim_uniform",
+                    "steps": 5}},
+        {"id": "turbo_res", "label": "Res 2s", "profiles": ZIMAGE_TURBO_PROFILES,
+         "note": "The sampler ComfyUI's own Z-Image template picks, at the half "
+                 "step count its second order asks for. Not measured here.",
+         "tuning": {"sampler_name": "res_2s", "scheduler": "beta", "steps": 5}},
     ),
 }
 
@@ -4215,6 +4449,19 @@ def validate_style_tuning(tuning):
         if not math.isfinite(cfg) or not 0.0 <= cfg <= 30.0:
             raise ValueError(f"cfg must be between 0 and 30, got {cfg:g}")
         out["cfg"] = cfg
+    if "shift" in tuning:
+        # ModelSamplingAuraFlow declares shift as a float in [0, 100] (default
+        # 1.73). Anything useful on Z-Image lives in 0.5-8; the node's range is
+        # kept rather than narrowed, because which seats even HAVE a shift is
+        # check_style_runnable's job and this stays catalog-free.
+        try:
+            shift = float(tuning["shift"])
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"shift must be a number, got {tuning['shift']!r}") from None
+        if not math.isfinite(shift) or not 0.0 <= shift <= 100.0:
+            raise ValueError(f"shift must be between 0 and 100, got {shift:g}")
+        out["shift"] = shift
     if "eta" in tuning:
         # Bounds are the node's own declared range, not a guess: RES4LYF
         # declares eta as a float in [-100, 100] (default 0.5). Which seats
@@ -6090,21 +6337,93 @@ def build_qwen_edit(scene, seed, image=None, megapixels=None, steps=None, cfg=No
     return g, instruction, info
 
 
-def klein_schedule(model_entry):
-    """The KLEIN_SCHEDULES row that belongs to this Klein build.
+def klein_schedule(model_entry, table=KLEIN_SCHEDULES):
+    """The schedule row that belongs to this Klein build.
 
     Matched on the filename, most specific first, the distill last as the
     fall-through - the same shape as edit_accelerator, and for the same
-    reason: a compatible release should drop in as data, not as code."""
+    reason: a compatible release should drop in as data, not as code.
+
+    ONE matcher for both tables (edit and text-to-image): they hold different
+    rows because the lanes measure differently, but "which row is this build"
+    is a single question and must not grow a second answer."""
     name = str((model_entry or {}).get("rel") or (model_entry or {}).get("name") or "")
     low = name.replace("/", "\\").lower()
-    for spec in KLEIN_SCHEDULES:
+    for spec in table:
         if all(token in low for token in spec["tokens"]):
             return spec
-    return KLEIN_SCHEDULES[-1]
+    return table[-1]
 
 
-def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
+def klein_reference_names(reference, lane):
+    """Validated reference filenames for a Klein lane, in wiring order.
+
+    Takes one name or a list of them, because the graph block below is the
+    same shape either way - the UI attaches one today and the lane is not the
+    thing that should have to change when it attaches three."""
+    if reference in (None, "", (), []):
+        return []
+    raw = list(reference) if isinstance(reference, (list, tuple)) else [reference]
+    names = []
+    for item in raw:
+        name = input_ref_name(item)
+        if not name:
+            raise ValueError(f"{lane} got a bad reference image name")
+        if not (CDIR / "input" / name).is_file():
+            raise ValueError(f"reference image not found in ComfyUI/input: {name}")
+        names.append(name)
+    if len(names) > KLEIN_MAX_REFERENCES:
+        raise ValueError(f"{lane} takes at most {KLEIN_MAX_REFERENCES} "
+                         f"reference images, got {len(names)}")
+    return names
+
+
+def attach_klein_references(g, prefix, names, chains, vae):
+    """Chain reference images onto a Klein conditioning graph, in place.
+
+    Ported from the multi-reference arm Comfy-Org ships beside the one Pixal
+    already builds (`image_flux2_klein_image_edit_9b_distilled`, subgraph
+    `65c22b29`), which is also factored out as a reusable "Reference
+    Conditioning" subgraph in `image_flux2_klein_9b_kv_image_edit`. The unit
+    is deliberately small and repeatable, because that IS the model's
+    interface: per reference, one LoadImage -> ImageScaleToTotalPixels ->
+    VAEEncode, then one ReferenceLatent appended to each conditioning chain
+    that should see it. N references is N copies of the block, not a
+    different graph.
+
+    Klein takes references through the latent chain ALONE - its CLIP is a
+    text-only Qwen3, so there is no `image2` wire to feed and no VL-token
+    half to keep in sync. That is the one real difference from qwen_edit,
+    where tokens without the latent make the model invent a lookalike.
+
+    `chains` maps a caller's own name to the node its conditioning currently
+    ends at; the return maps the same names to the new ends. The caller
+    rewires its sampler/guider from those, so this function never has to know
+    which lane it is in. Passing only the positive chain is a legitimate
+    choice, not an oversight: the masked lane's negative carries no reference
+    latents of its own either."""
+    ends = dict(chains)
+    for i, name in enumerate(names, 1):
+        img, scale, lat = (f"{prefix}:refimg{i}", f"{prefix}:refscale{i}",
+                           f"{prefix}:reflat{i}")
+        g[img] = {"class_type": "LoadImage", "inputs": {"image": name}}
+        g[scale] = {"class_type": "ImageScaleToTotalPixels",
+                    "inputs": {"image": [img, 0], "upscale_method": "lanczos",
+                               "megapixels": KLEIN_REF_MP,
+                               "resolution_steps": KLEIN_INPAINT_STEPS}}
+        g[lat] = {"class_type": "VAEEncode",
+                  "inputs": {"pixels": [scale, 0], "vae": [vae, 0]}}
+        for key in ends:
+            nid = f"{prefix}:refcond{i}_{key}"
+            g[nid] = {"class_type": "ReferenceLatent",
+                      "inputs": {"conditioning": [ends[key], 0],
+                                 "latent": [lat, 0]}}
+            ends[key] = nid
+    return ends
+
+
+def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None,
+                        reference=None):
     """Masked inpaint of an existing frame (FLUX.2 Klein 9B).
 
     Ported node-for-node from the F4 group of geoahmed's
@@ -6131,7 +6450,14 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
     trick, which also makes the zeroed negative the correct one. That schedule
     belongs to the BUILD, though: klein_schedule pairs the picked model to its
     KLEIN_SCHEDULES row by filename, and an undistilled build like Klein True
-    runs its own 20 steps at the same cfg 1.0."""
+    runs its own 20 steps at the same cfg 1.0.
+
+    Reference images (a face to swap in, a garment, a product) chain onto the
+    POSITIVE conditioning after the two source latents, so the masked region
+    is redrawn from them while the untouched pixels still anchor the
+    attention. The negative keeps carrying no reference latents at all, which
+    is this lane's existing shape - it is the zeroed instruction, not a
+    second description of the frame."""
     src = input_ref_name(image)
     if not src:
         raise ValueError("Klein Inpaint needs a source image in ComfyUI/input")
@@ -6140,6 +6466,7 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
     instruction = " ".join(str(scene or "").split())
     if not instruction:
         raise ValueError("Klein Inpaint needs an instruction for the masked area")
+    refs = klein_reference_names(reference, "Klein Inpaint")
     g = json.loads(json.dumps(TEMPLATES["klein_inpaint"]))
     # An explicit per-render pick wins; failing that Settings names the build,
     # and only then the recipe default - the same precedence build_qwen_edit
@@ -6185,9 +6512,17 @@ def build_klein_inpaint(scene, seed, image=None, overrides=(), model=None):
             g[node]["inputs"]["resolution_steps"] = KLEIN_INPAINT_STEPS
     else:
         _klein_bypass_scaling(g)
+    # After ki:ref, so the two source latents (masked, then full-frame) still
+    # come first in the chain: the frame anchors the attention and the
+    # references are what the masked region is redrawn FROM.
+    if refs:
+        ends = attach_klein_references(g, "ki", refs, {"pos": "ki:ref"}, "ki:vae")
+        g["ki:sampler"]["inputs"]["positive"] = [ends["pos"], 0]
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(model_entry), "source_image": src}
+    if refs:
+        info["reference_images"] = refs
     if native:
         canvas = qwen_edit_canvas(CDIR / "input" / src, working_mp,
                                   KLEIN_INPAINT_STEPS) or native
@@ -6219,12 +6554,13 @@ def _klein_bypass_scaling(g):
     g["ki:composite"]["inputs"]["generated_image"] = ["ki:decode", 0]
 
 def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
-                     model=None, loras=(), lora_plan=None):
+                     model=None, loras=(), lora_plan=None, reference=None):
     """Whole-frame instruction edit of an existing frame (FLUX.2 Klein 9B).
 
     Ported node-for-node from Comfy-Org's shipped
     `image_flux2_klein_image_edit_9b_distilled` template (subgraph 7b34ab90
-    expanded; the multi-reference variant is a follow-up). The spine: the
+    expanded; that file's OTHER subgraph, `65c22b29`, is the multi-reference
+    arm and is where attach_klein_references comes from). The spine: the
     scaled source is VAE-encoded ONCE and that latent feeds BOTH
     ReferenceLatents - positive from the instruction, negative from the zeroed
     instruction - the sampler starts from an EMPTY Flux2 latent, and a
@@ -6262,6 +6598,7 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
     instruction = " ".join(str(scene or "").split())
     if not instruction:
         raise ValueError("Klein Edit needs an edit instruction")
+    refs = klein_reference_names(reference, "Klein Edit")
     g = json.loads(json.dumps(TEMPLATES["klein_edit"]))
     # Same precedence as the qwen lane: an explicit per-render pick wins, then
     # the Settings whole-frame pick when it is a Klein build (the picker holds
@@ -6315,10 +6652,22 @@ def build_klein_edit(scene, seed, image=None, megapixels=None, overrides=(),
         g["ke:back"]["inputs"]["height"] = native[1]
     else:
         _klein_edit_bypass_scaling(g, capped=working_mp is not None)
+    # References chain onto BOTH sides here, the way this lane already treats
+    # its own source latent (ke:refpos / ke:refneg off one VAEEncode): the
+    # negative is the zeroed instruction, so giving it the same reference
+    # latents keeps CFG measuring the instruction rather than the presence of
+    # the extra images.
+    if refs:
+        ends = attach_klein_references(
+            g, "ke", refs, {"pos": "ke:refpos", "neg": "ke:refneg"}, "ke:vae")
+        g["ke:guider"]["inputs"]["positive"] = [ends["pos"], 0]
+        g["ke:guider"]["inputs"]["negative"] = [ends["neg"], 0]
     for o in overrides:
         g[str(o["node"])]["inputs"][o["input"]] = o["value"]
     info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
             "source_image": src}
+    if refs:
+        info["reference_images"] = refs
     if native:
         canvas = qwen_edit_canvas(CDIR / "input" / src, working_mp,
                                   KLEIN_INPAINT_STEPS) or native
@@ -6351,6 +6700,87 @@ def _klein_edit_bypass_scaling(g, capped=False):
     if not capped:
         g["ke:size"]["inputs"]["image"] = ["ke:img", 0]
         g["ke:reflatent"]["inputs"]["pixels"] = ["ke:img", 0]
+
+
+def build_klein_t2i(scene, seed, aspect=None, mp=None, width=None, height=None,
+                    steps=None, cfg=None, negative=None, overrides=(), model=None,
+                    loras=(), lora_plan=None, character=None, standing=True,
+                    nsfw=False):
+    """Text-to-image on FLUX.2 Klein.
+
+    Ported from Comfy-Org's shipped `image_flux2_klein_text_to_image`. Klein
+    is one unified model - text-to-image and multi-reference editing off the
+    same weights - so this lane is the same checkpoint, text encoder and VAE
+    the edit lanes already load, reached from the composer instead of from a
+    finished frame. Nothing new is installed to turn it on.
+
+    The spine is the edit lanes' spine with the source half removed:
+    CLIPTextEncode -> CFGGuider -> SamplerCustomAdvanced over Flux2Scheduler
+    sigmas, starting from an EmptyFlux2LatentImage. No VAEEncode and no
+    ReferenceLatent, because there is nothing to reference.
+
+    The one thing that is NOT shared with the edit lanes is the negative
+    branch. The distilled build runs cfg 1.0, where a written negative cannot
+    do anything, so its negative is ConditioningZeroOut; the base build runs
+    cfg 5.0 with a real second CLIPTextEncode. Both arms ship in the official
+    template and KLEIN_T2I_SCHEDULES carries which one a build wants, so the
+    unused node is deleted rather than left dangling - the graph a render ran
+    should be the graph it needed.
+
+    Sampling size is the composer's, not capped here: Flux.2 is a 1-2 MP
+    family and 1024x1024 is the template's own canvas, but the MP dial is the
+    user's and every other text-to-image lane in this file respects it."""
+    spec = RECIPE_SPECS["klein_t2i"]
+    cap, ch = _character_caption(scene, character, standing, nsfw)
+    g = json.loads(json.dumps(TEMPLATES["klein_t2i"]))
+    model_entry = pick_recipe_model(model, "klein_t2i")
+    set_unet_loader(g, "kt:unet", model_entry)
+    clip = _pick_catalog_asset("text_encoders", (KLEIN_CLIP,),
+                               "its Qwen3 8B text encoder", "Klein")
+    set_clip_loader(g, "kt:clip", clip, "flux2")
+    g["kt:vae"]["inputs"]["vae_name"] = _pick_catalog_asset(
+        "vae", (KLEIN_VAE,), "the Flux2 VAE", "Klein")
+    schedule = klein_schedule(model_entry, KLEIN_T2I_SCHEDULES)
+    g["kt:sched"]["inputs"]["steps"] = schedule["steps"]
+    g["kt:guider"]["inputs"]["cfg"] = schedule["cfg"]
+    # The negative branch the build's own arm uses, and only that one.
+    if schedule["negative"] == "text":
+        g["kt:negtext"]["inputs"]["text"] = " ".join(str(negative or "").split())
+        g["kt:guider"]["inputs"]["negative"] = ["kt:negtext", 0]
+        del g["kt:neg"]
+    else:
+        del g["kt:negtext"]
+    if width and height:
+        w, h = int(width), int(height)
+    else:
+        w, h = dims_for(aspect or spec["aspect"], float(mp or spec["mp"]))
+    for node in ("kt:latent", "kt:sched"):
+        g[node]["inputs"]["width"] = w
+        g[node]["inputs"]["height"] = h
+    g["kt:pos"]["inputs"]["text"] = cap
+    g["kt:noise"]["inputs"]["noise_seed"] = int(seed)
+    if steps is not None:
+        g["kt:sched"]["inputs"]["steps"] = max(1, int(steps))
+    if cfg is not None:
+        g["kt:guider"]["inputs"]["cfg"] = float(cfg)
+    # Same LoRA plumbing as klein_edit, and for the same reason: kt:guider is
+    # the ONLY model consumer here. kt:sched (Flux2Scheduler) takes
+    # steps/width/height and no model at all - handing it the tail is a
+    # TypeError at execution, not a bad render.
+    entries, dropped = resolve_recipe_lora_stack(
+        "klein_t2i", loras, lora_plan, family="klein")
+    tail = apply_lora_nodes(g, "kt:unet", entries, "kt:lora")
+    g["kt:guider"]["inputs"]["model"] = [tail, 0]
+    g["kt:save"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene)}"
+    for o in overrides:
+        g[str(o["node"])]["inputs"][o["input"]] = o["value"]
+    info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
+            "size": f"{w}x{h}",
+            "steps": g["kt:sched"]["inputs"]["steps"],
+            "cfg": g["kt:guider"]["inputs"]["cfg"],
+            "schedule": schedule["label"],
+            "character": ch["name"] if ch else None}
+    return g, cap, info
 
 
 def build_qwen_image(scene, seed, aspect=None, mp=None, width=None, height=None,
@@ -12703,7 +13133,7 @@ BUILDERS = {"realism": build_realism, "realism_ii": build_realism_ii,
             "zara_edit": build_zara_edit,       # alias: pre-rename ledger entries
             "qwen_edit": build_qwen_edit, "qwen_image": build_qwen_image,
             "face_mint": build_face_mint, "klein_inpaint": build_klein_inpaint,
-            "klein_edit": build_klein_edit,
+            "klein_edit": build_klein_edit, "klein_t2i": build_klein_t2i,
             "ltx_i2v": build_ltx_i2v, "ltx25_i2v": build_ltx25_i2v,
             "h3_i2v": build_h3_i2v,
             "h3_ref2v": build_h3_ref2v,
@@ -18986,6 +19416,13 @@ def effective_recipe(opts):
         # the first render anyone tries.
         if entry and entry["family"] == "anima":
             return "anima"
+        # Klein owns its own graph and has no style or quality variants
+        # either, so every creative intent resolves to its one t2i recipe.
+        # Without this a Klein pick falls through to Realism and renders on
+        # Krea 2 - the model the user chose is not the model that ran, and
+        # nothing on the card would say so.
+        if entry and entry["family"] == "klein":
+            return "klein_t2i"
         # An H3 build picked for a still renders one frame, whatever style
         # the selector last held: the ref2va build runs h3_ref_still (9.67),
         # an fl2va build runs h3_still, and the Refined quality adds the
@@ -19009,6 +19446,8 @@ def effective_recipe(opts):
             return "qwen_image"
         if entry and entry["family"] == "anima":
             return "anima"
+        if entry and entry["family"] == "klein":
+            return "klein_t2i"
         # Same routing as the style/quality branch above; quality can only
         # arrive here when neither key was sent, but the branches mirror each
         # other so they cannot drift.
@@ -22896,9 +23335,12 @@ async def edit(req):
         src_img.putalpha(m.point(lambda v: 0 if v > 127 else 255))
         dst = f"pixal_mask_{Path(dst).stem[:48]}.png"
         src_img.save(CDIR / "input" / dst)
-    # An attached reference image (a logo, a product shot) rides along as the
-    # Plus encoder's image2 - qwen_edit only, and the masked lane can't take
-    # one, so refuse rather than silently dropping what the user attached.
+    # An attached reference image (a face to swap in, a logo, a product shot).
+    # qwen_edit feeds it to the Plus encoder's image2 AND a chained reference
+    # latent; the Klein lanes chain the latent alone. A mask is no longer a
+    # refusal - klein_inpaint takes both, which is the face-swap-into-a-region
+    # case - but a lane with no reference input still is, because the SIGS
+    # filter below would otherwise drop the attachment silently.
     reference = ""
     if body.get("reference"):
         reference = input_ref_name(body["reference"])
@@ -22908,10 +23350,6 @@ async def edit(req):
         if not (CDIR / "input" / reference).is_file():
             return web.json_response(
                 {"ok": False, "error": "file gone: " + reference}, status=404)
-        if mask:
-            return web.json_response(
-                {"ok": False, "error": "a masked edit cannot take a reference "
-                                       "image yet - clear the mask first"}, status=400)
     # The source-only recipes all start from an image in input/ and differ in
     # what they do with it: qwen_edit and klein_edit follow an instruction
     # whole-frame, klein_inpaint redraws only the painted mask, face_mint
@@ -22923,14 +23361,15 @@ async def edit(req):
     if recipe not in SOURCE_ONLY_RECIPE_IDS:
         return web.json_response(
             {"ok": False, "error": f"not an edit recipe: {recipe}"}, status=400)
-    # A reference rides qwen_edit's Plus encoders only. Wherever the route
-    # landed (a Klein pick, an explicit masked recipe), if this lane has no
-    # reference input the SIGS filter below would drop the user's attachment
-    # SILENTLY - refuse instead, the standard the mask guard above sets.
+    # qwen_edit and both Klein lanes take a reference now; face_mint does not,
+    # and neither would a lane added later. The check stays keyed on SIGS
+    # rather than on a list of recipe names, so a new lane is covered by
+    # whether its builder actually accepts one - and if it does not, the
+    # attachment is refused instead of dropped SILENTLY by the filter below.
     if reference and "reference" not in SIGS[recipe]:
         return web.json_response(
-            {"ok": False, "error": f"a reference image needs the Qwen edit "
-                                   f"lane - {recipe} cannot take one"}, status=400)
+            {"ok": False, "error": f"{recipe} cannot take a reference image - "
+                                   f"the Qwen and Klein edit lanes can"}, status=400)
     args = {"image": dst}
     if reference:
         args["reference"] = reference

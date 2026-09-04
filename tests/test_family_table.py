@@ -250,7 +250,12 @@ class ZImageVariantRule(unittest.TestCase):
             turbo = server.model_profile("zit\\z-image-turbo.safetensors")
             base = server.model_profile("zib\\z-image-base.safetensors")
         self.assertEqual((turbo["family"], turbo["variant"]), ("zimage", "turbo"))
-        self.assertEqual(turbo["execution_profile"], "zimage_turbo_v4")
+        # Turbo moved off the Amazing v4 sigma chain on 2026-09-03: that graph
+        # has no KSampler, so it had no scheduler, no shift and no sampler pair
+        # to set, which left the preset shelf and every saved style's tuning
+        # inert on nine of thirteen Z-Image checkpoints. v4 is still in the
+        # table for a model_meta row to point at; nothing reaches it by path.
+        self.assertEqual(turbo["execution_profile"], "zimage_turbo")
         self.assertEqual((base["family"], base["variant"]), ("zimage", "base"))
         self.assertEqual(base["execution_profile"], "zimage_base")
 
@@ -306,10 +311,25 @@ class ModelProfileNoRegress(unittest.TestCase):
         with sidecar, roots:
             self.assertTrue(server.model_profile("Qwen\\qwen-image-edit.safetensors")
                             .get("source_only"))
-            self.assertTrue(server.model_profile("Klein\\flux2-klein-9b.safetensors")
-                            .get("source_only"))
             self.assertIsNone(server.model_profile("Krea 2\\krea2_turbo.safetensors")
                               .get("source_only"))
+
+    def test_klein_is_not_source_only(self):
+        """FLUX.2 Klein is one unified model: text-to-image AND editing.
+
+        It carried source_only until 2026-09-03 for a harness reason (no t2i
+        graph existed), not a model one. The mark going back would hide
+        klein_t2i from the composer's model picker while the recipe still
+        listed the build as compatible - a disagreement the picker cannot
+        show, so it is asserted here rather than left to be noticed."""
+        sidecar, roots = _no_disk(self)
+        with sidecar, roots:
+            profile = server.model_profile("Klein\\flux2-klein-9b.safetensors")
+            self.assertIsNone(profile.get("source_only"))
+            recipes = server.compatible_recipes(profile)
+            self.assertIn("klein_t2i", recipes)
+            self.assertIn("klein_edit", recipes)
+            self.assertIn("klein_inpaint", recipes)
 
 
 if __name__ == "__main__":

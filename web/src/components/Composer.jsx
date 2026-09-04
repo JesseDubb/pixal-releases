@@ -986,6 +986,9 @@ const LORA_PICKER_GROUPS_KEY = "pixal.loraPicker.groups.v1";
 const TUNE_STEPS = { min: 1, max: 40, step: 1 };
 const TUNE_CFG = { min: 1, max: 10, step: 0.5 };
 const TUNE_ETA = { min: 0, max: 1, step: 0.05 };
+// ModelSamplingAuraFlow accepts 0-100; nothing useful on Z-Image lives
+// above 8, and a slider dead over 92% of its travel is not a control.
+const TUNE_SHIFT = { min: 0.5, max: 8, step: 0.25 };
 // The Picker's value must always name a row it holds, so a pair that is not on
 // the shelf rides in under this id rather than falling back to a placeholder.
 const COMBO_OFF_SHELF = "__pixal_off_shelf__";
@@ -1359,6 +1362,15 @@ const TuningCard = ({ recipeId, model, styleTuning, overrides, onTuning, rowBase
                 ))}
             </div>
           )}
+          {has("shift") && field("Shift", "shift",
+            <MiniSlider value={resolved.shift} {...TUNE_SHIFT} resetTo={home.shift}
+              emphasis={isSet("shift")} ariaLabel="shift"
+              format={(v) => Number(v).toFixed(2)}
+              onChange={(v) => change("shift", Math.round(v * 4) / 4)} />,
+            <InfoTip size={11} text={"How much of the schedule is spent on "
+              + "composition rather than detail. Lower locks the layout early "
+              + "and sharpens texture; higher rearranges more and comes out "
+              + "softer. Raise it as you raise resolution."} />)}
           {has("eta") && field("Eta", "eta",
             <MiniSlider value={resolved.eta || 0} {...TUNE_ETA} resetTo={home.eta || 0}
               emphasis={isSet("eta")} ariaLabel="eta"

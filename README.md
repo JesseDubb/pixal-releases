@@ -6,7 +6,7 @@ The point is repeatability. Model files remain interchangeable within their supp
 
 Pixal does **not** include ComfyUI, checkpoints, LoRAs, VAEs, text encoders, upscalers, or language models.
 
-Current build: **1.3.1b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
+Current build: **1.3.2b** (channel `stable`). Both values live in `PIXAL_VERSION` / `PIXAL_CHANNEL` in `server.py` and travel on `/api/settings` and `/api/comfy/compat`; the web bundle carries no version string of its own.
 
 ## What works
 
@@ -767,6 +767,10 @@ For the optional review button, install a `ComfyUI-QwenVL` model and select its 
 
 ## Rebuild the web UI
 
+For backend ownership, refactor status and safety boundaries, see
+[ARCHITECTURE.md](ARCHITECTURE.md). It describes the current implementation,
+not a completed rewrite or a newly published release.
+
 The checked-in `web\app.js` is the runnable bundle, so Node.js is not needed for normal use. To rebuild it from `web\src`:
 
 ```bat
@@ -775,6 +779,23 @@ web\build.bat
 ```
 
 The build script resolves React, Phosphor Icons, and esbuild only from this checkout's `node_modules`; it has no machine-specific paths. You can also use `npm run build` or `npm run watch`.
+
+For the complete development check, install `requirements-dev.txt` into your
+development environment and run `python tools/verify.py`. It verifies the bundle
+and service-worker cache stamp, then runs the Python and JavaScript suites.
+Use `--build` to regenerate web assets first. The watch command is development-only.
+
+Pytest gives the legacy backend temporary data and ComfyUI directories before
+importing it. Tests do not need your saved recipes, chats or API keys. A few older
+checks for private, unshipped styles skip when those files are absent; the browser
+audit remains opt-in. Application defaults are unchanged: data stays beside
+`server.py`, and a neighboring ComfyUI installation is detected as before.
+
+For isolated developer harnesses, `PIXAL_DATA_DIR` and `PIXAL_COMFY_DIR` accept
+explicit absolute directories. Create the data directory first. These overrides
+do not move data, override a saved ComfyUI choice at startup, or make legacy global
+state safe for multiple applications in one process. Leave them unset for the
+normal desktop launcher until the full bootstrap migration is complete.
 
 ## Privacy and local data
 

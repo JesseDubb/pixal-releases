@@ -3,6 +3,8 @@
 # "config.json.defaults" carries the same live access key, and the bare name
 # left those one `git add -A` away from being published.
 config.json*
+# Incomplete atomic saves from an interrupted process are private too.
+.config.json.*
 config.local.json
 .local_llm.json
 _lora_titles.json

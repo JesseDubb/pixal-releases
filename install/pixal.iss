@@ -13,7 +13,7 @@
 ; and NO install-mode dialog. "Never asks for admin" means never asking.
 
 #ifndef MyVersion
-  #define MyVersion "1.3.1b"
+  #define MyVersion "1.3.2b"
 #endif
 #ifndef MyStage
   #define MyStage "_build\stage"
@@ -84,7 +84,7 @@ Name: "{group}\Uninstall {#MyName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyName}";     Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\web\icons\pixal-block.ico"; Tasks: desktopicon; AppUserModelID: "Chrome.127.0.0.1_/"
 
 [Run]
-Filename: "{app}\{#MyExeName}"; Description: "Open &Pixal now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyExeName}"; Description: "Open &Pixal now"; Flags: nowait postinstall skipifsilent; Check: EngineSucceeded
 
 [UninstallDelete]
 ; Everything created AFTER install, which Inno's own file list cannot know
@@ -115,6 +115,9 @@ var
   WorkPage:   TOutputProgressWizardPage;
   FreshComfy: Boolean;
   RanEngine:  Boolean;
+  EngineOK: Boolean;
+  EngineProgFile: String;
+  StopButton: TNewButton;
   DriverMajor: Integer;
   GpuName: String;
 
@@ -144,6 +147,30 @@ function JsonPath(const S: String): String;
 begin
   Result := S;
   StringChangeEx(Result, '\', '\\', True);
+  StringChangeEx(Result, '"', '\"', True);
+  StringChangeEx(Result, #13, '\r', True);
+  StringChangeEx(Result, #10, '\n', True);
+  StringChangeEx(Result, #9, '\t', True);
+end;
+
+function EngineSucceeded: Boolean;
+begin
+  Result := EngineOK;
+end;
+
+procedure StopEngine(Sender: TObject);
+begin
+  if SaveStringToFile(ChangeFileExt(EngineProgFile, '.cancel'), 'cancel', False) then begin
+    StopButton.Enabled := False;
+    StopButton.Caption := 'Stopping...';
+  end else
+    MsgBox('Could not request cancellation. Check folder permissions.', mbError, MB_OK);
+end;
+
+procedure EngineOutput(const S: String; const Error, FirstLine: Boolean);
+begin
+  WorkPage.SetProgress(StrToIntDef(ReadKey(EngineProgFile, 'pct'), 0), 100);
+  WorkPage.SetText(ReadKey(EngineProgFile, 'step'), ReadKey(EngineProgFile, 'detail'));
 end;
 
 { nvidia-smi through cmd so its output can be redirected to a file. Pascal has
@@ -224,6 +251,11 @@ begin
   WorkPage := CreateOutputProgressPage('Setting up',
     'Downloading ComfyUI and the models you chose. This resumes if it is ' +
     'interrupted - you can close Setup and run it again without losing work.');
+  StopButton := TNewButton.Create(WizardForm);
+  StopButton.Parent := WorkPage.Surface;
+  StopButton.Caption := 'Cancel setup';
+  StopButton.SetBounds(0, WorkPage.ProgressBar.Top + WorkPage.ProgressBar.Height + ScaleY(24), ScaleX(120), ScaleY(25));
+  StopButton.OnClick := @StopEngine;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -241,16 +273,9 @@ begin
       Result := False;
       Exit;
     end;
-    if DriverMajor < DRIVER_MIN then begin
-      MsgBox('Your NVIDIA driver is ' + IntToStr(DriverMajor) + '.x.' + NL2 +
-             'The ComfyUI build Pixal installs needs ' + IntToStr(DRIVER_MIN) +
-             ' or newer. Update at nvidia.com/drivers, then run Setup again.',
-             mbCriticalError, MB_OK);
-      Result := False;
-      Exit;
-    end;
   end;
   if CurPageID = wpSelectComponents then begin
+    WizardSelectComponents(ResolveLaneSelection(WizardSelectedComponents(False)));
     if ComfyPage.Values[0] = '' then begin
       Found := DetectComfy;
       FreshComfy := Found = '';
@@ -271,6 +296,11 @@ begin
         would now refuse it, but the lane must read right here too. }
       FreshComfy := not (LooksLikeComfy(ComfyPage.Values[0])
         or LooksLikeComfy(ComfyPage.Values[0] + '\ComfyUI'));
+    if FreshComfy and (DriverMajor < DRIVER_MIN) then begin
+      MsgBox('The new ComfyUI portable needs NVIDIA driver ' + IntToStr(DRIVER_MIN) +
+             ' or newer. Update your driver, or select an existing working ComfyUI.', mbError, MB_OK);
+      Result := False;
+    end;
   end;
 end;
 
@@ -295,52 +325,62 @@ end;
 procedure RunEngine;
 var
   ChoicesFile, ProgFile, Json, Phase, Err: String;
-  Code, Pct, Idle: Integer;
+  Code: Integer;
 begin
+  RanEngine := True;
+  EngineOK := False;
   ForceDirectories(ExpandConstant('{app}\install\_work'));
   ChoicesFile := ExpandConstant('{app}\install\_work\choices.json');
   ProgFile    := ExpandConstant('{app}\install\_work\progress.txt');
+  EngineProgFile := ProgFile;
   DeleteFile(ProgFile);
+  DeleteFile(ChangeFileExt(ProgFile, '.cancel'));
 
   Json := '{"lanes":[' + ChosenLanes + '],"comfy":{"mode":"';
   if FreshComfy then Json := Json + 'install' else Json := Json + 'use';
   Json := Json + '","path":"' + JsonPath(ComfyPage.Values[0]) +
           '"},"home":"' + JsonPath(ExpandConstant('{app}')) +
           '","tidy":true}';
-  SaveStringToFile(ChoicesFile, Json, False);
+  if not SaveStringToFile(ChoicesFile, Utf8Encode(Json), False) then
+    RaiseException('Could not save setup choices. Check folder permissions.');
 
   WorkPage.SetProgress(0, 100);
   WorkPage.SetText('Starting', '');
   WorkPage.Show;
   try
-    if not Exec(ExpandConstant('{app}\install\runtime\pythonw.exe'),
-      '"' + ExpandConstant('{app}\install\pixal_install.py') + '" --headless "' +
+    if not ExecAndLogOutput(ExpandConstant('{app}\install\runtime\python.exe'),
+      '-X utf8 -u "' + ExpandConstant('{app}\install\pixal_install.py') + '" --headless "' +
       ChoicesFile + '" "' + ProgFile + '"', ExpandConstant('{app}'),
-      SW_HIDE, ewNoWait, Code) then begin
-      MsgBox('Could not start the setup engine.', mbCriticalError, MB_OK);
-      Exit;
-    end;
-    Idle := 0;
-    repeat
-      Sleep(400);
-      Phase := ReadKey(ProgFile, 'phase');
-      Pct   := StrToIntDef(ReadKey(ProgFile, 'pct'), 0);
-      if Phase = '' then Idle := Idle + 1 else Idle := 0;
-      WorkPage.SetProgress(Pct, 100);
-      WorkPage.SetText(ReadKey(ProgFile, 'step'), ReadKey(ProgFile, 'detail'));
-    until (Phase = 'done') or (Phase = 'error') or (Idle > 150);
+      SW_HIDE, ewWaitUntilTerminated, Code, @EngineOutput) then
+      RaiseException('Could not start the setup engine: ' + SysErrorMessage(Code));
+    Phase := ReadKey(ProgFile, 'phase');
+    EngineOK := (Code = 0) and (Phase = 'done');
     Err := ReadKey(ProgFile, 'error');
-    if (Phase <> 'done') and (Err <> '') then
+    if not EngineOK then begin
+      if Err = '' then Err := 'The setup engine stopped without confirming completion (exit ' + IntToStr(Code) + ').';
       MsgBox('Setup could not finish everything:' + NL2 + Err + NL2 +
-             'Nothing is lost. Open Pixal Setup from the Start Menu and ' +
-             'it picks up where it stopped.', mbError, MB_OK);
+             'Open Pixal Setup from the Start Menu to retry. Logs are in ' +
+             ExpandConstant('{app}\install\_work') + '.', mbError, MB_OK);
+    end;
   finally
     WorkPage.Hide;
   end;
-  RanEngine := True;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and not EngineOK then begin
+    WizardForm.FinishedHeadingLabel.Caption := 'Setup needs attention';
+    WizardForm.FinishedLabel.Caption := 'Pixal setup did not complete. Open Pixal Setup from the Start Menu to retry; your existing files have been retained.';
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and (not RanEngine) then RunEngine;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if EngineOK then Result := 0 else Result := 1;
 end;

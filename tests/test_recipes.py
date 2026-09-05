@@ -2107,8 +2107,7 @@ class VramButlerBrainRest(unittest.TestCase):
         self.assertEqual(hub.texts, [
             "*Brain rested for the render (6.0 GB)*",
             "*Making room - this render stages ~13GB: cleared cached models. "
-            "Still tight (13.0GB free) - something outside Pixal holds the "
-            "rest, so this one may crawl*"])
+            "Still tight (13.0GB free); ComfyUI may need to offload model weights*"])
 
 
 class WarmVideoRerun(unittest.TestCase):
@@ -2328,6 +2327,7 @@ class _RetryHub:
     def __init__(self):
         self.texts, self.submitted = [], []
         self.resident_heavies, self.critic_hot = {}, False
+        self.jobs, self.queue_remaining = {}, 0
 
     def broadcast(self, **kw):
         if kw.get("type") == "text":
@@ -2350,6 +2350,8 @@ class _RetryHub:
     seconds_that_fit = server.Hub.seconds_that_fit
     oom_retry_plan = server.Hub.oom_retry_plan
     retry_after_oom = server.Hub.retry_after_oom
+    acquire_memory_turn = server.Hub.acquire_memory_turn
+    busy_elsewhere = server.Hub.busy_elsewhere
 
 
 OOM_TEXT = "Allocation on device 0 would exceed allowed memory. (out of memory)"

@@ -38,6 +38,13 @@ STAGE = BUILD / "stage"
 ICON = PIXAL / "web" / "icons" / "pixal-block.ico"
 SECRETS = ("config.json", "history.jsonl", "_lora_titles.json")
 
+
+def is_secret_path(path):
+    """Include config backups and interrupted atomic writes, not just the primary file."""
+    name = Path(path).name
+    return (name in SECRETS or name.startswith("config.json.")
+            or name.startswith(".config.json."))
+
 # Committed but internal - planning briefs, working docs, the marketing site,
 # brand experiments. No secrets in them, but an installer anyone can unzip is a
 # publication, and these were never written for one.
@@ -112,7 +119,7 @@ def stage_tree():
     run(["git", "archive", "HEAD", "-o", str(tar)])
     with zipfile.ZipFile(tar) as z:
         names = z.namelist()
-        leaked = [n for n in names if Path(n).name in SECRETS]
+        leaked = [n for n in names if is_secret_path(n)]
         if leaked:
             sys.exit(f"REFUSING TO BUILD - secrets in the package: {leaked}")
         z.extractall(STAGE)
@@ -148,9 +155,11 @@ def stage_runtime():
         z.extractall(rt)
     for pth in rt.glob("python*._pth"):
         text = pth.read_text(encoding="utf-8")
-        if "\nimport site" not in text:
-            pth.write_text(text.replace("#import site", "import site")
-                           .rstrip() + "\nimport site\n", encoding="utf-8")
+        lines = text.splitlines()
+        for entry in (r"..\..", "import site"):
+            if entry not in lines:
+                lines.append(entry)
+        pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if not (rt / "pythonw.exe").is_file():
         sys.exit("embeddable python has no pythonw.exe - wrong archive?")
     print(f"  runtime: python {PY_VER} embeddable, site enabled")
@@ -266,13 +275,25 @@ def gen_components():
         types = "full custom"
         if lane.get("recommended"):
             types = "full compact custom"
-        out.append(f'Name: "{lid}"; Description: "{desc}"; '
-                   f'Types: {types}; ExtraDiskSpaceRequired: {size}')
+        # Models can live on another drive and may already exist. The engine's
+        # destination-aware preflight owns their space check, not Inno's app disk.
+        out.append(f'Name: "{lid}"; Description: "{desc}"; Types: {types}')
     out += ["", "[Code]",
             "{ Lane ids, in catalog order. Generated - see build_installer.py }",
             "function LaneIds: TArrayOfString;", "begin",
             "  Result := [" + ", ".join(f"'{i}'" for i in ids) + "];",
             "end;", ""]
+    out += ["function ResolveLaneSelection(Selection: String): String;",
+            "var Pass: Integer;", "begin",
+            f"  for Pass := 1 to {len(ids)} do begin"]
+    for lane in cat["lanes"]:
+        for dependency in lane.get("requires", []):
+            if dependency not in ids:
+                raise ValueError(f"Unknown lane prerequisite: {dependency}")
+            out += [f"    if (Pos(',{lane['id']},', ',' + Selection + ',') > 0) and",
+                    f"       (Pos(',{dependency},', ',' + Selection + ',') = 0) then",
+                    f"      Selection := Selection + ',{dependency}';"]
+    out += ["  end;", "  Result := Selection;", "end;", ""]
     dest = BUILD / "components.iss"
     dest.write_text("\n".join(out), encoding="utf-8")
     print(f"  components: {len(ids)} lanes -> {dest.name}")

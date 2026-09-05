@@ -25,14 +25,17 @@ wifi costs only the bytes that were actually lost.
 
 import ctypes
 import errno
+import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import socket
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -217,10 +220,14 @@ def disk_preflight(choices, lanes, have, found=None):
         prev = need.get(key)
         need[key] = (prev[0] + nbytes, probe) if prev else (nbytes, probe)
 
-    weights = sum(f["bytes"] for f, _ in pending_files(lanes, have, found))
-    if weights:
-        add(clean_path(choices["comfy"]["path"]) or "C:/", int(weights * 1.1))
-    if choices["comfy"]["mode"] == "install":
+    root = Path(clean_path(choices["comfy"]["path"]))
+    models = (comfy_dir(root) or root / "ComfyUI") / "models"
+    for entry, dest in pending_files(lanes, have, found):
+        # Absolute 'beside' destinations can be on a third volume.
+        target = models / dest.replace("/", os.sep)
+        add(target.parent, int(entry["bytes"] * 1.1))
+    add(choices.get("home") or PIXAL, 512 * (1 << 20))
+    if choices["comfy"]["mode"] == "install" or portable_receipt(root):
         # The archive lands in WORK; the ~8 GB it unpacks to lands on the
         # chosen install drive - two different drives when Pixal was unzipped
         # to Downloads and the portable is headed for D:.
@@ -369,6 +376,39 @@ def portable_python(cdir):
     return None
 
 
+def comfy_python(cdir):
+    """Use the engine's environment, never silently substitute Pixal's venv."""
+    cdir = Path(cdir)
+    port = portable_python(cdir)
+    if port:
+        return port
+    candidates = [root / env / "Scripts" / "python.exe"
+                  for root in (cdir, cdir.parent) for env in (".venv", "venv")]
+    candidates.append(Path(sys.executable))
+    for candidate in candidates:
+        if candidate.is_file() and run_out(
+                [str(candidate), "-c", "import torch; import sys; assert sys.maxsize > 2**32"],
+                timeout=60)[0] == 0:
+            return candidate
+    raise RuntimeError("Cannot identify ComfyUI's Python environment. "
+                       "Use a portable install or a ComfyUI .venv/venv; "
+                       "setup has not installed node dependencies into another Python.")
+
+
+def runtime_preflight(home):
+    """Refuse incompatible hosts before downloading an engine or model."""
+    for root in (Path(home), PIXAL):
+        for relative in (".venv/Scripts/python.exe", "install/runtime/python.exe"):
+            candidate = root / relative
+            if candidate.is_file() and compatible_python(candidate):
+                return
+    if system_python():
+        return
+    raise RuntimeError("Pixal needs 64-bit Python 3.12 or 3.13. Run install.bat "
+                       "to fetch Pixal's private runtime, or install Python 3.12 "
+                       "from python.org before retrying.")
+
+
 def install_clash(root):
     """The ComfyUI already living at a would-be fresh-install destination.
 
@@ -386,15 +426,26 @@ def install_clash(root):
     return None
 
 
+def compatible_python(exe, *, venv=False):
+    """Probe the executable, not the launcher or setup interpreter's version."""
+    code = ("import sys,struct;"
+            "assert (3,12)<=sys.version_info[:2]<(3,14);"
+            "assert struct.calcsize('P')==8;")
+    if venv:
+        code += "import venv,ensurepip;"
+    return run_out([str(exe), "-c", code], timeout=20)[0] == 0
+
+
 def system_python():
     """A real python (not this embeddable one, if that is what started us)."""
-    if sys.version_info >= (3, 10) and (Path(sys.prefix) / "Lib" / "venv").is_dir():
+    if compatible_python(sys.executable, venv=True):
         return Path(sys.executable)
-    for cmd in (["py", "-3", "-c", "import sys;print(sys.executable)"],
+    for cmd in (["py", "-3.12", "-c", "import sys;print(sys.executable)"],
+                ["py", "-3.13", "-c", "import sys;print(sys.executable)"],
                 ["python", "-c", "import sys;print(sys.executable)"]):
         rc, out = run_out(cmd, timeout=15)
         exe = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ""
-        if exe and Path(exe).is_file():
+        if exe and Path(exe).is_file() and compatible_python(exe, venv=True):
             return Path(exe)
     return None
 
@@ -453,7 +504,7 @@ def install_pixal_to(dest, sid):
 
     copied = kept = 0
     for root, dirs, files in os.walk(src):
-        dirs[:] = [d for d in dirs if d not in NEVER_COPY]
+        dirs[:] = [d for d in dirs if d not in NEVER_COPY and not d.startswith(".venv.backup-")]
         rel = Path(root).relative_to(src)
         (dest / rel).mkdir(parents=True, exist_ok=True)
         for name in files:
@@ -525,26 +576,40 @@ def tidy(cdir, moves, sid):
 def choose_python(cdir):
     """The interpreter that will run the sidecar, and how we got it.
 
-    A .venv of its own is the right answer whenever the machine has a real
-    python: Pixal's four pinned dependencies then cannot touch the numpy and
-    Pillow that ComfyUI's torch is standing on. An embeddable python cannot
-    create a venv and a portable ComfyUI does not ship one, so the fallback is
-    to share ComfyUI's interpreter - carefully (see missing_deps)."""
+    Prefer a compatible application venv; otherwise use Pixal's private
+    embedded runtime. Neither path changes ComfyUI's numpy/Pillow stack.
+    Keep cdir in the call signature for existing installer integrations."""
     venv = PIXAL / ".venv" / "Scripts" / "python.exe"
-    if venv.is_file():
+    if venv.is_file() and compatible_python(venv):
         return venv, "venv"
+    if (PIXAL / ".venv").exists():
+        # Retain an old/broken environment for recovery; never pave it in place.
+        backup = PIXAL / f".venv.backup-{time.time_ns()}"
+        (PIXAL / ".venv").rename(backup)
+        log(f"  preserved incompatible environment at {backup.name}")
     sys_py = system_python()
     if sys_py:
-        rc, out = run_out([str(sys_py), "-m", "venv", str(PIXAL / ".venv")],
+        rc, out = run_cancellable([str(sys_py), "-m", "venv", str(PIXAL / ".venv")],
                           timeout=600)
-        if venv.is_file():
+        if rc == 0 and venv.is_file() and compatible_python(venv):
             return venv, "venv"
         log(f"  could not create a .venv ({out.strip()[-200:]})")
-    port = portable_python(cdir)
-    if port:
-        return port, "portable"
-    if sys_py:
-        return sys_py, "system"
+        if (PIXAL / ".venv").exists():
+            (PIXAL / ".venv").rename(PIXAL / f".venv.backup-{time.time_ns()}")
+    # The bundled runtime belongs to Pixal, unlike ComfyUI/global Python.
+    bundled = PIXAL / "install" / "runtime" / "python.exe"
+    source_runtime = HERE / "runtime"
+    if not bundled.exists() and (source_runtime / "python.exe").is_file():
+        shutil.copytree(source_runtime, bundled.parent, dirs_exist_ok=True)
+    if bundled.is_file() and compatible_python(bundled):
+        for pth in bundled.parent.glob("python*._pth"):
+            content = pth.read_text(encoding="utf-8")
+            lines = content.splitlines()
+            for entry in (r"..\..", "import site"):
+                if entry not in lines:
+                    lines.append(entry)
+            pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return bundled, "bundled"
     raise RuntimeError("no python to run Pixal on. Install Python 3.12 from "
                        "python.org and run this installer again.")
 
@@ -791,6 +856,15 @@ def survey(cdir):
     if not cdir:
         return out
     files = inventory(cdir, extra_model_roots(cdir))
+    # Do not let the survey bypass download verification for an old truncated
+    # catalog asset. Alternative filenames remain supported without imposing a
+    # different build's size/hash on them; this cheap check never hashes a library.
+    sizes = {}
+    for lane in CATALOG["lanes"]:
+        for entry in lane["files"]:
+            sizes.setdefault(Path(entry["dest"]).name.lower(), set()).add(entry["bytes"])
+    files = {rel: full for rel, full in files.items()
+             if Path(rel).name not in sizes or full.stat().st_size in sizes[Path(rel).name]}
     out["scanned"] = len(files)
     models = Path(cdir) / "models"
 
@@ -878,18 +952,57 @@ def survey(cdir):
 # config.json
 # --------------------------------------------------------------------------- #
 
-def read_config():
+def read_config(root=None):
+    path = Path(root or PIXAL) / "config.json"
     try:
-        return json.loads((PIXAL / "config.json").read_text(encoding="utf-8"))
-    except Exception:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict):
+            raise ValueError("settings must be a JSON object")
+        return value
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Cannot read {path}. Restore or repair this file; "
+                           "setup has preserved the original settings.") from exc
+
+
+def atomic_json(path, value):
+    atomic_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+def atomic_text(path, value):
+    """Bootstrap-safe atomic write; failure never truncates the destination."""
+    path = Path(path).resolve()
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                dir=path.parent, prefix=path.name + ".", suffix=".tmp",
+                delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def write_python_choice(py):
+    # An ASCII app-relative path survives cmd.exe's OEM decoding even when the
+    # Windows account/app directory contains accented or CJK characters.
+    relative = Path(py).relative_to(PIXAL)
+    atomic_text(PIXAL / ".pixal_python", str(relative) + "\n")
 
 
 def write_config(patch):
     """Merge, never overwrite: on a machine that already had Pixal this must not
     wipe an API key or an access key."""
     cfg = read_config()
-    if not cfg:
+    if not (PIXAL / "config.json").exists():
         try:
             cfg = json.loads((PIXAL / "config.example.json")
                              .read_text(encoding="utf-8"))
@@ -897,11 +1010,10 @@ def write_config(patch):
             cfg = {}
     for k, v in patch.items():
         if isinstance(v, dict):
-            cfg[k] = {**(cfg.get(k) or {}), **v}
+            cfg[k] = {**(cfg[k] if isinstance(cfg.get(k), dict) else {}), **v}
         else:
             cfg[k] = v
-    (PIXAL / "config.json").write_text(json.dumps(cfg, indent=2) + "\n",
-                                       encoding="utf-8")
+    atomic_json(PIXAL / "config.json", cfg)
     return cfg
 
 
@@ -909,12 +1021,26 @@ def write_config(patch):
 # downloading
 # --------------------------------------------------------------------------- #
 
-def download(url, dest, expect=0, sid=None, label=""):
+def verified_asset(path, expect=0, sha256=""):
+    if not path.is_file() or (expect and path.stat().st_size != expect):
+        return False
+    if sha256:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                if CANCEL.is_set():
+                    raise Cancelled()
+                digest.update(block)
+        return digest.hexdigest().lower() == sha256.lower()
+    return bool(expect)
+
+
+def download(url, dest, expect=0, sid=None, label="", sha256=""):
     """Resumable GET. The .part file is the resume point; a finished file of the
     right size is left alone, which is what makes re-running this cheap."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.is_file() and expect and dest.stat().st_size >= expect * 0.999:
+    if verified_asset(dest, expect, sha256):
         step_set(sid, status="ok", pct=100, detail="already downloaded")
         log(f"  have {dest.name}")
         return dest
@@ -927,7 +1053,16 @@ def download(url, dest, expect=0, sid=None, label=""):
                 raise Cancelled()
             have = part.stat().st_size if part.is_file() else 0
             try:
-                _stream(url, part, have, expect, sid, label)
+                # A complete partial needs verification, not a Range request
+                # past EOF (416). A full-size corrupt partial must start over.
+                if not verified_asset(part, expect, sha256):
+                    if expect and have >= expect:
+                        part.unlink()
+                        have = 0
+                    _stream(url, part, have, expect, sid, label)
+                if (expect or sha256) and not verified_asset(part, expect, sha256):
+                    part.unlink(missing_ok=True)
+                    raise IOError("download size or SHA-256 mismatch")
                 part.replace(dest)
                 step_set(sid, status="ok", pct=100,
                          detail=human(dest.stat().st_size))
@@ -943,7 +1078,7 @@ def download(url, dest, expect=0, sid=None, label=""):
                 log(f"  {dest.name}: {type(exc).__name__}: {exc} "
                     f"- retry {attempt + 1}/5")
                 step_set(sid, detail=f"reconnecting ({attempt + 1}/5)")
-                for _ in range(4 * (attempt + 1)):
+                for _ in range(4 * (attempt + 1) if attempt < 5 else 0):
                     if CANCEL.is_set():
                         raise Cancelled()
                     time.sleep(1)
@@ -955,11 +1090,24 @@ def _stream(url, part, have, expect, sid, label):
     if have:
         headers["Range"] = f"bytes={have}-"
     with urlopen(Request(url, headers=headers), timeout=60) as r:
-        mode = "ab"
+        if "text/html" in r.headers.get("Content-Type", "").lower():
+            raise IOError("download returned an HTML page instead of an asset")
+        mode = "ab" if have else "wb"
         if have and r.status != 206:            # server ignored the range
             have, mode = 0, "wb"
-        total = int(r.headers.get("Content-Length") or 0)
-        total = total + have if r.status == 206 else total
+        length = int(r.headers.get("Content-Length") or 0)
+        total = length
+        if r.status == 206:
+            match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)",
+                                 r.headers.get("Content-Range", ""))
+            if not match:
+                raise IOError("missing or invalid resume range")
+            start, end, total = map(int, match.groups())
+            if (start != have or end < start or end != total - 1 or
+                    (length and length != end - start + 1)):
+                raise IOError("server returned an inconsistent resume range")
+        if expect and total and total != expect:
+            raise IOError(f"unexpected download size: {total}, expected {expect}")
         total = total or expect
         got, t0, started, tick = have, time.time(), have, 0.0
         with open(part, mode) as f:
@@ -979,7 +1127,7 @@ def _stream(url, part, have, expect, sid, label):
                              pct=round(100 * got / total, 1) if total else 0,
                              detail=f"{human(got)} of {human(total)} · "
                                     f"{human(rate)}/s")
-        if total and got < total * 0.999:
+        if total and got != total:
             raise IOError(f"short read: {got} of {total}")
 
 
@@ -1019,6 +1167,112 @@ def flatten_portable(root):
     return Path(root) if (Path(root) / "ComfyUI").is_dir() else inner
 
 
+def portable_receipt(root):
+    root = Path(root).resolve()
+    path = root / ".pixal-portable-install.json"
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        if (receipt.get("owner") == "pixal-portable-v1" and
+                receipt.get("root") == str(root) and
+                receipt.get("pin") == CATALOG["comfyui"]["pin"] and
+                receipt.get("complete") is False):
+            return receipt
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def install_portable(archive, root, sid):
+    """Stage only our own extraction; journal publication across interruptions."""
+    root = Path(root).resolve()
+    receipt = portable_receipt(root)
+    stage = root / ".pixal-portable-stage"
+    marker = root / ".pixal-portable-install.json"
+    if receipt is None:
+        if install_clash(root) or stage.exists() or marker.exists():
+            raise RuntimeError(f"Refusing to overwrite an existing install at {root}")
+        root.mkdir(parents=True, exist_ok=True)
+        receipt = {"owner": "pixal-portable-v1", "root": str(root),
+                   "pin": CATALOG["comfyui"]["pin"], "complete": False}
+        atomic_json(marker, receipt)
+    if "publish" not in receipt:
+        extract_7z(archive, stage, sid)
+        flatten_portable(stage)
+        if not (stage / "ComfyUI" / "main.py").is_file() or not portable_python(stage / "ComfyUI"):
+            raise RuntimeError("Portable archive is incomplete; retry setup to recover")
+        names = [child.name for child in stage.iterdir()]
+        for name in names:
+            if (root / name).exists():
+                raise RuntimeError(f"Refusing to overwrite {root / name}")
+        receipt["publish"] = names
+        atomic_json(marker, receipt)
+    for name in receipt["publish"]:
+        if not isinstance(name, str) or name in ("", ".", "..") or Path(name).name != name:
+            raise RuntimeError("Invalid portable recovery receipt")
+        source, target = stage / name, root / name
+        if source.exists():
+            if target.exists():
+                raise RuntimeError(f"Portable recovery conflict at {target}")
+            source.rename(target)
+        elif not target.exists():
+            raise RuntimeError(f"Portable recovery is missing {name}")
+    if not (root / "ComfyUI" / "main.py").is_file() or not portable_python(root / "ComfyUI"):
+        raise RuntimeError("Portable runtime is incomplete")
+    receipt["complete"] = True
+    atomic_json(marker, receipt)
+    if stage.exists():
+        stage.rmdir()  # never recursively delete an unexpected recovery file
+    return root
+
+
+def process_lines(proc, timeout=None):
+    """Read output without making cancellation depend on the next newline."""
+    output = queue.Queue()
+
+    def reader():
+        try:
+            for line in proc.stdout:
+                output.put(line)
+        finally:
+            output.put(None)
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + timeout if timeout else None
+
+    def check_stop():
+        if CANCEL.is_set():
+            raise Cancelled()
+        if deadline and time.monotonic() >= deadline:
+            raise TimeoutError("Setup subprocess timed out")
+
+    try:
+        while True:
+            check_stop()
+            try:
+                line = output.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            yield line
+        while proc.poll() is None:
+            check_stop()
+            if CANCEL.wait(0.2):
+                raise Cancelled()
+    finally:
+        if proc.poll() is None:
+            if os.name == "nt":
+                # Only this owned Popen tree, never an image-name-wide kill.
+                run_out(["taskkill", "/PID", str(proc.pid), "/T", "/F"], timeout=10)
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=10)
+        thread.join(timeout=2)
+        if not thread.is_alive():
+            proc.stdout.close()
+
+
 def extract_7z(archive, dest, sid):
     exe = seven_zip()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1029,10 +1283,7 @@ def extract_7z(archive, dest, sid):
                                 text=True, errors="replace",
                                 creationflags=CREATE_NO_WINDOW)
         pat = re.compile(r"(\d{1,3})%")
-        for line in proc.stdout:
-            if CANCEL.is_set():
-                proc.kill()
-                raise Cancelled()
+        for line in process_lines(proc):
             m = pat.search(line)
             if m:
                 step_set(sid, status="run", pct=int(m.group(1)),
@@ -1053,7 +1304,7 @@ def pip(py, args, sid, what):
                             text=True, errors="replace",
                             creationflags=CREATE_NO_WINDOW)
     tail = []
-    for line in proc.stdout:
+    for line in process_lines(proc):
         line = line.rstrip()
         tail.append(line)
         del tail[:-3]
@@ -1064,6 +1315,15 @@ def pip(py, args, sid, what):
         raise RuntimeError(f"{what} failed:\n" + "\n".join(tail))
 
 
+def run_cancellable(cmd, timeout=600):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors="replace", creationflags=CREATE_NO_WINDOW)
+    tail = ""
+    for line in process_lines(proc, timeout=timeout):
+        tail = (tail + line)[-2000:]
+    return proc.returncode, tail
+
+
 def ensure_pip(py, sid):
     rc, _ = run_out([str(py), "-m", "pip", "--version"], timeout=60)
     if rc == 0:
@@ -1071,7 +1331,7 @@ def ensure_pip(py, sid):
     log("  that interpreter has no pip - bootstrapping it")
     script = WORK / "get-pip.py"
     download(GET_PIP, script, 0, sid=sid, label="get-pip")
-    rc, out = run_out([str(py), str(script), "--no-warn-script-location"],
+    rc, out = run_cancellable([str(py), str(script), "--no-warn-script-location"],
                       timeout=600)
     if rc != 0:
         raise RuntimeError("could not install pip into " + str(py) + "\n" + out[-800:])
@@ -1082,7 +1342,11 @@ def install_pack(name, cdir, py, sid):
     spec = CATALOG["packs"][name]
     target = Path(cdir) / "custom_nodes" / name
     if target.is_dir():
-        step_set(sid, status="ok", detail="already installed")
+        # Presence proves extraction, not that a previous pip run succeeded.
+        req = target / "requirements.txt"
+        if req.is_file():
+            pip(py, ["-r", str(req)], sid, f"{name} requirements")
+        step_set(sid, status="ok", detail="requirements repaired")
         return
     zip_url = (f"https://codeload.github.com/{spec['repo']}/zip/refs/heads/"
                f"{spec['branch']}")
@@ -1095,6 +1359,7 @@ def install_pack(name, cdir, py, sid):
     with zipfile.ZipFile(blob) as z:
         z.extractall(tmp)
     inner = next(p for p in tmp.iterdir() if p.is_dir())
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(inner), str(target))
     shutil.rmtree(tmp, ignore_errors=True)
     req = target / "requirements.txt"
@@ -1343,15 +1608,48 @@ def plan_files(lane, found):
         yield f, (rows[i]["dest"] if i < len(rows) else f["dest"])
 
 
+def resolve_lanes(selected):
+    """Authoritative dependency closure, shared by both setup interfaces."""
+    catalog = {lane["id"]: lane for lane in CATALOG["lanes"]}
+    visited, visiting = set(), set()
+
+    def visit(lid):
+        if lid not in catalog:
+            raise ValueError(f"Unknown installer component: {lid}")
+        if lid in visiting:
+            raise ValueError(f"Cyclic installer prerequisites: {lid}")
+        if lid in visited:
+            return
+        visiting.add(lid)
+        for dependency in catalog[lid].get("requires", []):
+            visit(dependency)
+        visiting.remove(lid)
+        visited.add(lid)
+
+    for lid in selected:
+        visit(lid)
+    return [lane for lane in CATALOG["lanes"] if lane["id"] in visited]
+
+
+def model_config_value(row):
+    # Inventory keys retain the category-relative identity for external roots.
+    # Recover filename case from the actual path without assuming its root.
+    parts = row["at"].replace("\\", "/").split("/")
+    if len(parts) < 2 or any(p in ("", ".", "..") for p in parts):
+        raise ValueError("Invalid model inventory identity")
+    return str(Path(*Path(row["full"]).parts[-(len(parts) - 1):]))
+
+
 def build_plan(choices):
     """The whole plan up front, so the page can show what it is in for before
     the first byte moves."""
     with LOCK:
         STATE["steps"] = []
-    lanes = [l for l in CATALOG["lanes"] if l["id"] in choices["lanes"]]
+    lanes = resolve_lanes(choices["lanes"])
     have, found = already_here(choices)
 
-    if choices["comfy"]["mode"] == "install":
+    if (choices["comfy"]["mode"] == "install" or
+            portable_receipt(clean_path(choices["comfy"]["path"]))):
         steps_add("comfy_get", "Download ComfyUI portable",
                   human(CATALOG["comfyui"]["asset_bytes"]))
         steps_add("comfy_x", "Unpack ComfyUI")
@@ -1431,7 +1729,8 @@ def fetch_weights(lanes, have, models, found=None):
         try:
             download(HF.format(repo=f["repo"], path=f["path"]),
                      models / dest.replace("/", os.sep),
-                     f["bytes"], sid=sid, label=Path(dest).name)
+                     f["bytes"], sid=sid, label=Path(dest).name,
+                     sha256=f.get("sha256", ""))
         except (Cancelled, DiskFull):
             raise
         except Exception as exc:
@@ -1461,11 +1760,15 @@ def worker(choices):
     source = PIXAL
     try:
         lanes, packs, have, found = build_plan(choices)
+        read_config(choices.get("home") or PIXAL)  # fail before expensive work
         WORK.mkdir(parents=True, exist_ok=True)
         disk_preflight(choices, lanes, have, found)
 
         # 1 - ComfyUI ------------------------------------------------------- #
         mode = choices["comfy"]["mode"]
+        resume_root = Path(clean_path(choices["comfy"]["path"]))
+        if portable_receipt(resume_root):
+            mode = "install"
         if mode == "install":
             root = Path(clean_path(choices["comfy"]["path"]))
             # The one check no page can be trusted with, so it lives in the
@@ -1475,7 +1778,7 @@ def worker(choices):
             # root (its ComfyUI lives one level down) as a fresh target -
             # only a kill mid-download saved that install.
             clash = install_clash(root)
-            if clash:
+            if clash and not portable_receipt(root):
                 msg = (f"there is already a ComfyUI at {clash} - choose "
                        f"\"Use\" for it instead of installing over it")
                 step_set("comfy_get", status="fail", detail=msg)
@@ -1484,16 +1787,17 @@ def worker(choices):
                     STATE["error"] = msg
                 log(f"refused: {msg}")
                 return
+            runtime_preflight(choices.get("home") or PIXAL)
             tag = CATALOG["comfyui"]["pin"]
             asset = CATALOG["comfyui"]["asset"]
             url = CATALOG["comfyui"]["url"].format(tag=tag, asset=asset)
             log(f"ComfyUI {tag} -> {root}")
             blob = WORK / asset
             download(url, blob, CATALOG["comfyui"]["asset_bytes"],
-                     sid="comfy_get", label="ComfyUI portable")
+                     sid="comfy_get", label="ComfyUI portable",
+                     sha256=CATALOG["comfyui"].get("asset_sha256", ""))
             step_set("comfy_x", status="run", detail="unpacking")
-            extract_7z(blob, root, "comfy_x")
-            comfy_root = flatten_portable(root)
+            comfy_root = install_portable(blob, root, "comfy_x")
             cdir = comfy_dir(comfy_root)
             if not cdir:
                 raise RuntimeError(f"unpacked, but no models folder under {comfy_root}")
@@ -1503,6 +1807,7 @@ def worker(choices):
             except OSError:
                 pass
         else:
+            runtime_preflight(choices.get("home") or PIXAL)
             comfy_root = Path(clean_path(choices["comfy"]["path"]))
             cdir = comfy_dir(comfy_root)
             if not cdir:
@@ -1533,19 +1838,9 @@ def worker(choices):
         py, kind = choose_python(cdir)
         log(f"Pixal will run on {py}")
         ensure_pip(py, "deps")
-        if kind == "venv":
-            pip(py, ["-r", str(PIXAL / "requirements.txt")], "deps",
-                "Pixal requirements")
-        else:
-            # Pixal is about to share ComfyUI's interpreter, and
-            # requirements.txt pins exact versions. Handing pip that file here
-            # can DOWNGRADE the numpy or Pillow torch is running on - breaking
-            # the ComfyUI we came to set up. So: only what is genuinely missing,
-            # and let pip pick a version that fits what is already installed.
-            missing = missing_deps(py)
-            if missing:
-                log(f"  sharing ComfyUI's python - adding only {', '.join(missing)}")
-                pip(py, missing, "deps", "Pixal requirements")
+        if kind not in ("venv", "bundled"):
+            raise RuntimeError("Refusing to install Pixal dependencies into a shared Python")
+        pip(py, ["-r", str(PIXAL / "requirements.txt")], "deps", "Pixal requirements")
         step_set("deps", status="ok", detail=str(py))
 
         # 3 - node packs ---------------------------------------------------- #
@@ -1555,7 +1850,8 @@ def worker(choices):
         # and the lane dies at import with the model already downloaded. Same
         # reasoning as the llama wheel below. pip is never handed --upgrade, so
         # a '>=' that torch already satisfies is left alone.
-        pack_py = portable_python(cdir) or py
+        pack_py = comfy_python(cdir)
+        ensure_pip(pack_py, "deps")
         if pack_py != py:
             log(f"node packs will use ComfyUI's python: {pack_py}")
         for p in packs:
@@ -1587,7 +1883,7 @@ def worker(choices):
             # ggml-cuda.dll needs the CUDA runtime at load time or llama.cpp
             # silently falls back to CPU, and torch's lib folder is where those
             # DLLs live. server.py's resolve_local_llm_python looks here too.
-            brain_py = portable_python(cdir) or py
+            brain_py = pack_py
             rc, _ = run_out([str(brain_py), "-c", "import llama_cpp"], timeout=120)
             if rc == 0:
                 brain_ready = True
@@ -1600,11 +1896,13 @@ def worker(choices):
                         log(f"  wheel: {url.rsplit('/', 1)[-1]}")
                         pip(brain_py, [url], "llama", "llama-cpp-python")
                     else:
-                        pip(brain_py, ["llama-cpp-python"], "llama",
-                            "llama-cpp-python")
+                        raise RuntimeError("No compatible prebuilt brain wheel; "
+                                           "setup will not attempt a source build")
                     rc, _ = run_out([str(brain_py), "-c", "import llama_cpp"],
                                     timeout=180)
                     brain_ready = rc == 0
+                except Cancelled:
+                    raise
                 except Exception as exc:
                     log(f"  local brain runtime did not install: {exc}")
                 if brain_ready:
@@ -1618,7 +1916,7 @@ def worker(choices):
 
         # 6 - config -------------------------------------------------------- #
         step_set("config", status="run")
-        patch = {"comfy_root": str(comfy_root), "setup_done": True}
+        patch = {"comfy_root": str(comfy_root)}
         if not read_config().get("comfy_url"):
             patch["comfy_url"] = "http://127.0.0.1:8188"
         # A catalogue entry can name a config key (edit.model). When the file
@@ -1634,22 +1932,20 @@ def worker(choices):
                                            and r.get("full")), None)
                 if not key or not row:
                     continue
-                rel = Path(row["full"]).relative_to(models)
-                value = str(Path(*rel.parts[1:]))     # drop the category folder
+                value = model_config_value(row)
                 section, _, field = key.partition(".")
                 patch.setdefault(section, {})[field] = value
                 log(f"  config {key} -> {value}")
         if brain_ready and brain_gguf:
             patch["llm"] = {"base_url": "http://127.0.0.1:8191/v1",
-                            "api_key": "", "model": "local",
+                            "model": "local",
                             "local_model": brain_gguf, "local_keep": True}
         elif brain_gguf:
             patch["llm"] = {"local_model": brain_gguf}
         write_config(patch)
-        # pixal.vbs starts run.bat with a bare environment, and an embeddable
-        # python cannot make a .venv - so the interpreter choice lives on disk.
-        if not (PIXAL / ".venv" / "Scripts" / "python.exe").is_file():
-            (PIXAL / ".pixal_python").write_text(str(py) + "\n", encoding="utf-8")
+        # Always replace a stale shared-interpreter choice, including when
+        # repair has just created a private venv.
+        write_python_choice(py)
         step_set("config", status="ok", detail=str(PIXAL / "config.json"))
 
         # 7 - shortcut ------------------------------------------------------ #
@@ -1671,6 +1967,12 @@ def worker(choices):
         if failed:
             finish_partial(note, planned, failed)
             return
+        if brain_lane and not brain_ready:
+            with LOCK:
+                STATE.update(phase="error", done_note=" ".join(note),
+                             error="The selected chat brain runtime did not install. "
+                                   "Retry setup or configure an API brain in Settings.")
+            return
         if brain_lane and brain_gguf and Path(brain_gguf).is_file():
             # The brain component's done-check: server.py's _local_llm_mmproj
             # finds the projector by globbing the model's OWN folder - that
@@ -1690,6 +1992,7 @@ def worker(choices):
                     STATE["error"] = msg
                 log(msg)
                 return
+        write_config({"setup_done": True})
         with LOCK:
             STATE["done_note"] = " ".join(note)
             STATE["phase"] = "done"
@@ -2020,28 +2323,36 @@ def headless(choices_path, progress_path):
         Path(progress_path).write_text(
             f"phase=error\npct=0\nstep=\ndetail=\n"
             f"error=could not read {choices_path}: {exc}\nnote=\n",
-            encoding="utf-8")
+            encoding="utf-8-sig")
         return 2
 
     out = Path(progress_path)
     stop = threading.Event()
+    cancel_file = out.with_suffix(".cancel")
+    CANCEL.clear()
 
     def flush():
-        try:
-            tmp = out.with_suffix(".tmp")
-            tmp.write_text(progress_line(), encoding="utf-8")
-            os.replace(tmp, out)                 # atomic; the reader polls it
-        except Exception:
-            pass
+        tmp = out.with_suffix(".tmp")
+        # BOM makes Inno's text loader decode Unicode progress consistently.
+        tmp.write_text(progress_line(), encoding="utf-8-sig")
+        os.replace(tmp, out)
 
     def pump():
         while not stop.wait(0.4):
-            flush()
+            if cancel_file.exists():
+                CANCEL.set()
+            try:
+                flush()
+                print(".", flush=True)  # wakes the native progress callback
+            except OSError:
+                CANCEL.set()
+                return
 
     with LOCK:
         STATE.update(phase="running", log=[], error="", done_note="")
     flush()
-    threading.Thread(target=pump, daemon=True).start()
+    pump_thread = threading.Thread(target=pump, daemon=True)
+    pump_thread.start()
     # No page ever polls here - the client is the wizard process itself. While
     # it lives the heartbeat stays fresh; when it dies the countdown starts.
     WORKER_THREAD = threading.current_thread()
@@ -2052,6 +2363,10 @@ def headless(choices_path, progress_path):
         worker(choices)
     finally:
         stop.set()
+        pump_thread.join()  # no background writer may replace the terminal state
+        if CANCEL.is_set():
+            with LOCK:
+                STATE.update(phase="cancelled", error="Setup was cancelled; run setup again to resume.")
         flush()
     with LOCK:
         return 0 if STATE["phase"] == "done" else 1

@@ -1,0 +1,288 @@
+{
+  "source_commit": "88984ab",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/manifest.webmanifest"
+    },
+    {
+      "method": "GET",
+      "path": "/sw.js"
+    },
+    {
+      "method": "STATIC",
+      "path": "/icons"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat"
+    },
+    {
+      "method": "GET",
+      "path": "/api/lane"
+    },
+    {
+      "method": "GET",
+      "path": "/api/chats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/reroll"
+    },
+    {
+      "method": "POST",
+      "path": "/api/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/comfy/free"
+    },
+    {
+      "method": "POST",
+      "path": "/api/comfy/restart"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sidecar/restart"
+    },
+    {
+      "method": "POST",
+      "path": "/api/llm/free"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ram/free"
+    },
+    {
+      "method": "POST",
+      "path": "/api/desktop/reset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vram/table"
+    },
+    {
+      "method": "GET",
+      "path": "/api/history"
+    },
+    {
+      "method": "POST",
+      "path": "/api/history/delete"
+    },
+    {
+      "method": "GET",
+      "path": "/api/options"
+    },
+    {
+      "method": "GET",
+      "path": "/api/h3/canvas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/quant_alternatives"
+    },
+    {
+      "method": "POST",
+      "path": "/api/quant_fetch"
+    },
+    {
+      "method": "POST",
+      "path": "/api/upload"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dlss5/dll"
+    },
+    {
+      "method": "POST",
+      "path": "/api/input-ref-type"
+    },
+    {
+      "method": "GET",
+      "path": "/api/setup"
+    },
+    {
+      "method": "POST",
+      "path": "/api/setup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/rescan"
+    },
+    {
+      "method": "GET",
+      "path": "/api/update-check"
+    },
+    {
+      "method": "POST",
+      "path": "/api/update/download"
+    },
+    {
+      "method": "POST",
+      "path": "/api/update/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/update/launch"
+    },
+    {
+      "method": "POST",
+      "path": "/api/animate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/animate/brief"
+    },
+    {
+      "method": "POST",
+      "path": "/api/edit"
+    },
+    {
+      "method": "POST",
+      "path": "/api/input/stage"
+    },
+    {
+      "method": "POST",
+      "path": "/api/upscale"
+    },
+    {
+      "method": "POST",
+      "path": "/api/review"
+    },
+    {
+      "method": "POST",
+      "path": "/api/trailer"
+    },
+    {
+      "method": "POST",
+      "path": "/api/styles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/styles/from-image"
+    },
+    {
+      "method": "GET",
+      "path": "/api/styles/sampler"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sampler/combos/star"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sampler/combos/forget"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/styles/{style_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/characters"
+    },
+    {
+      "method": "POST",
+      "path": "/api/characters/preview"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/characters/{character_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/characters/{character_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/characters/{character_id}/ref-thumb"
+    },
+    {
+      "method": "GET",
+      "path": "/api/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/poll"
+    },
+    {
+      "method": "GET",
+      "path": "/api/image"
+    },
+    {
+      "method": "GET",
+      "path": "/api/thumb"
+    },
+    {
+      "method": "GET",
+      "path": "/api/input-thumb"
+    },
+    {
+      "method": "GET",
+      "path": "/api/comfy/compat"
+    },
+    {
+      "method": "GET",
+      "path": "/api/comfy/manager/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/comfy/{tail:.*}"
+    },
+    {
+      "method": "STATIC",
+      "path": "/vendor"
+    },
+    {
+      "method": "STATIC",
+      "path": "/fonts"
+    },
+    {
+      "method": "GET",
+      "path": "/app.js"
+    }
+  ],
+  "recipe_ids": [
+    "realism",
+    "realism_ii",
+    "fantasy",
+    "anime",
+    "zimage",
+    "identity_edit",
+    "qwen_edit",
+    "qwen_image",
+    "face_mint",
+    "klein_inpaint",
+    "klein_edit",
+    "klein_t2i",
+    "anima",
+    "h3_still",
+    "h3_still_2x",
+    "h3_ref_still",
+    "h3_ref_still_2x"
+  ]
+}

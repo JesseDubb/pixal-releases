@@ -96,7 +96,9 @@ class TheyReachTheBrowser(unittest.TestCase):
     attempt at this fix, and the page went right on rendering in Arial."""
 
     def test_the_sidecar_serves_the_fonts_directory(self):
-        self.assertIn('add_static("/fonts", HERE / "web" / "fonts")', SERVER)
+        from pixal.http.routes import ROUTES, RouteSpec
+        self.assertIn(RouteSpec("STATIC", "/fonts", "fonts"), ROUTES)
+        # Actual HTTP delivery is covered by test_application_factory.py.
 
     def test_the_service_worker_precaches_both(self):
         for fam in FAMILIES:

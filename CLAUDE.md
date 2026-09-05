@@ -10,6 +10,10 @@ sidecar's HTTP API. Everything the UI can do, you can do — and there are
 things you can do that it cannot, because it renders one picture at a time
 and you can queue forty.
 
+For code changes, start with [ARCHITECTURE.md](ARCHITECTURE.md): current owners,
+verification gates and remaining legacy boundaries. This terminal guide is not
+a complete architecture map.
+
 ---
 
 ## The three processes
@@ -18,7 +22,7 @@ and you can queue forty.
 |---|---|---|
 | **Pixal sidecar** | 8190 | the API, the brain, the ledger. This is "Pixal". |
 | **ComfyUI** | 8188 | the renderer. Pixal starts it and owns its window. |
-| **The chat brain** | in-process | a local llama.cpp model that writes prompts and calls the render tool |
+| **The local chat brain** | 8191 | separate `pixal_brain_server.py` helper; the sidecar owns orchestration. A configured remote provider replaces this local inference path. |
 
 **Start Pixal only through its own launcher.** `pixal.vbs`, spawned so it does
 not inherit your console:
@@ -123,10 +127,8 @@ cleaner to build the graph with Pixal's own builder and post it to ComfyUI
 yourself:
 
 ```python
-import importlib.util, json, urllib.request
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("pixal", Path("server.py"))
-server = importlib.util.module_from_spec(spec); spec.loader.exec_module(server)
+import json, urllib.request
+import server  # Live-studio experiment only: this still initializes legacy state.
 server.apply_comfy_root(server.load_config()["comfy_root"])   # ← easy to forget
 
 g, caption, info = server.build_h3_ref_still("<scene>", 424242, character="zara")
@@ -165,16 +167,19 @@ for every job after — which reads exactly like a corrupt file and is not.
 Write the call *and call it*: a defined-and-never-called `free()` has killed
 two 39-job batches.
 
-**Never write `config.json` from PowerShell.** PowerShell 5.1 writes a BOM,
-`json.loads` rejects it, Pixal falls back to defaults and then saves those
-defaults over the real file. Write it with Python, or through
-`POST /api/settings`.
+**Use `POST /api/settings` for live preference changes.** Do not rewrite
+`config.json` with PowerShell: BOM-producing encodings make it unreadable by
+the current loader. The loader may fall back to defaults, but the configuration
+store now refuses to overwrite the unreadable original (Settings returns 409).
+Repair or restore it deliberately; do not bypass that guard by deleting it.
 
 **Never put Pixal code inside the ComfyUI install.** Pixal lives beside
 ComfyUI and stages files into `ComfyUI/input`. That is the whole contract.
 
-**Windows never OOMs, it pages.** At 99.9% VRAM even window compositing
-livelocks CUDA and the desktop goes with it. On a slow render read the
+**Windows can OOM or page through WDDM.** At 99.9% VRAM even window compositing
+can stall alongside CUDA. A cleared card does not make an oversized sampling
+canvas fit: reduce the workload after an allocation failure. System RAM and
+commit exhaustion are separate from GPU exhaustion. On a slow render read the
 per-process GPU counter in Task Manager's Details tab, not `nvidia-smi` —
 `nvidia-smi` hides DWM and the chat brain on WDDM.
 
@@ -256,12 +261,12 @@ here is the whole of it.
   python.exe`, then the ComfyUI portable's `python_embeded\python.exe`. Use
   the same one for any script that imports `server.py`, or you will debug a
   missing dependency that is not missing.
-- **Run the tests** with that interpreter: `-m pytest tests/`. Always
-  `tests/`, never bare `pytest` — a stale duplicate suite lives under
-  `install/_build/stage/` and will pass while the real one fails.
-- **Build the frontend with `web\build.bat`**, never `npm run build`. Only
-  build.bat stamps the service worker, and an unstamped bundle ships a stale
-  PWA shell that will make you doubt correct code.
+- **Run the verification gate** with that interpreter: `tools/verify.py`.
+  It checks generated assets, scopes pytest to `tests/`, and discovers the
+  JavaScript suites. Never bare `pytest`: installer staging has duplicate tests.
+- **Build the frontend with `web\build.bat` or `npm run build`**. Both use
+  `tools/build_web.mjs`, which stamps the complete service-worker shell.
+  `npm run watch` is development-only; run the real build before committing.
 - **Look at the render.** The metric ranks candidates; it does not settle
   them. Laplacian variance rewards grain as readily as detail, and more than
   one measured winner lost on sight.

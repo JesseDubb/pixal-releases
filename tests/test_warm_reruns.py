@@ -530,6 +530,7 @@ class _WarmHub:
         self.texts = []
         self.flushes = []     # (why, unload, free_memory)
         self.reclaims = []    # (why, target, unload)
+        self.reclaimed_gb = 30   # default: the simulated cleanup actually frees memory
 
     def ledger_read(self):
         return []
@@ -551,7 +552,7 @@ class _WarmHub:
     async def reclaim_vram(self, why, target=None, unload=True):
         self.reclaims.append((why, target, unload))
         await self.flush_comfy_cache(why, unload)
-        return 1 * GB
+        return self.reclaimed_gb * GB
 
     ensure_vram = server.Hub.ensure_vram
     busy_elsewhere = server.Hub.busy_elsewhere
@@ -708,6 +709,26 @@ class WarmButlerTests(unittest.TestCase):
                               ram_gb=1)
         self.assertIsNone(job.get("_warm"))
         self.assertTrue(hub.reclaims)
+
+    def test_a_cleanup_that_cannot_fit_activations_refuses_admission(self):
+        hub = _WarmHub()
+        hub.reclaimed_gb = 1
+        anchor(hub, warm_graph())
+        with self.assertRaises(server.MemoryPressureError):
+            run_butler(hub, {DIT: 12, ENC: 20, VAE: 0.5}, 1)
+        self.assertTrue(hub.reclaims)
+
+    def test_a_cold_ledger_delta_is_not_a_hard_working_set_floor(self):
+        hub = _WarmHub()
+        hub.reclaimed_gb = 10
+        hub.ledger_read = lambda: [{
+            "template": "zimage", "info": {"canvas_mp": 1.0},
+            "vram": {"start": 0, "peak": 30 * GB}}] * 3
+        # The profile fits, but (peak - start) includes a cold model load.
+        # That historical delta may drive reclamation, never a false refusal.
+        job, _ = run_butler(hub, {DIT: 12, ENC: 20, VAE: 0.5}, 1)
+        self.assertTrue(hub.reclaims)
+        self.assertNotIn("_memory_blocked", job)
 
     def test_the_guard_band_trims_never_wipes_when_warm(self):
         """The last job ended inside PREV_JOB_FREE_GUARD: the warm path

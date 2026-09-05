@@ -391,9 +391,10 @@ class UpdateInstallTests(unittest.TestCase):
         self.assertFalse(any("silent" in str(arg).lower() for arg in argv))
 
     def test_update_routes_are_registered(self):
+        from pixal.http.routes import ROUTES
         for route in ("/api/update/download", "/api/update/cancel",
                       "/api/update/launch"):
-            self.assertIn(f'"{route}"', SERVER_SRC)
+            self.assertIn(("POST", route), [(spec.method, spec.path) for spec in ROUTES])
 
     def test_about_tab_is_advisory_only(self):
         """The About slot names the release and links to it - nothing more.

@@ -1,0 +1,2191 @@
+{
+  "source_commit": "b1cc727",
+  "defaults": {
+    "llm": {
+      "base_url": "https://api.moonshot.ai/v1",
+      "api_key": "",
+      "model": "kimi-k3",
+      "local_model": "",
+      "local_keep": true,
+      "local_idle_minutes": 10,
+      "local_gpu_layers": -1,
+      "official_prompting": true
+    },
+    "critic": {
+      "model": "Qwen3-VL-4B-Instruct"
+    },
+    "upscale": {
+      "image_model": "",
+      "image_mode": "model",
+      "image_vsr_mode": "VSR Ultra",
+      "image_vsr_scale": 2.0,
+      "video_mode": "VSR High",
+      "video_scale": 2.0,
+      "video_fps": 0
+    },
+    "edit": {
+      "model": "",
+      "inpaint_model": "",
+      "inpaint_color_match": false,
+      "speed": "turbo"
+    },
+    "h3": {
+      "ref_model": "",
+      "fl_model": "",
+      "text_encoder": ""
+    },
+    "vae": {
+      "zimage": "",
+      "special": "",
+      "special_force": false
+    },
+    "pid": {
+      "identity_finish": false
+    },
+    "video": {
+      "default_engine": "",
+      "default_model": "",
+      "upscale_2x": false,
+      "h3_resolution": "standard",
+      "h3_dialogue_tags": "quotes"
+    },
+    "still": {
+      "film_grain": false,
+      "film_grain_amount": 1.6,
+      "de_shine": false,
+      "de_shine_strength": 0.85,
+      "dlss5": false,
+      "dlss5_style": "default",
+      "dlss5_tone": 1.5
+    },
+    "extra_model_roots": [],
+    "comfy_url": "",
+    "comfy_root": "",
+    "setup_done": false,
+    "comfy_boot_seconds": 0.0,
+    "vram_profile": "auto",
+    "comfy_editor": false,
+    "comfy_console": "tui",
+    "chrome_app_id": "",
+    "lan_access": false,
+    "stay_up": false,
+    "explicit": "auto",
+    "access_key": "",
+    "extension": {
+      "future": "preserve"
+    }
+  },
+  "policy": {
+    "image_modes": [
+      "model",
+      "pid",
+      "vsr"
+    ],
+    "vsr_tiers": [
+      "VSR Low",
+      "VSR Medium",
+      "VSR High",
+      "VSR Ultra"
+    ],
+    "video_modes": [
+      "VSR Low",
+      "VSR Medium",
+      "VSR High",
+      "VSR Ultra",
+      "LTX 2.5 2x"
+    ],
+    "scale_range": [
+      1.0,
+      4.0
+    ],
+    "video_fps": [
+      0,
+      30,
+      48,
+      60
+    ],
+    "special_decoders": [
+      "wan2x"
+    ],
+    "dlss5_styles": [
+      "default",
+      "natural",
+      "cinematic"
+    ],
+    "h3_resolutions": [
+      "standard",
+      "high",
+      "max"
+    ]
+  },
+  "catalog": {
+    "upscalers": [
+      "2x\\synthetic.pth"
+    ],
+    "vae": [
+      "VAE\\synthetic.safetensors"
+    ],
+    "models": {
+      "qwen_edit": [
+        "Qwen\\edit.safetensors"
+      ],
+      "klein_edit": [
+        "Klein\\edit.safetensors"
+      ],
+      "klein_inpaint": [
+        "Klein\\edit.safetensors"
+      ]
+    },
+    "h3_models": {
+      "ref": [
+        "H3\\reference.safetensors",
+        "H3\\hybrid.safetensors"
+      ],
+      "fl": [
+        "H3\\first.safetensors",
+        "H3\\hybrid.safetensors"
+      ]
+    },
+    "h3_encoders": [
+      "small"
+    ],
+    "video_engines": [
+      {
+        "id": "h3",
+        "models": [
+          {
+            "id": "fl2va"
+          },
+          {
+            "id": "ref2va"
+          }
+        ]
+      },
+      {
+        "id": "ltx25",
+        "models": [
+          {
+            "id": "default",
+            "available": false
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "body": {},
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "unknown": {
+          "future": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "base_url": "  http://synthetic.invalid/v1  "
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "bc8ebce62348846683859023c299c3c22526e58dd5f47511cc3ebf929d943f1b"
+    },
+    {
+      "body": {
+        "llm": {
+          "base_url": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "model": "  synthetic  "
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "5afb322470a0b569c931eb09bbf39ccdb25709f96b586faab8dbcb1f11382ecd"
+    },
+    {
+      "body": {
+        "llm": {
+          "model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "api_key": "  synthetic-key  "
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "5d4ce51357833d30ac3808b19852fb3fccceef7ff2710e75d2759371c5010426"
+    },
+    {
+      "body": {
+        "llm": {
+          "api_key": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_model": "  synthetic.gguf "
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "50a39bd22fe8e6d6f4abac6ba97e30b4dd5cbd7512d6896d1cc5226695903cdd"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_model": 12
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_keep": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_keep": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "f08d5e16934325919f4afbd36494ed55e5386e72c3311ee5d29bc0ad8ddd134b"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_keep": "false"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": -1
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": 0
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "471e8603e26a6f011246180ea905c062f48a9336dea0c24523b2bdc5acc5cc22"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": 12
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "047d180432383ddd9acb47d37b570f51abcc5de9b8cfa99e1968e8a11680c709"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": -2
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a gpu layer count: -2"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": true
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a gpu layer count: True"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": "2"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a gpu layer count: 2"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_gpu_layers": 1.5
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a gpu layer count: 1.5"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_idle_minutes": 0
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "1fdcd807b35db2833bb25078f85b92315b7180a84576ac8481c278f8ef325fc1"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_idle_minutes": 1.5
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "e71fb881b8727ac44ac6368346f945252b678762086f8bd8a4be202e23e7af30"
+    },
+    {
+      "body": {
+        "llm": {
+          "local_idle_minutes": -1
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a minute count: -1"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_idle_minutes": true
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a minute count: True"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "local_idle_minutes": "5"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a minute count: 5"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "llm": {
+          "official_prompting": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "llm": {
+          "official_prompting": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "156d8eb523a72256d562826d1cb8772bc27572eb3892e6d6f87ed6cad9602c90"
+    },
+    {
+      "body": {
+        "critic": {
+          "model": " model "
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "d0f24eff00d3a8a568002381990937bc31d05558263ad8dce479ba1da001de4b"
+    },
+    {
+      "body": {
+        "critic": {
+          "model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_model": "synthetic.pth"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "318715464a4534a62c40e0d52f1ce05d3414336e0f52d146cc47b6376221d86f"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_model": "2x\\synthetic.pth"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "318715464a4534a62c40e0d52f1ce05d3414336e0f52d146cc47b6376221d86f"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_model": "missing"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "synthetic upscaler not installed: missing"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "edit": {
+          "model": "qwen/edit.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "ff2ea4e8d4ed0873078ec8ae752016eacdc79bacc9d72ea6d7650603d032c131"
+    },
+    {
+      "body": {
+        "edit": {
+          "model": "Klein\\edit.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "eff5655bdb94e9d13ceadb23ce0156eb35a5957f3f0a2fcf774f6cd6bd974b21"
+    },
+    {
+      "body": {
+        "edit": {
+          "model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "edit": {
+          "model": "missing"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an installed edit model: missing"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_model": "Klein/edit.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "28bee70e063f86c2c2ff6b4fccd0d32239f5110c38a008b76b1fd4e407d97363"
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_model": "Qwen\\edit.safetensors"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an installed Klein Inpaint model: Qwen\\edit.safetensors"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_color_match": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "f349a114f49902614238369acca4692931462ab9e014a2a2ad78c5d2146c8b7c"
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_color_match": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "edit": {
+          "inpaint_color_match": "true"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vae": {
+          "zimage": "VAE/synthetic.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "b0b98216506c02a2e8d5d52dbbc9bdd48308d7d391445853149391c7acd51c15"
+    },
+    {
+      "body": {
+        "vae": {
+          "zimage": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vae": {
+          "zimage": "missing"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "VAE is not installed: missing"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "vae": {
+          "special": "wan2x"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "4fd8b7e38e6c7040eb7a6fb6f8742c1789761424b3533c5072c2ddf663bfd035"
+    },
+    {
+      "body": {
+        "vae": {
+          "special": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vae": {
+          "special": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vae": {
+          "special": "missing"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a special decoder: missing"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "vae": {
+          "special_force": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "7d133e6035b6dcf027147d283bd0b08d35ed1a6f3cec7c1c429627ee659d6281"
+    },
+    {
+      "body": {
+        "vae": {
+          "special_force": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_mode": "model"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_mode": "vsr"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "4e13ce130d2821360e0df3e920d4410c57d884ff2906533f1cf84af9c774f3ad"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_mode": "pid"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "d8d265a6b8aae44afecc8bfc563a1a2f885dd7c9e19ced1c35a4cdbec4c5d4c2"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_mode": "unknown"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_mode": "VSR Ultra"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_mode": "LTX 2.5 2x"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not one of VSR Low|VSR Medium|VSR High|VSR Ultra: LTX 2.5 2x"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_mode": ""
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not one of VSR Low|VSR Medium|VSR High|VSR Ultra: "
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": 0
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "6e012b8f747a7db83ab017aa2ecd24882f833581a1691a1d989c6c955a96fff0"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": 2
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": 9
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "1f2b7ffc834b15e42ef4a512d280cd1f7212fe5190a4ef7a4cf3d6f43a5acf0a"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": "2.5"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "90f588225b7b3b1540c3907ff474a29b027aca860070ab4301b12441c200f0c1"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": "bad"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "image_vsr_scale": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_mode": "VSR High"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_mode": "LTX 2.5 2x"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "0bbd1a71f4ba37ecd5968f4c3e0c71644a7c02a45b1c5d66d00ab9c610fc0800"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_mode": "unknown"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": 0
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "0879d5355a4335b7da3aff0065dc6caeefc9fae1493d5b7a43a1b06f55d18db7"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": 2
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": 9
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "f2b23f04f42aabe5ae95783badc63679fac8d791dd934db05a798afe6934985d"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": "2.5"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "026c1e6ab66c6f4d26b61411010c3ef2fe7ca94e7226277fd3c3554ce02609ab"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": "bad"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_scale": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": 0
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": 39
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "af61a660f2210aca0d0c04178a5dc208bf34339b23f6e6a66beb09a505eaa861"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": 54
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "faf2ef31149555f32c0638cdfcca3b726da40b9effad87134d7eaad7ee5289bd"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": 200
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "6e8c6d64c14d047d8602ede7723d12c7c6a7b46c9ec9d5797a551f4af7e2daa3"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": "30"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "af61a660f2210aca0d0c04178a5dc208bf34339b23f6e6a66beb09a505eaa861"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": "bad"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "upscale": {
+          "video_fps": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "pid": {
+          "identity_finish": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "7a330ed2bd5da1a968c837c99e0b9bfbbd11310cc660e8c6f4fcf7a28236531a"
+    },
+    {
+      "body": {
+        "pid": {
+          "identity_finish": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "pid": {
+          "identity_finish": "false"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "7a330ed2bd5da1a968c837c99e0b9bfbbd11310cc660e8c6f4fcf7a28236531a"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "eb9ba67a42b86d3f5a2858b1b1cc0e85aa9862b1cc2b39ad3580e27eb7d24c0e"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain": "false"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a bool: false"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": -1
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "afcb52f0f29910f5f4e914daca3f01f32492c5576c4017a82e3a81f84b40da8e"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": 1.6
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": 99
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "a5cbbc1c5d43f7d70520b30420833a8de3226893756c35261d6060f7e3ac3c83"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": "2.2"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "cad53b1de30220beffd79f1c86ce0cb9449653ae9988334eb6f1eee7601b6770"
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": "nan"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: nan"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain_amount": null
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: None"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "9f8388c2b1f241e12bf9bc6273856b772b2a51ee91c21eda252c06d47fb29f0b"
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine": 1
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a bool: 1"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine_strength": -1
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "20d4fa4e015ba82902cd36598e08e11af720f2095d64adf3e4112bfdd0301525"
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine_strength": 0.85
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine_strength": 99
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "ee1adf96499fde0d45a816071bd0e926dba303733505f5f13668bec5ec2b7711"
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine_strength": "nan"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: nan"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "de_shine_strength": null
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: None"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "9d37b4bb3a65b7d974b74ee7f22b8d1cce1986de692094d4fdd5c85b468d39ba"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5": "true"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a bool: true"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_style": "default"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_style": "natural"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "189059e03264dbb1cc0b9f75c839668bf20173c1b28220e9453153494d2c6310"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_style": "cinematic"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "14988e89b04bc967b946bf8816d6af6efa629c41d8418898a759aed8381fd5b5"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_style": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "unknown dlss5 style: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_tone": -1
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "14c5a2b1350aa37929dce1bfdd7c4810bb4e52206ae9fd9dd08a31fb3b568ad6"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_tone": 1.5
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_tone": 99
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "b32f442f570c56007b7ddd99b898fc48edb429ed33a851961aeff9fac1e06dee"
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_tone": "nan"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: nan"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "dlss5_tone": null
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a number: None"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "h3": {
+          "ref_model": "H3/reference.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "16ec61f5d368e59fcd0895e4df401b4ae781fcc199770036a3aa457779e2c59d"
+    },
+    {
+      "body": {
+        "h3": {
+          "ref_model": "h3/HYBRID.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "ca1c4d8d01a4392604ab1d310fe0dd440db4355de82eec4449672ddb767fe074"
+    },
+    {
+      "body": {
+        "h3": {
+          "ref_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "h3": {
+          "ref_model": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an installed H3 reference build: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "h3": {
+          "fl_model": "H3/first.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "84f4fed3be61e963bded4369384efe6786a8ab6e5e3e62870a6e243893323345"
+    },
+    {
+      "body": {
+        "h3": {
+          "fl_model": "H3/hybrid.safetensors"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "b9311b43ed695fa59582a3259c87d9519078822d9318e117c73080a97ae22535"
+    },
+    {
+      "body": {
+        "h3": {
+          "fl_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "h3": {
+          "fl_model": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an installed H3 first/last-frame build: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "h3": {
+          "text_encoder": "small"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "bff00f66ab2946a534fd7474649414db4da60dbde51eaf520403fe7d27e3989f"
+    },
+    {
+      "body": {
+        "h3": {
+          "text_encoder": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "h3": {
+          "text_encoder": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an installed H3 text encoder: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "default_engine": "h3"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "47ef838661fe2bdda62da662ec490a833ef52112def7a25fda166afc54542429"
+    },
+    {
+      "body": {
+        "video": {
+          "default_engine": "ltx25"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "1dafe9c4fa6234bb02f6500cba7346c0e88f9ca033d746902c35db076532c0c4"
+    },
+    {
+      "body": {
+        "video": {
+          "default_engine": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "video": {
+          "default_engine": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a video engine: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "default_model": "fl2va"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "c4183490a9e6646a98d52fae704b89f49c30411c0e96fbb8263b628a5b4b10ce"
+    },
+    {
+      "body": {
+        "video": {
+          "default_model": "default"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "f89bac6b811fa1453442e365e0644f5b9e74d5516941ff17f861451b1488ec8c"
+    },
+    {
+      "body": {
+        "video": {
+          "default_model": ""
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "video": {
+          "default_model": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a video model: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "upscale_2x": true
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "7f31500f742ef2db8e7eea3bec2e320f5b7f7654625aae061741e4a9f874a8dd"
+    },
+    {
+      "body": {
+        "video": {
+          "upscale_2x": false
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "video": {
+          "upscale_2x": "false"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a bool: false"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "h3_resolution": "standard"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "video": {
+          "h3_resolution": "high"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "cfa2ba7e94375a55db2626ebed9aa1958629a33bcbdf9cf43e5715d9f29391a5"
+    },
+    {
+      "body": {
+        "video": {
+          "h3_resolution": "max"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "bc34245bc0061ddfa03e862ac8cc8601ea465de1ae402dffe6fd3adab1e7e5e7"
+    },
+    {
+      "body": {
+        "video": {
+          "h3_resolution": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not one of standard|high|max: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "h3_resolution": null
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not one of standard|high|max: None"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "h3_dialogue_tags": "tags"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "dc748040cbb8d38f887ec8207070ca9aa4fc8b75037476144e4edd282b57ac67"
+    },
+    {
+      "body": {
+        "video": {
+          "h3_dialogue_tags": "quotes"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "video": {
+          "h3_dialogue_tags": "wrong"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not one of tags|quotes: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "comfy_editor": true
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "026803fa05abdba69497317fd90e7d13673a8019d23c892217629ce2c319ea73"
+    },
+    {
+      "body": {
+        "comfy_editor": false
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "comfy_console": "tui"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "comfy_console": "plain"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "123c0816d2fe25fff693eee0c7f8dcde7114d71c47a14e49770b8e68802edaa0"
+    },
+    {
+      "body": {
+        "comfy_console": "wrong"
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a console style: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "extra_model_roots": [
+          " S:/models ",
+          "",
+          7,
+          " T:/\u6a21\u578b "
+        ]
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "878cb20b7b56c290fcd4dd5976cca660286756454189e08a628a389b595a35c7"
+    },
+    {
+      "body": {
+        "extra_model_roots": "ignored"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "comfy_url": " http://synthetic.invalid:8188 "
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "2b08635b856edd6acf3f1343869ea7a88cb0a436f775d1b87161d27de573fbdf"
+    },
+    {
+      "body": {
+        "comfy_url": ""
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "comfy_url": null
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vram_profile": "auto"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "vram_profile": "32"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "1969a2241cbf7b23d39375038f3f79d63ae9f7daa4518d0bfb337cab7b288f9b"
+    },
+    {
+      "body": {
+        "vram_profile": "24"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "3f48c94a4f00c4b87825d19181ffff566284e01ee8115efdaf254bfdc1745804"
+    },
+    {
+      "body": {
+        "vram_profile": "16"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "b75da176ba23645e4bcaba0d389e20ed2cd530b287182ae8bcae4f5cb9e7429d"
+    },
+    {
+      "body": {
+        "vram_profile": "wrong"
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a VRAM profile: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "explicit": "auto"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "40281e7aff5a77c51c1d442be69c38772fea5c76fffa9457639747c063a57c75"
+    },
+    {
+      "body": {
+        "explicit": "on"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "7ef9944fa57659180e401b14ea9a9216790f46162d63c636044c06040d2af562"
+    },
+    {
+      "body": {
+        "explicit": "off"
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "3f6599ae0b66f7142a6e9a40eedb950318ebe6625514714b9635febd7331b4cd"
+    },
+    {
+      "body": {
+        "explicit": "wrong"
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an explicit mode: wrong"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "video": {
+          "default_engine": "h3",
+          "default_model": "fl2va"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "210cc7da8aff5c4240f8357d5dd5a6079086244304e4a8137d91317a9753b68a"
+    },
+    {
+      "body": {
+        "llm": {
+          "model": "accepted locally"
+        },
+        "comfy_url": "http://new.invalid",
+        "explicit": "bad"
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not an explicit mode: bad"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "still": {
+          "film_grain": "bad",
+          "de_shine": "also bad"
+        }
+      },
+      "status": 400,
+      "response": {
+        "ok": false,
+        "error": "not a bool: bad"
+      },
+      "saved_sha256": null
+    },
+    {
+      "body": {
+        "extra_model_roots": [],
+        "llm": {
+          "local_gpu_layers": 0
+        },
+        "video": {
+          "default_engine": "h3",
+          "default_model": "ref2va"
+        }
+      },
+      "status": 200,
+      "response": {
+        "ok": true
+      },
+      "saved_sha256": "3f0804bf06e0d17f4f53d01eac76d9a8d4535703c9980cbd3cf771819a4f3724"
+    }
+  ]
+}

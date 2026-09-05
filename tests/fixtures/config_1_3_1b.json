@@ -1,0 +1,151 @@
+{
+  "source_commit": "5ab6aae",
+  "defaults": {
+    "llm": {
+      "base_url": "https://api.moonshot.ai/v1",
+      "api_key": "",
+      "model": "kimi-k3",
+      "local_model": "",
+      "local_keep": true,
+      "local_idle_minutes": 10,
+      "local_gpu_layers": -1,
+      "official_prompting": true
+    },
+    "critic": {
+      "model": "Qwen3-VL-4B-Instruct"
+    },
+    "upscale": {
+      "image_model": "",
+      "image_mode": "model",
+      "image_vsr_mode": "VSR Ultra",
+      "image_vsr_scale": 2.0,
+      "video_mode": "VSR High",
+      "video_scale": 2.0,
+      "video_fps": 0
+    },
+    "edit": {
+      "model": "",
+      "inpaint_model": "",
+      "inpaint_color_match": false,
+      "speed": "turbo"
+    },
+    "h3": {
+      "ref_model": "",
+      "fl_model": "",
+      "text_encoder": ""
+    },
+    "vae": {
+      "zimage": "",
+      "special": "",
+      "special_force": false
+    },
+    "pid": {
+      "identity_finish": false
+    },
+    "video": {
+      "default_engine": "",
+      "default_model": "",
+      "upscale_2x": false,
+      "h3_resolution": "standard",
+      "h3_dialogue_tags": "quotes"
+    },
+    "still": {
+      "film_grain": false,
+      "film_grain_amount": 1.6,
+      "de_shine": false,
+      "de_shine_strength": 0.85,
+      "dlss5": false,
+      "dlss5_style": "default",
+      "dlss5_tone": 1.5
+    },
+    "extra_model_roots": [],
+    "comfy_url": "",
+    "comfy_root": "",
+    "setup_done": false,
+    "comfy_boot_seconds": 0.0,
+    "vram_profile": "auto",
+    "comfy_editor": false,
+    "comfy_console": "tui",
+    "chrome_app_id": "",
+    "lan_access": false,
+    "stay_up": false,
+    "explicit": "auto",
+    "access_key": ""
+  },
+  "cases": [
+    {
+      "saved": null,
+      "sha256": "7f0864a3e40a5374154d022979888c3d66113da9d447f7bdaeee251c0e39f771"
+    },
+    {
+      "saved": {},
+      "sha256": "7f0864a3e40a5374154d022979888c3d66113da9d447f7bdaeee251c0e39f771"
+    },
+    {
+      "saved": {
+        "llm": {
+          "model": "synthetic",
+          "future_key": 7
+        }
+      },
+      "sha256": "6347ad7f14cbc53af699afb2e26fee5edc9ba02ac44c8b0aee135867e47e3f41"
+    },
+    {
+      "saved": {
+        "comfy_url": " http://engine.test:8188 ",
+        "comfy_console": "plain",
+        "vram_profile": "16"
+      },
+      "sha256": "deb59e711082f5a4fba1e6e46a5457ac618cb999d11b6ca69cc3caa80a25fa70"
+    },
+    {
+      "saved": {
+        "unknown_top_level": {
+          "opaque": true
+        },
+        "video": {
+          "h3_resolution": "max",
+          "future": true
+        }
+      },
+      "sha256": "632272ddcc89ef851925e6c6513dcbb20422a08e817d482eaa5aa6c50e84c17f"
+    },
+    {
+      "saved": {
+        "llm": {
+          "model": "kept partial"
+        },
+        "comfy_boot_seconds": "invalid"
+      },
+      "sha256": "b5253f5929e6beef617e2c5f396ff210b18ce287111272bac04f4be10880f0be"
+    },
+    {
+      "saved": {
+        "edit": [
+          "bad shape"
+        ]
+      },
+      "sha256": "7f0864a3e40a5374154d022979888c3d66113da9d447f7bdaeee251c0e39f771"
+    },
+    {
+      "saved": {
+        "explicit": "unknown",
+        "lan_access": 1
+      },
+      "sha256": "10f1e55e07e36182e8e42c07a85702492e40436be6cc08fc626484c8cb7e6128"
+    },
+    {
+      "saved": {
+        "still": {
+          "film_grain": true,
+          "film_grain_amount": 2.1
+        }
+      },
+      "sha256": "243b3c05c552a164737b7d6b4c1deee8832a4ed9a3f3e6cab5533666f213401b"
+    },
+    {
+      "saved": [],
+      "sha256": "7f0864a3e40a5374154d022979888c3d66113da9d447f7bdaeee251c0e39f771"
+    }
+  ]
+}

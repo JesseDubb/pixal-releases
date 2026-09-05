@@ -1292,7 +1292,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.3.1b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.3.2b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind
@@ -1323,6 +1323,22 @@ anything — reuses the seed until you unlock it. See Section 2.
 No — the port is the single instance. The second one tells you "Pixal is
 ALREADY RUNNING at http://127.0.0.1:8190 - use that one; this window can
 close."
+
+**What happens when a render runs out of memory?**
+The memory butler prepares one workload at a time, keeping warm caches when they
+fit. It checks system RAM and Windows commit headroom as well as GPU memory.
+When cleanup cannot leave enough working space, the job stops with guidance
+instead of blindly proceeding.
+
+An allocation failure gets at most one automatic retry. Supported still-image
+recipes reduce the actual sampling canvas or batch; source-image edits reduce
+their working resolution. Video recipes reduce duration or tiled decode chunks
+where supported. Fixed-size decoders cannot always be reduced safely. Changes
+apply to that retry, not your saved settings. These safeguards cannot guarantee
+that every model, resolution or custom workflow fits your hardware.
+Stop also cancels a pending recovery and its retry, even if the original render
+has already failed. Stopping a queued retry does not intentionally interrupt an
+unrelated render that is currently running.
 
 **Where do I report a problem or ask for help?**
 hello@getpixal.com — the address is on the Settings → About card. The

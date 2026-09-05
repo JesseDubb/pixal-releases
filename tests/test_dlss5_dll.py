@@ -186,7 +186,8 @@ class Endpoint(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in runtime.glob("*")), [])
 
     def test_the_route_is_registered(self):
-        self.assertIn('app.router.add_post("/api/dlss5/dll", dlss5_dll)', SRC)
+        from pixal.http.routes import ROUTES, RouteSpec
+        self.assertIn(RouteSpec("POST", "/api/dlss5/dll", "dlss5_dll"), ROUTES)
 
 
 class SettingsFlags(unittest.TestCase):

@@ -80,12 +80,13 @@ Pixal has strong conventions. Match them rather than importing your own.
   previews. If you change a tuned value, **say why, with the measurement.**
   If something looks strange, find the comment before "fixing" it; it usually
   exists.
-- **Don't split `server.py` for tidiness.** It is ~12.8k lines and that is a
-  known, deliberate state. The render path shares a lot of mutable state, and
-  every split proposed so far moved the coupling instead of removing it.
-- **The graphs are in `templates/*.json`**, not in `server.py`. An analysis
-  that greps only `server.py` will reach false conclusions — this has already
-  happened once and produced a whole wrong plan.
+- **Extract ownership, not just files.** Staged modularization is approved and
+  underway. Follow [ARCHITECTURE.md](ARCHITECTURE.md) for current owners and
+  remaining legacy boundaries. Pass explicit dependencies, preserve contracts,
+  and do not import `server` from the new `pixal/` modules.
+- **Inspect both graph sources.** Recipes use `templates/*.json` and Python
+  builders in `server.py`; some graphs are constructed directly in Python.
+  Looking at only one side misses what actually reaches ComfyUI.
 - **The installer is stdlib-only.** `install/pixal_install.py` may run on a
   freshly unzipped embeddable Python with nothing in it. No imports beyond
   the standard library, ever.
@@ -98,6 +99,9 @@ Pixal has strong conventions. Match them rather than importing your own.
 - Say what you measured, not just what you changed. Performance claims
   without before/after numbers are the main thing that gets rejected.
 - Keep the diff to one concern.
+- Run `python tools/verify.py` with the project's interpreter. It checks
+  generated assets and the scoped Python/JavaScript suites; live tests remain
+  separately approved. Update the architecture map when ownership changes.
 - If you touched the installer, test a real install **and** an uninstall.
   `.venv\Scripts\python.exe install\build_installer.py` rebuilds it.
 - If you touched a template, run the same seed before and after and compare.
@@ -105,8 +109,9 @@ Pixal has strong conventions. Match them rather than importing your own.
 ## Getting oriented
 
 Read [`README.md`](README.md) for what ships, [`HELP.md`](HELP.md) for how it
-behaves in the user's hands, and [`PACKAGING.md`](PACKAGING.md) for how a
-release is built. After that, the code comments are the documentation: the
+behaves in the user's hands, [`ARCHITECTURE.md`](ARCHITECTURE.md) for current
+code ownership, and [`PACKAGING.md`](PACKAGING.md) for how a release is built.
+After that, the code comments carry the implementation evidence: the
 tuned constants carry the measurement that produced them, and several carry
 the rejected alternative and why it lost. Read the comment before changing
 the value.

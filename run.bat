@@ -18,13 +18,12 @@ if defined PIXAL_PYTHON (
   set "PIXAL_PY_EXE=%PIXAL_PYTHON%"
 )
 
-rem Written by the installer when Pixal runs on an interpreter it did not create -
-rem normally the ComfyUI portable's python_embeded, from a Pixal folder that is
-rem NOT inside that portable. An embeddable python cannot make a .venv and
-rem pixal.vbs calls this script with a bare environment, so the choice has to
-rem live on disk. One line, the full path to python.exe.
+rem The installer records its private venv/runtime as an app-relative path.
+rem Legacy absolute choices still work. Relative paths avoid decoding non-ASCII
+rem account names from a UTF-8 file through cmd.exe's OEM code page.
 if not defined PIXAL_PY_EXE if exist "%PIXAL_ROOT%.pixal_python" (
   for /f "usebackq delims=" %%I in ("%PIXAL_ROOT%.pixal_python") do (
+    if not defined PIXAL_PY_EXE if exist "%PIXAL_ROOT%%%~I" set "PIXAL_PY_EXE=%PIXAL_ROOT%%%~I"
     if not defined PIXAL_PY_EXE if exist "%%~I" set "PIXAL_PY_EXE=%%~I"
   )
 )

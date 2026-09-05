@@ -539,13 +539,17 @@ function drawLanes() {
       const id = el.dataset.lane;
       box.checked ? lanes.add(id) : lanes.delete(id);
       // "Anima Turbo" is an add-on to a model it cannot render without.
-      P.catalog.lanes.forEach(l => {
-        if ((l.requires || []).some(r => lanes.has(id) && id === l.id && !lanes.has(r))) {
-          lanes.add(l.requires[0]);
-          const dep = $(`[data-lane="${l.requires[0]}"]`);
-          if (dep) { dep.querySelector("input").checked = true; dep.classList.add("on"); }
-        }
-      });
+      // Resolve the full closure, including when a required parent is unticked.
+      for (let pass = 0; pass < P.catalog.lanes.length; pass++) {
+        P.catalog.lanes.forEach(l => {
+          if (!lanes.has(l.id)) return;
+          (l.requires || []).forEach(required => {
+            lanes.add(required);
+            const dep = $(`[data-lane="${required}"]`);
+            if (dep) { dep.querySelector("input").checked = true; dep.classList.add("on"); }
+          });
+        });
+      }
       el.classList.toggle("on", box.checked);
       drawTotal();
     }, 0);

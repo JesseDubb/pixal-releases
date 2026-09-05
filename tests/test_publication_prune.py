@@ -131,7 +131,21 @@ class NothingSensitiveIsTrackedTests(unittest.TestCase):
                  "_civitai_models.json", "sampler_combos.json", "lane.json",
                  ".env", "input_ref_types.json"}
         hit = [f for f in self.files if Path(f).name in never]
+        hit.extend(f for f in self.files if Path(f).name.startswith(("config.json.", ".config.json.")))
         self.assertEqual(hit, [])
+
+    def test_atomic_config_files_are_ignored_even_when_interrupted(self):
+        for name in ("config.json.synthetic.tmp", ".config.json.synthetic.tmp"):
+            result = subprocess.run(["git", "check-ignore", "--no-index", "-q", name], cwd=_ROOT)
+            self.assertEqual(result.returncode, 0, name)
+
+    def test_installer_rejects_config_temporary_files_and_backups(self):
+        installer = _load("pixal_secret_guard", _ROOT / "install/build_installer.py")
+        for name in ("config.json", "config.json.backup", "config.json.synthetic.tmp",
+                     ".config.json.synthetic.tmp", "nested/config.json.bad"):
+            self.assertTrue(installer.is_secret_path(name), name)
+        for name in ("config.example.json", "tests/fixtures/config_1_3_1b.json", "pixal/config/store.py"):
+            self.assertFalse(installer.is_secret_path(name), name)
 
     def test_no_chat_logs_characters_or_saved_styles_are_tracked(self):
         """Those folders SHIP - empty. Their contents are the user's own."""

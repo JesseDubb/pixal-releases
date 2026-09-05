@@ -59,10 +59,15 @@ class _Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.loglines = []
         self._saved = {k: getattr(pi, k, None) for k in
-                       ("log", "WORK", "PIXAL", "TRANSFERS", "LAST_CLIENT",
+                       ("log", "WORK", "PIXAL", "CATALOG", "TRANSFERS", "LAST_CLIENT",
                         "WORKER_THREAD")}
         self._state = copy.deepcopy(pi.STATE)
         pi.log = self.loglines.append
+        # These routing fixtures are one-byte synthetic models, not real weights.
+        pi.CATALOG = copy.deepcopy(pi.CATALOG)
+        for lane in pi.CATALOG["lanes"]:
+            for entry in lane["files"]:
+                entry["bytes"] = 1
         pi.WORK = Path(self.tmp.name) / "_work"
         pi.TRANSFERS = 0
         pi.LAST_CLIENT = 0.0
@@ -188,6 +193,9 @@ class _WorkerBase(_Base):
                    "comfy": {"mode": "use", "path": str(cdir.parent)},
                    "home": str(home)}
         with mock.patch.object(pi, "disk_preflight", lambda *a, **k: None), \
+             mock.patch.object(pi, "runtime_preflight", lambda *a, **k: None), \
+             mock.patch.object(pi, "comfy_python", lambda *a, **k: Path("engine-py")), \
+             mock.patch.object(pi, "write_python_choice", lambda *a, **k: None), \
              mock.patch.object(pi, "install_pack", lambda *a, **k: None), \
              mock.patch.object(pi, "install_pixal_to",
                                lambda *a, **k: (home, False)), \
@@ -195,7 +203,7 @@ class _WorkerBase(_Base):
                                lambda *a, **k: (Path("py"), "venv")), \
              mock.patch.object(pi, "ensure_pip", lambda *a, **k: None), \
              mock.patch.object(pi, "pip", lambda *a, **k: None), \
-             mock.patch.object(pi, "run_out", lambda *a, **k: (1, "")), \
+             mock.patch.object(pi, "run_out", lambda *a, **k: (0, "")), \
              mock.patch.object(pi, "llama_wheel_url",
                                lambda *a, **k: (None, "")), \
              mock.patch.object(pi, "desktop_shortcut", lambda *a, **k: None), \

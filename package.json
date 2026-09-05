@@ -5,7 +5,7 @@
   "description": "A local, conversational recipe layer for ComfyUI.",
   "type": "module",
   "scripts": {
-    "build": "esbuild web/src/app.jsx --bundle --format=esm --external:/vendor/* --outfile=web/app.js --jsx=automatic --minify",
+    "build": "node tools/build_web.mjs",
     "watch": "esbuild web/src/app.jsx --bundle --format=esm --external:/vendor/* --outfile=web/app.js --jsx=automatic --watch --sourcemap"
   },
   "dependencies": {

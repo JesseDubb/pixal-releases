@@ -301,15 +301,15 @@ class PayloadTests(unittest.TestCase):
         self.assertIn('"combos": sampler_combos(base_id, model) if seat else []', src)
 
     def test_both_writes_are_routed(self):
-        src = (_ROOT / "server.py").read_text(encoding="utf-8")
-        self.assertIn('add_post("/api/sampler/combos/star", sampler_combo_star)', src)
-        self.assertIn('add_post("/api/sampler/combos/forget", sampler_combo_forget)', src)
+        from pixal.http.routes import ROUTES, RouteSpec
+        self.assertIn(RouteSpec("POST", "/api/sampler/combos/star", "sampler_combo_star"), ROUTES)
+        self.assertIn(RouteSpec("POST", "/api/sampler/combos/forget", "sampler_combo_forget"), ROUTES)
 
     def test_the_write_routes_take_the_pair_never_an_id(self):
         """A RES4LYF sampler name carries a slash (multistep/res_2m), which does
         not survive a URL path - so neither route may grow one."""
-        src = (_ROOT / "server.py").read_text(encoding="utf-8")
-        self.assertNotIn("/api/sampler/combos/{", src)
+        from pixal.http.routes import ROUTES
+        self.assertFalse(any(spec.path.startswith("/api/sampler/combos/{") for spec in ROUTES))
 
     def test_the_card_steps_and_stars_them(self):
         jsx = (_ROOT / "web" / "src" / "components" / "Composer.jsx") \

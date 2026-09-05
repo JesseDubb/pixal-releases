@@ -127,15 +127,14 @@ class LedgerActivationEstimateTests(unittest.TestCase):
             server.ledger_activation_estimate(entries, "identity_edit", 3.1),
             9 * GB)
 
-    def test_entries_that_predate_the_field_still_count(self):
-        # "if the field exists": an entry with no canvas_mp is template
-        # evidence, not bucket evidence.
+    def test_unknown_canvases_do_not_calibrate_a_known_canvas(self):
+        # Unknown-size renders cannot price a known canvas. Previously these
+        # mixed large cold runs into small warm rerolls of the same recipe.
         entries = [_entry("identity_edit", 9, canvas_mp=3.1),
                    _entry("identity_edit", 9),
                    _entry("identity_edit", 9)]
-        self.assertEqual(
-            server.ledger_activation_estimate(entries, "identity_edit", 3.1),
-            9 * GB)
+        self.assertIsNone(
+            server.ledger_activation_estimate(entries, "identity_edit", 3.1))
 
     def test_fewer_than_three_samples_is_not_a_measurement(self):
         entries = [_entry("identity_edit", 9), _entry("identity_edit", 7)]

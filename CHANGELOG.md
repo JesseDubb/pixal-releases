@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.3.2b — 2026-09-05
+
+**Memory recovery does less guessing.** Pixal distinguishes GPU exhaustion from
+system-memory pressure, checks available headroom before submitting work and
+uses the actual workload when deciding what to reclaim. It avoids charging
+already-warm models twice. Supported still-image jobs get at most one smaller
+retry after an out-of-memory failure: the batch or real working canvas changes,
+without changing your saved preferences. Video and fixed-size workflows are
+not blindly resized.
+
+**Stop also stops recovery.** Cancelling a failed render now cancels its pending
+memory cleanup and retry handoff, including a queue acknowledgement that arrives
+late. An old or queued render no longer authorizes interrupting a different
+observed running job.
+
+**Setup and repair are more dependable.** The installer chooses a supported
+64-bit Python, preserves unreadable settings instead of overwriting them, and
+retries node-pack dependencies even when their folder already exists. Shared
+model folders and accented Windows paths are handled more safely. Downloads
+reject truncated or invalid responses, interrupted extraction can recover, and
+component prerequisites are included. The wizard checks process completion
+before declaring Pixal ready and handles failed or cancelled setup more reliably.
+
+**Less repeated work behind Settings.** Unrelated saves no longer trigger model
+catalog scans, settings reads avoid redundant loading, and configuration writes
+are atomic and failure-safe. The backend now has clearer boundaries for paths,
+configuration, HTTP setup and background-task ownership.
+
+Validation: the automated suite, installer compilation and a local GPU render
+passed. Clean-Windows fresh-install, repair and upgrade rehearsals are still
+pending; this remains a beta release.
+
 ## 1.3.1b — 2026-09-04
 
 **Settings has room to breathe.** The six pages now share a resizable workspace

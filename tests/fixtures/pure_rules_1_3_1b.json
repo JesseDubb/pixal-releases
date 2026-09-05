@@ -1,0 +1,1463 @@
+{
+  "source_commit": "5ab6aae",
+  "cases": [
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        0.1,
+        16
+      ],
+      "result": [
+        320,
+        320
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        0.1,
+        32
+      ],
+      "result": [
+        320,
+        320
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        1,
+        16
+      ],
+      "result": [
+        992,
+        992
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        1,
+        32
+      ],
+      "result": [
+        992,
+        992
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        2,
+        16
+      ],
+      "result": [
+        1408,
+        1408
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        2,
+        32
+      ],
+      "result": [
+        1408,
+        1408
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        4,
+        16
+      ],
+      "result": [
+        2000,
+        2000
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        4,
+        32
+      ],
+      "result": [
+        1984,
+        1984
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        8,
+        16
+      ],
+      "result": [
+        2832,
+        2832
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "1:1",
+        8,
+        32
+      ],
+      "result": [
+        2816,
+        2816
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        0.1,
+        16
+      ],
+      "result": [
+        256,
+        384
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        0.1,
+        32
+      ],
+      "result": [
+        256,
+        384
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        1,
+        16
+      ],
+      "result": [
+        832,
+        1248
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        1,
+        32
+      ],
+      "result": [
+        832,
+        1248
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        2,
+        16
+      ],
+      "result": [
+        1152,
+        1728
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        2,
+        32
+      ],
+      "result": [
+        1152,
+        1728
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        4,
+        16
+      ],
+      "result": [
+        1632,
+        2448
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        4,
+        32
+      ],
+      "result": [
+        1664,
+        2496
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        8,
+        16
+      ],
+      "result": [
+        2304,
+        3456
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "2:3",
+        8,
+        32
+      ],
+      "result": [
+        2304,
+        3456
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        0.1,
+        16
+      ],
+      "result": [
+        384,
+        256
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        0.1,
+        32
+      ],
+      "result": [
+        384,
+        256
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        1,
+        16
+      ],
+      "result": [
+        1248,
+        832
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        1,
+        32
+      ],
+      "result": [
+        1248,
+        832
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        2,
+        16
+      ],
+      "result": [
+        1728,
+        1152
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        2,
+        32
+      ],
+      "result": [
+        1728,
+        1152
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        4,
+        16
+      ],
+      "result": [
+        2448,
+        1632
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        4,
+        32
+      ],
+      "result": [
+        2496,
+        1664
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        8,
+        16
+      ],
+      "result": [
+        3456,
+        2304
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:2",
+        8,
+        32
+      ],
+      "result": [
+        3456,
+        2304
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        0.1,
+        16
+      ],
+      "result": [
+        272,
+        368
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        0.1,
+        32
+      ],
+      "result": [
+        288,
+        384
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        1,
+        16
+      ],
+      "result": [
+        864,
+        1152
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        1,
+        32
+      ],
+      "result": [
+        864,
+        1152
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        2,
+        16
+      ],
+      "result": [
+        1232,
+        1648
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        2,
+        32
+      ],
+      "result": [
+        1248,
+        1664
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        4,
+        16
+      ],
+      "result": [
+        1728,
+        2304
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        4,
+        32
+      ],
+      "result": [
+        1728,
+        2304
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        8,
+        16
+      ],
+      "result": [
+        2448,
+        3264
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "3:4",
+        8,
+        32
+      ],
+      "result": [
+        2464,
+        3296
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        0.1,
+        16
+      ],
+      "result": [
+        368,
+        272
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        0.1,
+        32
+      ],
+      "result": [
+        384,
+        288
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        1,
+        16
+      ],
+      "result": [
+        1152,
+        864
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        1,
+        32
+      ],
+      "result": [
+        1152,
+        864
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        2,
+        16
+      ],
+      "result": [
+        1648,
+        1232
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        2,
+        32
+      ],
+      "result": [
+        1664,
+        1248
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        4,
+        16
+      ],
+      "result": [
+        2304,
+        1728
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        4,
+        32
+      ],
+      "result": [
+        2304,
+        1728
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        8,
+        16
+      ],
+      "result": [
+        3264,
+        2448
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "4:3",
+        8,
+        32
+      ],
+      "result": [
+        3296,
+        2464
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        0.1,
+        16
+      ],
+      "result": [
+        240,
+        432
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        0.1,
+        32
+      ],
+      "result": [
+        256,
+        448
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        1,
+        16
+      ],
+      "result": [
+        752,
+        1344
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        1,
+        32
+      ],
+      "result": [
+        736,
+        1312
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        2,
+        16
+      ],
+      "result": [
+        1072,
+        1904
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        2,
+        32
+      ],
+      "result": [
+        1056,
+        1888
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        4,
+        16
+      ],
+      "result": [
+        1504,
+        2672
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        4,
+        32
+      ],
+      "result": [
+        1504,
+        2688
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        8,
+        16
+      ],
+      "result": [
+        2128,
+        3776
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "9:16",
+        8,
+        32
+      ],
+      "result": [
+        2144,
+        3808
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        0.1,
+        16
+      ],
+      "result": [
+        432,
+        240
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        0.1,
+        32
+      ],
+      "result": [
+        448,
+        256
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        1,
+        16
+      ],
+      "result": [
+        1328,
+        752
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        1,
+        32
+      ],
+      "result": [
+        1312,
+        736
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        2,
+        16
+      ],
+      "result": [
+        1904,
+        1072
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        2,
+        32
+      ],
+      "result": [
+        1888,
+        1056
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        4,
+        16
+      ],
+      "result": [
+        2672,
+        1504
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        4,
+        32
+      ],
+      "result": [
+        2656,
+        1504
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        8,
+        16
+      ],
+      "result": [
+        3776,
+        2128
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "16:9",
+        8,
+        32
+      ],
+      "result": [
+        3808,
+        2144
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        0,
+        16
+      ],
+      "result": [
+        16,
+        16
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        0,
+        32
+      ],
+      "result": [
+        32,
+        32
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        0.1,
+        16
+      ],
+      "result": [
+        480,
+        208
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        0.1,
+        32
+      ],
+      "result": [
+        448,
+        192
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        1,
+        16
+      ],
+      "result": [
+        1536,
+        656
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        1,
+        32
+      ],
+      "result": [
+        1568,
+        672
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        2,
+        16
+      ],
+      "result": [
+        2160,
+        928
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        2,
+        32
+      ],
+      "result": [
+        2176,
+        928
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        4,
+        16
+      ],
+      "result": [
+        3056,
+        1312
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        4,
+        32
+      ],
+      "result": [
+        3072,
+        1312
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        8,
+        16
+      ],
+      "result": [
+        4336,
+        1856
+      ]
+    },
+    {
+      "function": "dims_for",
+      "args": [
+        "21:9",
+        8,
+        32
+      ],
+      "result": [
+        4320,
+        1856
+      ]
+    },
+    {
+      "function": "parse_version",
+      "args": [
+        "1.3.1b"
+      ],
+      "result": [
+        [
+          1,
+          3,
+          1
+        ],
+        "b"
+      ]
+    },
+    {
+      "function": "parse_version",
+      "args": [
+        "v1.3.1b"
+      ],
+      "result": [
+        [
+          1,
+          3,
+          1
+        ],
+        "b"
+      ]
+    },
+    {
+      "function": "parse_version",
+      "args": [
+        " 1.3.1B "
+      ],
+      "result": [
+        [
+          1,
+          3,
+          1
+        ],
+        "b"
+      ]
+    },
+    {
+      "function": "parse_version",
+      "args": [
+        "bad"
+      ],
+      "result": null
+    },
+    {
+      "function": "parse_version",
+      "args": [
+        "1..2"
+      ],
+      "result": null
+    },
+    {
+      "function": "compare_versions",
+      "args": [
+        "1.3.1b",
+        "1.3.1"
+      ],
+      "result": -1
+    },
+    {
+      "function": "compare_versions",
+      "args": [
+        "1.3",
+        "1.3.0"
+      ],
+      "result": 0
+    },
+    {
+      "function": "compare_versions",
+      "args": [
+        "1.9",
+        "1.10"
+      ],
+      "result": -1
+    },
+    {
+      "function": "compare_versions",
+      "args": [
+        "bad",
+        "1"
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "unparseable version: 'bad' vs '1'"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        null
+      ],
+      "result": {}
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {}
+      ],
+      "result": {}
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "steps": 12,
+          "cfg": 1.2,
+          "shift": 1.73,
+          "eta": 0
+        }
+      ],
+      "result": {
+        "steps": 12,
+        "cfg": 1.2,
+        "shift": 1.73,
+        "eta": 0
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "steps": "14",
+          "sampler_name": " linear/euler ",
+          "scheduler": "simple"
+        }
+      ],
+      "result": {
+        "steps": 14,
+        "sampler_name": "linear/euler",
+        "scheduler": "simple"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "steps": 0
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "steps must be between 1 and 200, got 0"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "cfg": 31
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "cfg must be between 0 and 30, got 31"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "eta": "bad"
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "eta must be a number, got 'bad'"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "unknown": true
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "unknown tuning setting: unknown"
+      }
+    },
+    {
+      "function": "validate_style_tuning",
+      "args": [
+        {
+          "scheduler": ""
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "scheduler cannot be empty"
+      }
+    },
+    {
+      "function": "style_slug",
+      "args": [
+        "A synthetic / style"
+      ],
+      "result": "a_synthetic_style"
+    },
+    {
+      "function": "_style_prompt_text",
+      "args": [
+        " a\nshort  clause ",
+        "prefix"
+      ],
+      "result": "a short clause"
+    },
+    {
+      "function": "_style_prompt_text",
+      "args": [
+        13,
+        "prefix"
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "prefix must be a string"
+      }
+    },
+    {
+      "function": "_style_slots",
+      "args": [
+        null,
+        "a {subject}; {outfit top}; {subject}"
+      ],
+      "result": {
+        "subject": {
+          "label": "",
+          "default": ""
+        },
+        "outfit top": {
+          "label": "",
+          "default": ""
+        }
+      }
+    },
+    {
+      "function": "_style_slots",
+      "args": [
+        {
+          "subject": {
+            "label": " Person ",
+            "default": " someone "
+          }
+        }
+      ],
+      "result": {
+        "subject": {
+          "label": "Person",
+          "default": "someone"
+        }
+      }
+    },
+    {
+      "function": "_style_slots",
+      "args": [
+        {
+          "bad{key": {}
+        }
+      ],
+      "error": {
+        "type": "ValueError",
+        "message": "slot name 'bad{key' is not a usable {token}"
+      }
+    },
+    {
+      "function": "fill_style_slots",
+      "args": [
+        "portrait; wearing {outfit}; {place}",
+        {},
+        {}
+      ],
+      "result": "portrait"
+    },
+    {
+      "function": "fill_style_slots",
+      "args": [
+        "a {subject}",
+        {
+          "subject": {
+            "default": "person"
+          }
+        },
+        {}
+      ],
+      "result": "a person"
+    },
+    {
+      "function": "fill_style_slots",
+      "args": [
+        "a {subject}",
+        {
+          "subject": {
+            "default": "person"
+          }
+        },
+        {
+          "subject": "bird"
+        }
+      ],
+      "result": "a bird"
+    }
+  ]
+}

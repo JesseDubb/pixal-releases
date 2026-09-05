@@ -41,6 +41,24 @@ from pathlib import Path, PureWindowsPath
 
 import aiohttp
 from aiohttp import web
+from pixal.paths import RuntimePaths, resolve_comfy_dir
+from pixal.lifecycle import TASKS_KEY
+from pixal.memory import (
+    GPU_OOM_MARKERS, MemoryPressureError, host_memory_status,
+    memory_failure_kind, positive_number, shrink_still_spec, still_canvas,
+)
+from pixal.recipes.canvas import CANVAS_MULTIPLE, CANVAS_RATIO_WEIGHT, dims_for
+from pixal.recipes.style_rules import (
+    TUNING_KEYS, _style_prompt_text, _style_slots, fill_style_slots,
+    style_slug, validate_style_tuning,
+)
+from pixal.versioning import compare_versions, parse_version
+from pixal.config.rules import default_config
+from pixal.config.store import ConfigStore
+from pixal.config.settings import InvalidSetting, SettingsChoices, apply_settings_patch
+from pixal.config.presentation import SettingsInventory, settings_response
+from pixal.config.values import dlss5_style, finite_still_value
+from pixal.http.errors import config_errors
 
 HERE = Path(__file__).absolute().parent
 
@@ -48,29 +66,16 @@ HERE = Path(__file__).absolute().parent
 # either directly under ComfyUI (including through a directory junction) or in
 # a normal standalone checkout such as ~/Projects/Pixal. In the latter case the
 # first-run setup/config points it at the chosen ComfyUI install.
+PATHS = RuntimePaths.from_environment(HERE, os.environ)
+DATA_DIR = PATHS.data_root
+CDIR = PATHS.comfy_root
 _NEIGHBOR_COMFY = HERE.parent if (HERE.parent / "models").is_dir() else None
-CDIR = _NEIGHBOR_COMFY or HERE
 
 def _nt():
     """The one platform seam. Every Windows/POSIX branch below keys off this
     (sys.platform, the same value the ComfyUI console check already reads), so
     tests can exercise the POSIX half from any host by patching it."""
     return sys.platform == "win32"
-
-def resolve_comfy_dir(root):
-    """User-supplied path -> the ComfyUI dir holding models/. Accepts a portable
-    root (<root>\\ComfyUI\\models), a bare ComfyUI checkout (<root>\\models),
-    or the models folder itself."""
-    try:
-        p = Path(str(root).strip().strip('"').rstrip("\\/"))
-    except Exception:
-        return None
-    if p.name.lower() == "models" and p.is_dir():
-        return p.parent
-    for c in (p / "ComfyUI", p):
-        if (c / "models").is_dir():
-            return c
-    return None
 
 def apply_comfy_root(root):
     global CDIR
@@ -80,7 +85,7 @@ def apply_comfy_root(root):
     return c
 
 # Character canon is DATA (characters/*.json), not code - the app ships with no one.
-CHAR_DIR = HERE / "characters"
+CHAR_DIR = DATA_DIR / "characters"
 PRONOUNS = {"female": ("she", "her"), "male": ("he", "him"), "other": ("they", "them")}
 
 def load_characters():
@@ -110,7 +115,7 @@ INPUT_IMAGE_SUFFIXES = {
 }
 MAX_UPLOAD_BYTES = 40_000_000
 UPLOAD_CLIENT_MAX_BYTES = MAX_UPLOAD_BYTES + 1_000_000
-INPUT_REF_TYPES_FILE = HERE / "input_ref_types.json"
+INPUT_REF_TYPES_FILE = DATA_DIR / "input_ref_types.json"
 REFERENCE_KINDS = frozenset(("identity", "style", "clothing", "object"))
 
 def resolve_character(ref):
@@ -481,14 +486,14 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.3.1b"
+PIXAL_VERSION = "1.3.2b"
 PIXAL_CHANNEL = "stable"
 
-LEDGER = HERE / "history.jsonl"
-KEEP_COMFY = HERE / ".pixal_keep_comfy"   # set by /api/sidecar/restart: this exit
+LEDGER = DATA_DIR / "history.jsonl"
+KEEP_COMFY = DATA_DIR / ".pixal_keep_comfy"   # set by /api/sidecar/restart: this exit
                                           # is a restart, so leave the GPU stack up
-LANE_FILE = HERE / "lane.json"          # single-lane era; migrated into chats/ on boot
-CHATS_DIR = HERE / "chats"              # one json per chat: {id,title,ts,lane,convo}
+LANE_FILE = DATA_DIR / "lane.json"          # single-lane era; migrated into chats/ on boot
+CHATS_DIR = DATA_DIR / "chats"              # one json per chat: {id,title,ts,lane,convo}
 # "zara_edit" was the original key - kept as an alias so old ledger entries
 # reroll/iterate fine, but every user-facing surface says identity_edit now
 # (people build their OWN characters; her name doesn't belong in the product)
@@ -499,12 +504,12 @@ TEMPLATES["zara_edit"] = TEMPLATES["identity_edit"]
 MODEL_DIRS = ["checkpoints", "loras", "diffusion_models", "vae", "text_encoders",
               "controlnet", "upscale_models", "latent_upscale_models"]
 
-_LORA_TITLE_CACHE = HERE / "_lora_titles.json"
+_LORA_TITLE_CACHE = DATA_DIR / "_lora_titles.json"
 # How long a fresh arrival stays badged. Sized against a real collection: this
 # one gains ~13 models a week, so a fortnight would badge half the picker and the
 # chip would stop meaning anything. A week answers "what did I just pull down".
 MODEL_NEW_WINDOW = 7 * 86400
-CONFIG = HERE / "config.json"
+CONFIG = DATA_DIR / "config.json"
 
 
 def is_new_model(entry, now=None):
@@ -521,209 +526,30 @@ def is_new_model(entry, now=None):
         return False
     return (now or time.time()) - stamp < MODEL_NEW_WINDOW
 
-def load_config():
-    cfg = {"llm": {"base_url": KIMI_URL.rsplit("/chat", 1)[0],
-                   "api_key": os.environ.get("MOONSHOT_API_KEY", ""),
-                   "model": KIMI_MODEL,
-                   "local_model": "",         # GGUF path for the managed local brain
-                   "local_keep": True,        # keep it in VRAM between replies
-                   # ...but not forever: hand the card back after this many
-                   # idle minutes. 0 disables the reaper entirely.
-                   "local_idle_minutes": 10,
-                   # -1 = every layer on the GPU (the hardcoded flag before
-                   # 8.7), 0 = CPU, positive = that many layers. The 16 GB
-                   # knob: the brain shares the card or the render swaps.
-                   "local_gpu_layers": -1,
-                   # 9.60: the writer runs the model maker's own expansion
-                   # prompt (prompts/official/<family>.txt) in place of Pixal's
-                   # craft rules. Off = the same prompts as before, verbatim.
-                   # Default ON since 2026-08-27: the fresh product A/B
-                   # (Official 2, Pixal 1, draw 1) and Jesse's own picks
-                   # all came from the official arm; Off stays available.
-                   "official_prompting": True},
-           "critic": {"model": "Qwen3-VL-4B-Instruct"},
-           # Upscaling is a finishing step, not a recipe: the image side runs any
-           # installed ESRGAN-style model, the video side runs the RTX VSR filter.
-           "upscale": {"image_model": "", "image_mode": UPSCALE_IMAGE_DEFAULT_MODE,
-                       # The still-side VSR tier + scale (9.79) are SEPARATE
-                       # keys from video_mode/video_scale: those are the
-                       # user's clip settings, and a still preference must
-                       # not drag them around - video_scale=1.0 (the fps-only
-                       # finish) would silently turn the still enlarger into
-                       # a no-op.
-                       "image_vsr_mode": UPSCALE_IMAGE_DEFAULT_VSR_MODE,
-                       "image_vsr_scale": 2.0,
-                       "video_mode": UPSCALE_VIDEO_DEFAULT_MODE,
-                       "video_scale": 2.0,
-                       # 0 = the clip's own rate (9.53); 30/48/60 RIFE-
-                       # interpolates the finisher pass to that rate.
-                       "video_fps": 0},
-           # Which Qwen-Image-Edit release runs an instruction edit. "" = the
-           # recipe default. Releases differ in encoder node (see
-           # set_qwen_edit_encoder), so this is a real choice, not a preference.
-           # "inpaint_model" is the masked lane's own pick (9.29): a painted
-           # mask routes the edit to Klein, and until this key existed that
-           # lane was hard-pinned to KLEIN_MODEL no matter what was installed.
-           # "speed" picks between the model's own distillation and its
-           # un-accelerated schedule; the step counts behind both come from
-           # EDIT_ACCELERATORS, never from the user, because a distillation
-           # belongs to one transformer.
-           "edit": {"model": "", "inpaint_model": "",
-                    # Default-off Klein inpaint color correction (10.12).
-                    "inpaint_color_match": False, "speed": "turbo"},
-           # Which H3 builds the lanes reach for when a render names none
-           # (9.91). Two slots because H3 has two lanes and they take
-           # different weights: ref_model serves the reference lanes
-           # (h3_ref_still, h3_ref_still_2x, h3_ref2v), fl_model the
-           # first/last-frame ones (h3_still, h3_still_2x, h3_i2v,
-           # h3_multishot). "" = resolve by scan: one installed candidate
-           # is the default, several keep the standing preference. A
-           # hybrid fl2va/ref2va build is a candidate for BOTH slots. A
-           # pick whose file leaves the catalog degrades to the scan
-           # answer (reported on /api/settings) rather than raising. This
-           # is NOT the Animate popup's opening chip - that stays
-           # video.default_model, a different question.
-           "h3": {"ref_model": "", "fl_model": "",
-                # Which text encoder every H3 lane loads (9.94): "" = the
-                # stock 32B, exactly as before; an id from
-                # H3_TEXT_ENCODER_OPTIONS loads that small encoder through
-                # ClipProjLoader with its projection. One decision, not
-                # five - the node's mode/device stay fixed. A pick whose
-                # files leave the catalog degrades to the 32B (reported on
-                # /api/settings) rather than raising.
-                "text_encoder": ""},
-           # Optional decoder swap for the Z-Image/Flux VAE - "" keeps the
-           # profile's own matched VAE. See zimage_vae_candidates().
-           "vae": {"zimage": "", "special": "", "special_force": False},
-           # NVIDIA PiD as the finishing decoder. identity_finish routes the
-           # Identity Edit sampler's final latent through PiD at 4x instead of
-           # the Wan VAE - experimental: Krea 2 shares Qwen-Image's latent
-           # space, but PiD's qwenimage decoder was not trained on Krea 2.
-           "pid": {"identity_finish": False},
-           # Which engine the Animate popup opens on, and which model inside
-           # it. "" = the server's order (LTX 2.5 first, stock FL2VA inside
-           # H3). Deliberate defaults, set in Settings - the popup itself
-           # still switches freely per clip. "upscale_2x" is the H3 2x row's
-           # opening position under the same contract (9.31) - it can never
+def _config_defaults():
+    return default_config(
+        kimi_url=KIMI_URL, kimi_model=KIMI_MODEL,
+        api_key=os.environ.get("MOONSHOT_API_KEY", ""),
+        image_mode=UPSCALE_IMAGE_DEFAULT_MODE,
+        image_vsr_mode=UPSCALE_IMAGE_DEFAULT_VSR_MODE,
+        video_mode=UPSCALE_VIDEO_DEFAULT_MODE,
+    )
 
-           # be a finished-clip action, so a standing default is the whole
-           # setting. "h3_dialogue_tags" (9.38) picks how spoken lines are
-           # written in H3 briefs: "quotes" is the MiniMax-H3 #76 form,
-           # `(S1) says "..."`, and the default since the 2026-08-25 same-seed
-           # A/B (no opening blip, no cue read aloud); "tags" is MiniMax's
-           # trained <d>[Lang] ... </d>, which some seeds open with a
-           # half-second of gibberish.
-           # "h3_resolution" (9.55) is the Resolution row's opening position
-           # under the same contract as "upscale_2x": the popup still picks
-           # the canvas per clip, and the bigger tiers multiply the render's
-           # time (a 10s Max clip is ~20 min on a 5090).
-           "video": {"default_engine": "", "default_model": "",
-                     "upscale_2x": False, "h3_resolution": "standard",
-                     "h3_dialogue_tags": "quotes"},
-           # 10.1: film grain replaced skin1x. Jesse retired the 1x skin
-           # model ("that skin 1 ... just didnt do a good job" - it read as
-           # skin only on close portraits, posterization wider, rejected
-           # twice at 1:1); the judged dewax grain takes its seat. A config
-           # written when skin_finish existed still loads - the dead key is
-           # simply never read.
-           "still": {"film_grain": False, "film_grain_amount": 1.6,
-                     # 9.93: de-shine, numpy on the delivered frame. Needs no
-                     # file, node or VRAM, so the toggle is the whole gate -
-                     # still OFF until judged, like every other finisher.
-                     "de_shine": False,
-                     # 10.9: the one exposed de-shine dial, the blend
-                     # strength; the doc's 0.85 is the judged default.
-                     "de_shine_strength": 0.85,
-                     # 10.5: DLSS 5, the chain's FIRST finisher - a whole-frame
-                     # neural re-render through the ComfyUI-DLSS5-NR node. Same
-                     # doctrine as grain: fresh installs render untouched.
-                     "dlss5": False, "dlss5_style": "default",
-                     "dlss5_tone": 1.5},
-           "extra_model_roots": [],
-           "comfy_url": "",
-           "comfy_root": "",
-           "setup_done": False,
-           # Measured cold-start time, so the boot meter is calibrated to this
-           # machine. 0 = never measured; the UI falls back to a constant.
-           "comfy_boot_seconds": 0.0,
-           # VRAM profile: "auto" follows the detected card; "32"/"24"/"16"
-           # pin a tier (community testers simulate smaller cards; a laptop
-           # eGPU can read wrong). Advisory layer only - the butler enforces.
-           "vram_profile": "auto",
-           # Pop ComfyUI's own graph editor in a browser tab when its console
-           # boots. Off by default: the popup is jarring mid-chat, and the node
-           # editor is a power tool, not part of the studio flow.
-           "comfy_editor": False,
-           # How ComfyUI's own window looks. "tui" wraps the launcher in
-           # comfy_tui.py - a phase meter, a card meter, and an errors-only log
-           # that outlives the window. "plain" is the raw .bat console, which is
-           # the escape hatch if the wrapper ever misreads this machine.
-           "comfy_console": "tui",
-           # Chrome PWA id pixal.vbs opens the app window with - per machine,
-           # only exists after that machine installs the PWA; "" makes the vbs
-           # fall back to chrome --app= (no PWA needed).
-           "chrome_app_id": "",
-           # Bind every interface instead of loopback, so a phone, a tablet or
-           # a VR headset on the same Wi-Fi can open the studio. Off by
-           # default - this is the one setting that puts Pixal on a network.
-           # access_gate still stands: any Host that is not localhost has to
-           # present ?key=<access_key> once, which then rides a cookie.
-           "lan_access": False,
-           # Keep the studio open with no window connected. Off by default: at
-           # the desk, closing the window SHOULD take the model stack down with
-           # it. On for a remote session, where a backgrounded phone tab is not
-           # the same thing as "done for the day". See exit_when_unwatched().
-           "stay_up": False,
-           # Whether a render may be explicit, which decides one thing: if the
-           # wardrobe lock is appended to the prompt (see wardrobe_lock_for -
-           # the fineporn base drops clothing without it). "auto" reads the
-           # words the user actually wrote; "on" and "off" stop it guessing.
-           # It only bites with Prompt enhance OFF, where there is no brain in
-           # the path to infer nsfw - with enhance on the brain still decides.
-           "explicit": "auto",
-           "access_key": ""}
-    if CONFIG.exists():
-        try:
-            saved = json.loads(CONFIG.read_text(encoding="utf-8"))
-            cfg["llm"].update(saved.get("llm") or {})
-            cfg["critic"].update(saved.get("critic") or {})
-            cfg["upscale"].update(saved.get("upscale") or {})
-            cfg["edit"].update(saved.get("edit") or {})
-            cfg["h3"].update(saved.get("h3") or {})
-            cfg["vae"].update(saved.get("vae") or {})
-            cfg["pid"].update(saved.get("pid") or {})
-            cfg["video"].update(saved.get("video") or {})
-            cfg["still"].update(saved.get("still") or {})
-            cfg["extra_model_roots"] = saved.get("extra_model_roots") or []
-            cfg["comfy_url"] = (saved.get("comfy_url") or "").strip()
-            cfg["comfy_root"] = (saved.get("comfy_root") or "").strip()
-            cfg["setup_done"] = bool(saved.get("setup_done"))
-            # This merge is a whitelist, so anything missing here is silently
-            # dropped on load AND wiped by the next save_config round-trip.
-            cfg["comfy_boot_seconds"] = float(saved.get("comfy_boot_seconds") or 0.0)
-            if str(saved.get("vram_profile") or "") in ("auto", "32", "24", "16"):
-                cfg["vram_profile"] = str(saved["vram_profile"])
-            cfg["chrome_app_id"] = (saved.get("chrome_app_id") or "").strip()
-            cfg["comfy_editor"] = bool(saved.get("comfy_editor"))
-            if str(saved.get("comfy_console") or "") in ("tui", "plain"):
-                cfg["comfy_console"] = str(saved["comfy_console"])
-            cfg["lan_access"] = bool(saved.get("lan_access"))
-            cfg["stay_up"] = bool(saved.get("stay_up"))
-            if str(saved.get("explicit") or "") in ("auto", "on", "off"):
-                cfg["explicit"] = str(saved["explicit"])
-            cfg["access_key"] = (saved.get("access_key") or "").strip()
-        except Exception as exc:
-            # A malformed config silently becoming first-run defaults is worse
-            # than a loud one: keep the evidence and say what happened. The
-            # .bad copy doubles as a once-only guard, since this runs per request.
-            bad = CONFIG.with_suffix(".json.bad")
-            if not bad.exists():
-                print(f"[pixal] config.json unreadable, using defaults: {exc}", flush=True)
-                try:
-                    shutil.copy2(CONFIG, bad)
-                except OSError:
-                    pass
-    return cfg
+
+_CONFIG_OWNER = ConfigStore(CONFIG)
+
+
+def _config_store():
+    # CONFIG remains patchable while old callers migrate. Production has one
+    # owner; isolated applications construct their own ConfigStore directly.
+    global _CONFIG_OWNER
+    if _CONFIG_OWNER.path != CONFIG:
+        _CONFIG_OWNER = ConfigStore(CONFIG)
+    return _CONFIG_OWNER
+
+
+def load_config():
+    return _config_store().load(_config_defaults)
 
 def installed_vl_models():
     """AILab_QwenVL checkpoints actually on disk (anything else downloads on first run -
@@ -758,7 +584,7 @@ def vl_download_gb(name):
     return round(float(m.group(1)) * 2) if m else None
 
 def save_config(cfg):
-    CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    _config_store().save(cfg)
 
 _YAML_ROOTS = {"key": None, "roots": []}
 
@@ -1370,7 +1196,7 @@ def lm_enrich(rel, entry):
 # and fall back to CivArchive's stable /sha256/<hash> page, whose <title> and
 # og:image carry the common name and thumbnail for delisted models. Results
 # (and misses) persist in _civitai_models.json so a file is hashed once ever.
-_CIVITAI_CACHE = HERE / "_civitai_models.json"
+_CIVITAI_CACHE = DATA_DIR / "_civitai_models.json"
 _CIV = {"data": None, "busy": False}
 _CIV_MISS_RETRY = 7 * 86400
 
@@ -3218,47 +3044,8 @@ def recipe_model_candidates(recipe_id):
     # This also orders the list Settings shows.
     return sorted(out, key=lambda e: prefer_key(recipe_id, e["rel"]))
 
-CANVAS_MULTIPLE = 16          # latent 8x with a 2x patch: 16 is the real grid
-# Shape is a choice off a list; megapixels is a budget. Weighting the ratio
-# error this much above the area error means an exactly-correct aspect wins
-# whenever it is anywhere near the requested size, and loses only when holding
-# it would cost real resolution (16:9 cannot be exact without a ~10% jump).
-CANVAS_RATIO_WEIGHT = 6.0
 
 
-def dims_for(aspect, mp, multiple=CANVAS_MULTIPLE):
-    """aspect string + megapixels -> (w, h), both multiples of `multiple`.
-
-    The height is derived from the SNAPPED width, not the ideal one. Rounding
-    each axis independently off the unsnapped ideal let them drift apart and
-    put up to 0.7% of shape error into the ratio - 3:4 at 2 MP came out
-    1232x1632, which is not 3:4. Candidates either side of the ideal are then
-    scored, so a width one step over that lands the ratio exactly is preferred
-    to one that merely lands the area.
-    """
-    aw, ah = (float(x) for x in aspect.split(" ")[0].split(":"))
-    ratio = aw / ah
-    target = max(0.0, float(mp)) * 1_000_000
-    step = max(1, int(multiple))
-    if target <= 0 or ratio <= 0:
-        return step, step
-    # Half-UP, not Python's bankers rounding: the composer mirrors this function
-    # in JS, where Math.round is half-up, and 4:3 lands on an exact .5 often
-    # enough that round() would hand the two a different canvas.
-    snap = lambda v: math.floor(v + 0.5)
-    centre = max(1, snap((target * ratio) ** 0.5 / step))
-    best = None
-    for offset in range(-3, 4):
-        w = (centre + offset) * step
-        if w < step:
-            continue
-        h = max(step, snap(w / ratio / step) * step)
-        score = (abs(w * h - target) / target
-                 + CANVAS_RATIO_WEIGHT * abs((w / h) - ratio) / ratio)
-        key = (round(score, 12), -(w * h))    # ties go to the larger canvas
-        if best is None or key < best[0]:
-            best = (key, w, h)
-    return int(best[1]), int(best[2])
 
 def base(name):
     return re.sub(r"\.(safetensors|gguf|ckpt|pt|pth|bin)$", "",
@@ -3547,7 +3334,7 @@ def heal_stored_lora_plan(template, spec):
 # the code they are SAVED_STYLES, because `recipe` already means an entry in
 # RECIPE_SPECS - the built-in graph a saved style is BUILT ON, named by its
 # `base` field.
-RECIPE_DIR = HERE / "recipes"
+RECIPE_DIR = DATA_DIR / "recipes"
 RECIPE_SCHEMA_VERSION = 1
 _STYLE_ID_RE = re.compile(r"[a-z0-9_]{1,64}")
 
@@ -3629,7 +3416,6 @@ SAMPLER_SEATS = {
                                 "steps": [("8", "steps")],
                                 "scheduler": [("8", "scheduler")]}},
 }
-TUNING_KEYS = ("steps", "cfg", "sampler_name", "scheduler", "eta", "shift")
 # Which of those a seat can actually take, by the node class sitting in it. eta
 # is RES4LYF's stochasticity dial and exists ONLY on ClownsharKSampler_Beta - a
 # stock KSampler has no such input, and writing one into its inputs is a
@@ -4319,7 +4105,7 @@ COMMUNITY_COMBOS = {"minimax_h3": H3_COMMUNITY_COMBOS,
 # get saved over the real file - that has already happened on this box once
 # (config.json.defaults-written-by-mistake, still at the repo root). A starred
 # combo is not worth losing to that.
-SAMPLER_COMBOS = HERE / "sampler_combos.json"
+SAMPLER_COMBOS = DATA_DIR / "sampler_combos.json"
 
 
 def _combo_id(source, family, sampler_name, scheduler):
@@ -4454,72 +4240,6 @@ def sampler_combos(base_id, model=None):
     return out
 
 
-def validate_style_tuning(tuning):
-    """Shape-check a tuning block: keys, types, ranges. No catalog access.
-
-    Deliberately does NOT check the seat or the enum values - that needs the
-    model catalog, which is not warm at boot, and a load-time check against it
-    would reject perfectly good styles on the way up. Those checks live in
-    check_style_runnable(), which runs when the user SAVES and is present.
-    """
-    if tuning in (None, {}):
-        return {}
-    if not isinstance(tuning, dict):
-        raise ValueError("tuning must be an object")
-    unknown = [k for k in tuning if k not in TUNING_KEYS]
-    if unknown:
-        raise ValueError(f"unknown tuning setting: {', '.join(sorted(unknown))}")
-    out = {}
-    if "steps" in tuning:
-        try:
-            steps = int(tuning["steps"])
-        except (TypeError, ValueError):
-            raise ValueError(f"steps must be a whole number, got {tuning['steps']!r}") from None
-        if not 1 <= steps <= 200:
-            raise ValueError(f"steps must be between 1 and 200, got {steps}")
-        out["steps"] = steps
-    if "cfg" in tuning:
-        try:
-            cfg = float(tuning["cfg"])
-        except (TypeError, ValueError):
-            raise ValueError(f"cfg must be a number, got {tuning['cfg']!r}") from None
-        if not math.isfinite(cfg) or not 0.0 <= cfg <= 30.0:
-            raise ValueError(f"cfg must be between 0 and 30, got {cfg:g}")
-        out["cfg"] = cfg
-    if "shift" in tuning:
-        # ModelSamplingAuraFlow declares shift as a float in [0, 100] (default
-        # 1.73). Anything useful on Z-Image lives in 0.5-8; the node's range is
-        # kept rather than narrowed, because which seats even HAVE a shift is
-        # check_style_runnable's job and this stays catalog-free.
-        try:
-            shift = float(tuning["shift"])
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"shift must be a number, got {tuning['shift']!r}") from None
-        if not math.isfinite(shift) or not 0.0 <= shift <= 100.0:
-            raise ValueError(f"shift must be between 0 and 100, got {shift:g}")
-        out["shift"] = shift
-    if "eta" in tuning:
-        # Bounds are the node's own declared range, not a guess: RES4LYF
-        # declares eta as a float in [-100, 100] (default 0.5). Which seats
-        # even HAVE it is check_style_runnable's job - this stays catalog-free.
-        try:
-            eta = float(tuning["eta"])
-        except (TypeError, ValueError):
-            raise ValueError(f"eta must be a number, got {tuning['eta']!r}") from None
-        if not math.isfinite(eta) or not -100.0 <= eta <= 100.0:
-            raise ValueError(f"eta must be between -100 and 100, got {eta:g}")
-        out["eta"] = eta
-    for key in ("sampler_name", "scheduler"):
-        if key not in tuning:
-            continue
-        value = str(tuning[key] or "").strip()
-        if not value:
-            raise ValueError(f"{key} cannot be empty")
-        if len(value) > 64:
-            raise ValueError(f"{key} is longer than 64 characters")
-        out[key] = value
-    return out
 
 
 def heal_style_lora_plan(base_id, plan):
@@ -4543,113 +4263,14 @@ def heal_style_lora_plan(base_id, plan):
         base_id, {**plan, "recipe_revision": RECIPE_SPECS[base_id]["lora_stack_revision"]})
 
 
-def style_slug(text):
-    return re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")[:64]
 
 
-def _style_prompt_text(value, field):
-    """An optional free-text clause on a style (negative, prompt_prefix,
-    prompt_tail).
-
-    Whitespace-collapsed and capped: these ride inside shared files and end up
-    as single clauses in a caption, so a paste with newlines must not explode
-    into one. Empty means absent - the key simply leaves the record.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{field} must be a string")
-    text = " ".join(value.split())
-    if len(text) > 600:
-        raise ValueError(f"{field} is longer than 600 characters")
-    return text or None
 
 
-# A {slot} token inside a style's prompt frame. The name is free text up to
-# the braces ("outfit top" is a real one), so the pattern is anything that
-# closes cleanly.
-_SLOT_TOKEN_RE = re.compile(r"\{([^{}]+)\}")
 
 
-def _style_slots(raw, *clauses):
-    """A style's slot declarations -> {name: {"label", "default"}}.
-
-    The formula is the product; the slots are the per-shoot input (9.77).
-    Declared explicitly as a map, or inferred from the {name} tokens in the
-    prompt frame when the map is absent - an inferred slot's default is "",
-    so an unfilled field collapses its clause rather than inventing words.
-    """
-    if raw is None:
-        names = []
-        for clause in clauses:
-            for token in _SLOT_TOKEN_RE.findall(clause or ""):
-                name = " ".join(token.split())
-                if name and name not in names:
-                    names.append(name)
-        return {name: {"label": "", "default": ""} for name in names}
-    if not isinstance(raw, dict):
-        raise ValueError("slots must be an object of name -> {label, default}")
-    if len(raw) > 32:
-        raise ValueError("a style can declare at most 32 slots")
-    out = {}
-    for key, spec in raw.items():
-        name = " ".join(str(key).split())
-        if not name or len(name) > 64 or "{" in name or "}" in name:
-            raise ValueError(f"slot name {key!r} is not a usable {{token}}")
-        if spec is None:
-            spec = {}
-        if not isinstance(spec, dict):
-            raise ValueError(f"slot {name!r} must be an object of label/default")
-        label, default = spec.get("label"), spec.get("default")
-        if label is not None and not isinstance(label, str):
-            raise ValueError(f"slot {name!r}: label must be a string")
-        if default is not None and not isinstance(default, str):
-            raise ValueError(f"slot {name!r}: default must be a string")
-        label = " ".join((label or "").split())
-        default = " ".join((default or "").split())
-        if len(label) > 64:
-            raise ValueError(f"slot {name!r}: label is longer than 64 characters")
-        if len(default) > 600:
-            raise ValueError(f"slot {name!r}: default is longer than 600 characters")
-        out[name] = {"label": label, "default": default}
-    return out
 
 
-def fill_style_slots(text, slots, fills):
-    """Render a style clause's {slot} tokens (9.77).
-
-    A fill from the composer wins; an unfilled slot renders as its declared
-    default. When the effective value is empty the slot's whole clause - the
-    ;-separated segment it sits in - collapses, so "wearing {outfit top}"
-    with nothing to wear never leaves a dangling "wearing" in the caption,
-    and an undeclared token never leaks literal braces either.
-    """
-    if not text or "{" not in text:
-        return text
-    slots = slots or {}
-    fills = fills if isinstance(fills, dict) else {}
-    out = []
-    for clause in text.split(";"):
-        drop = False
-
-        def repl(match):
-            nonlocal drop
-            name = " ".join(match.group(1).split())
-            value = fills.get(name)
-            if not isinstance(value, str) or not value.strip():
-                value = (slots.get(name) or {}).get("default") or ""
-            value = " ".join(value.split())
-            if not value:
-                drop = True
-            return value
-
-        rendered = _SLOT_TOKEN_RE.sub(repl, clause)
-        if drop:
-            continue
-        rendered = " ".join(rendered.split())
-        if rendered:
-            out.append(rendered)
-    return "; ".join(out)
 
 
 def validate_saved_style(raw, default_id=""):
@@ -6103,6 +5724,8 @@ def build_zara_edit(scene, seed, ref=None, grounding=IDENTITY_GROUNDING_PX,
     size = f"{g['30:5']['inputs']['width']}x{g['30:5']['inputs']['height']}"
     info = {**model_job_info(model_entry), **lora_job_info(entries, dropped),
             "size": size + " (PiD 4×)" if use_pid else size,
+            "canvas_mp": (g["30:5"]["inputs"]["width"] *
+                          g["30:5"]["inputs"]["height"]) / 1e6,
             "character": ch["name"] if ch else None,
             "ref_boost_mask": boost_mask_status}
     return g, (scene + " " + suffix).strip(), info
@@ -6387,6 +6010,7 @@ def build_qwen_edit(scene, seed, image=None, megapixels=None, steps=None, cfg=No
                               g["qe:scale"]["inputs"]["resolution_steps"])
     if canvas:
         info["size"] = f"{canvas[0]}x{canvas[1]}"
+        info["canvas_mp"] = canvas[0] * canvas[1] / 1e6
     return g, instruction, info
 
 
@@ -8609,13 +8233,8 @@ def still_film_grain_active():
 def still_film_grain_amount():
     """The one exposed dial, in the judged recipe's own unit (1.6 == the
     dewax 0.016). Clamped so a corrupt config cannot whiteout a frame."""
-    try:
-        v = float(load_config()["still"]["film_grain_amount"])
-    except (KeyError, TypeError, ValueError):
-        return 1.6
-    if not math.isfinite(v):
-        return 1.6              # float("nan") survives min/max; refuse it
-    return min(max(v, 0.1), 8.0)
+    return finite_still_value(load_config(), "film_grain_amount", default=1.6,
+                              minimum=0.1, maximum=8.0)
 
 
 def add_film_grain(im, seed, amount=1.6, soften=STILL_GRAIN_SOFTEN):
@@ -8752,11 +8371,7 @@ def still_dlss5_style():
     """One of the three judged styles ("default" is Jesse's pick, cinematic
     also approved); anything else in a config reads as the shipped default.
     The numeric experimental ladder arms are deliberately not offered."""
-    try:
-        style = str(load_config()["still"]["dlss5_style"])
-    except (KeyError, TypeError):
-        return "default"
-    return style if style in DLSS5_STYLES else "default"
+    return dlss5_style(load_config(), DLSS5_STYLES)
 
 
 def still_dlss5_tone():
@@ -8772,13 +8387,8 @@ def still_dlss5_tone():
     saturation control whatever its name says. 1.5 is the default because
     taking both down slightly is what pulls the plastic sheen off skin -
     Jesse's pick out of a 14-arm sweep, 2026-09-03."""
-    try:
-        v = float(load_config()["still"]["dlss5_tone"])
-    except (KeyError, TypeError, ValueError):
-        return 1.5
-    if not math.isfinite(v):
-        return 1.5
-    return min(max(v, 0.0), 2.0)
+    return finite_still_value(load_config(), "dlss5_tone", default=1.5,
+                              minimum=0.0, maximum=2.0)
 
 
 def dlss5_available():
@@ -9130,13 +8740,8 @@ def still_de_shine_strength():
     """The one exposed de-shine dial (10.9), the film_grain_amount rule:
     clamped so a corrupt config cannot zero the pass or overshoot the
     blend, NaN refused, a missing key reads as the judged default."""
-    try:
-        v = float(load_config()["still"]["de_shine_strength"])
-    except (KeyError, TypeError, ValueError):
-        return DE_SHINE_STRENGTH
-    if not math.isfinite(v):
-        return DE_SHINE_STRENGTH
-    return min(max(v, 0.1), 1.0)
+    return finite_still_value(load_config(), "de_shine_strength", default=DE_SHINE_STRENGTH,
+                              minimum=0.1, maximum=1.0)
 
 
 def de_shine(im, strength=DE_SHINE_STRENGTH, percentile=DE_SHINE_PERCENTILE,
@@ -13925,16 +13530,22 @@ class Hub:
             if job.get("_encode_sig"):
                 self._warm_encode = (job["_encode_sig"],
                                      getattr(self, "flush_epoch", 0))
-        if not job.get("_oom_retry") and looks_like_oom(job.get("error")):
+        if not job.get("_oom_retry") and not job.get("_memory_blocked") \
+                and looks_like_oom(job.get("error")):
             # The verdict is recorded as a flag rather than re-read from the
             # text later, because the very next line replaces that text with
             # something friendlier - and the friendlier wording does not match
             # the allocator's phrasing, so the retry would refuse itself.
             job["_oom"] = True
+            job["_oom_kind"] = memory_failure_kind(job.get("error"))
             # The plan itself is decided inside the task, AFTER the card has
             # been reclaimed - "how much fits" is a question about the card the
             # retry will get, not the one the failure left behind.
-            job["error"] = "ran out of VRAM - clearing the card and retrying"
+            resource = "system memory" if job["_oom_kind"] == "ram" else "VRAM"
+            job["error"] = f"ran out of {resource} - reclaiming memory for one retry"
+            # Register before scheduling: Stop can arrive before the coroutine
+            # gets its first turn, even though the failed render is finalized.
+            job["_oom_pending"] = True
             asyncio.create_task(self.retry_after_oom(job))
         # 9.48's post-hoc tell: the watch acts before the render; this says
         # what happened when it was not enough. A free_min under a gigabyte
@@ -14116,63 +13727,86 @@ class Hub:
             spec["seconds"] = shorter
             return spec, f"at {shorter:g}s instead of {now:g}s"
         if template in ("qwen_edit", "klein_inpaint", "klein_edit", "face_mint"):
-            # These sample at the source's own size. Halving the working canvas
-            # quarters the VAE spike that is almost always the thing that blew.
-            now = float((job.get("info") or {}).get("megapixels")
+            # Use the actual working area, not just its configured ceiling.
+            now = float((job.get("info") or {}).get("canvas_mp")
+                        or (job.get("info") or {}).get("megapixels")
                         or spec.get("megapixels") or QWEN_EDIT_MP_CAP)
             smaller = round(max(0.5, now / 2.0), 2)
             if smaller >= now:
                 return None
             if "megapixels" in SIGS.get(template, ()):
                 spec["megapixels"] = smaller
-            else:
+            nodes = OOM_SHRINK_NODES.get(template) or ()
+            if nodes:
                 # klein/face_mint take no size argument; their scale nodes are
                 # reachable through the overrides every builder applies last.
-                nodes = OOM_SHRINK_NODES.get(template) or ()
-                if not nodes:
-                    return None
                 spec["overrides"] = list(spec.get("overrides") or ()) + [
                     {"node": n, "input": "megapixels", "value": smaller}
                     for n in nodes]
             return spec, f"at {smaller:g}MP instead of {now:g}MP"
+        canvas = job.get("_memory_canvas")
+        if canvas:
+            return shrink_still_spec(spec, canvas, SIGS.get(template, ()))
         # Nothing safe to shrink - but a reclaimed card is itself a real second
         # chance, and costs one render.
         return spec, "on a cleared card"
 
     async def retry_after_oom(self, job):
         """Empty the card properly, then resubmit the job once, smaller."""
+        admission = None
         try:
+            if job.get("_oom_cancelled"):
+                return
+            job["_oom_pending"] = True
             await self.cancel_siblings(job)
+            admission = await self.acquire_memory_turn(job, recovery=True)
+            if admission is None or job.get("_oom_cancelled"):
+                return
             self.forget_residency("oom recovery")
             await self.reclaim_vram(f"oom recovery ({job['template']})")
+            if job.get("_oom_cancelled"):
+                return
             # The brain goes too - this card just proved it is oversubscribed,
             # and 7GB of llama.cpp is the largest thing Pixal can hand back.
             # Before the plan, because a clean card is what makes "just run it
             # again" honest advice in the no-plan case as well.
             rested = await free_brain_vram()
+            if job.get("_oom_cancelled"):
+                return
             brain = (" I rested the chat brain too - it returns on your next "
                      "message." if rested else "")
+            resource = "system memory" if job.get("_oom_kind") == "ram" else "VRAM"
             plan = self.oom_retry_plan(job)
             if not plan:
+                job["error"] = f"ran out of {resource}; no smaller automatic retry is available"
+                self.broadcast(type="error", job_id=job["id"], cid=job["cid"],
+                               message=job["error"])
                 self.broadcast(type="text", cid=job["cid"],
-                               text=f"*That render ran out of VRAM and there is "
+                               text=f"*That render ran out of {resource} and there is "
                                     f"nothing smaller to try automatically. The "
-                                    f"card is clear now, so running it again may "
-                                    f"well land.{brain}*")
+                                    f"cache cleanup is complete. Try a smaller "
+                                    f"workload or a lighter model.{brain}*")
                 return
             spec, note = plan
             self.broadcast(type="text", cid=job["cid"],
-                           text=f"*That render ran out of VRAM. Cleared the card "
+                           text=f"*That render ran out of {resource}. Cleared cached models "
                                 f"and trying again {note}.{brain} Ask for it again "
                                 f"if you want the full-size version.*")
+            admission.release()
+            admission = None  # submit owns its own admission and rechecks memory
             await self.submit(job["cid"], "reroll", job["template"],
                               job["scene"], {**spec, "seed": job["seed"]},
                               job.get("count") or 1, parent=job.get("parent"),
-                              flags={"_oom_retry": True})
+                              flags={"_oom_retry": True, "_oom_retry_of": job["id"]})
         except Exception as exc:
             print(f"[pixal] oom retry failed: {exc}", flush=True)
-            self.broadcast(type="error", job_id=job["id"], cid=job["cid"],
-                           message=f"the retry could not start: {exc}")
+            if not job.get("_oom_cancelled"):
+                self.broadcast(type="error", job_id=job["id"], cid=job["cid"],
+                               message=f"the retry could not start: {exc}")
+        finally:
+            job["_oom_pending"] = False
+            if admission is not None:
+                admission.release()
 
     async def cancel_siblings(self, job):
         """Drop this job's other queued prompts before retrying.
@@ -14266,6 +13900,7 @@ class Hub:
             waited += VRAM_RECLAIM_POLL
             free = await asyncio.to_thread(gpu_free_bytes)
             if free is None:
+                best = None  # an old high reading is not current headroom
                 break
             if target is not None and free >= target:
                 best = free
@@ -14278,7 +13913,7 @@ class Hub:
             # and a render that starts paged loses minutes.
             if best is not None and free <= best + VRAM_RECLAIM_NOISE:
                 flat += 1
-                best = max(best, free)
+                best = free  # report the latest reading, not a vanished high-water mark
                 if flat >= 2 and target is None:
                     break
             else:
@@ -14307,6 +13942,63 @@ class Hub:
             and not j.get("_draining")
             and j.get("started", 0) > cutoff
             for j in self.jobs.values())
+
+    async def acquire_memory_turn(self, job, *, recovery=False):
+        """Serialize preflight + enqueue and never reclaim during another render.
+
+        Waiting jobs hold no engine resources and remain cancellable. Admission
+        times out visibly instead of silently bypassing the butler. The lock is
+        released by the caller immediately after enqueue, not during sampling.
+        """
+        if not hasattr(self, "_memory_lock"):
+            self._memory_lock = asyncio.Lock()
+        lock = self._memory_lock
+        job["_draining"] = True
+        acquired = False
+        try:
+            if job.get("_oom_cancelled"):
+                return None
+            await lock.acquire()
+            acquired = True
+            deadline = time.monotonic() + JOB_INFLIGHT_SECONDS
+            if self.busy_elsewhere(job):
+                self.broadcast(type="text", cid=job["cid"], text=(
+                    "*Waiting for the current render before checking memory*"))
+            while self.busy_elsewhere(job):
+                if job.get("_oom_cancelled") or (job.get("finalized") and not recovery):
+                    lock.release()
+                    return None
+                if time.monotonic() >= deadline:
+                    raise MemoryPressureError(
+                        "The render queue did not become idle. Please try again when it finishes.")
+                await asyncio.sleep(0.5)
+            if job.get("_oom_cancelled") or (job.get("finalized") and not recovery):
+                lock.release()
+                return None
+            return lock
+        except BaseException:
+            if acquired:
+                lock.release()
+            raise
+        finally:
+            job.pop("_draining", None)
+
+    async def ensure_host_memory(self, job):
+        """Cheap host check; reclaim only our caches, then re-read before refusal."""
+        state = host_memory_status()
+        reason = state.critical_reason() if state else None
+        if not reason:
+            return
+        self.broadcast(type="text", cid=job["cid"], text=(
+            "*System memory is tight - releasing Pixal's cached models and chat brain*"))
+        await free_brain_vram()
+        await self.reclaim_vram("system memory pressure")
+        state = host_memory_status()
+        reason = state.critical_reason() if state else None
+        if reason:
+            raise MemoryPressureError(
+                f"Render paused: {reason}. Close memory-heavy applications and try again. "
+                "If this persists, check Windows' paging-file setting.")
 
     def note_node_cache_flush(self, why):
         """Bump the flush epoch: ComfyUI's node-output cache is gone (or
@@ -14459,8 +14151,8 @@ class Hub:
     async def ensure_vram(self, template, g, job, info=None):
         """The VRAM butler: make the card fit the job BEFORE it queues.
 
-        ComfyUI's eviction makes room for weights only; on Windows the
-        allocator never OOMs, it silently pages through WDDM, so a job that
+        ComfyUI's eviction makes room for weights; on Windows the
+        allocator can OOM or silently page through WDDM, so a job that
         "fits" by comfy's math can still crawl - identity edit measured
         110s/step on a 99.9%-full card (2026-08-11). An earlier pre-flight
         check was removed for crying wolf, because free VRAM reads low right
@@ -14540,8 +14232,9 @@ class Hub:
             # real delta this recipe staged lately, floored at the profile.
             entries = self.ledger_read()
             ledger_est = ledger_activation_estimate(
-                entries, template, (info or {}).get("canvas_mp"))
-            act = graph_activation_bytes(template, g, info, entries=entries)
+                entries, template, (info or {}).get("canvas_mp"), context=info)
+            profile_act = graph_activation_bytes(template, g, info)
+            act = max(profile_act, int(ledger_est or 0))
             # Kept so an OOM retry can solve for a size that actually fits
             # instead of guessing a percentage. The graph is a local in submit
             # and is gone by the time finalize sees the failure.
@@ -14593,13 +14286,13 @@ class Hub:
                         f"*brain rested - this render prices "
                         f"{(pweights + act) / 2**30:.1f} of "
                         f"{card_total / 2**30:.1f} GB*"))
-                need = (pweights - hot) + act + VRAM_FLOOR
+                need = max(0, pweights - hot) + act + VRAM_FLOOR
                 free = await comfy_vram_free_bytes()
                 if free is None:
                     free = await asyncio.to_thread(gpu_free_bytes)
                 ram = ram_free_bytes()
                 ram_short = ram is not None \
-                    and ram < (pweights - hot) + RAM_FLOOR
+                    and ram < max(0, pweights - hot) + RAM_FLOOR
                 if free is not None and free >= need and not ram_short:
                     # It fits without the encoder. A warm job neither loads
                     # nor evicts the encoder, so a claim the card already
@@ -14666,14 +14359,14 @@ class Hub:
                     f"*brain rested - this render prices "
                     f"{(weights + act) / 2**30:.1f} of "
                     f"{card_total / 2**30:.1f} GB*"))
-            need = (weights - hot) + act + VRAM_FLOOR
+            need = max(0, weights - hot) + act + VRAM_FLOOR
             free = await comfy_vram_free_bytes()
             if free is None:
                 free = await asyncio.to_thread(gpu_free_bytes)
             if free is None:
                 return
             ram = ram_free_bytes()
-            ram_short = ram is not None and ram < (weights - hot) + RAM_FLOOR
+            ram_short = ram is not None and ram < max(0, weights - hot) + RAM_FLOOR
             if free >= need and not ram_short and not video:
                 # The job fits as the card stands. Residency is REPLACED, never
                 # merged: `update()` made this the union of every stack ever
@@ -14781,7 +14474,7 @@ class Hub:
                       flush=True)
                 return
             print(f"[pixal] butler: {template} wants {need / 2**30:.1f}GB "
-                  f"({(weights - hot) / 2**30:.1f}GB cold weights + "
+                  f"({max(0, weights - hot) / 2**30:.1f}GB cold weights + "
                   f"{act / 2**30:.1f}GB act "
                   f"({'ledger' if ledger_est is not None and ledger_est >= act else 'profile'})), "
                   f"free {free / 2**30:.1f}GB, "
@@ -14821,38 +14514,51 @@ class Hub:
             # this graph's ACTIVATIONS, ask again (twice, bounded): a repeat
             # POST is seconds against a render that is otherwise doomed.
             for _ in range(2):
-                if free is not None and free >= act + VRAM_FLOOR:
+                if free is None or free >= profile_act + VRAM_FLOOR:
                     break
                 free = await self.reclaim_vram(
                     f"re-flushing for {template} (settled at "
                     f"{(free or 0) / 2**30:.1f}GB)",
                     target=weights + act + VRAM_FLOOR)
             self.resident_heavies = dict(heavy)
-            free = free or 0
             need = weights + act + VRAM_FLOOR
             notes = ["cleared cached models"]
-            if free < need or (ram_free_bytes() or 0) < weights + RAM_FLOOR:
+            ram = ram_free_bytes()
+            if (free is not None and free < need) \
+                    or (ram is not None and ram < weights + RAM_FLOOR):
                 if await free_brain_vram():
                     notes.append("rested the chat brain - it returns on your "
                                  "next message")
-                    free = await asyncio.to_thread(gpu_free_bytes) or 0
+                    free = await asyncio.to_thread(gpu_free_bytes)
+            if free is not None and free < profile_act + VRAM_FLOOR:
+                # Model weights can be offloaded; the working set cannot.
+                # Do not turn the full weight estimate into a hard capacity
+                # cap: many supported video models rely on staged loading.
+                # A ledger delta may include cold model loads, so it can ask
+                # for extra headroom but must not become an admission floor.
+                raise MemoryPressureError(
+                    f"Render paused: {free / 2**30:.1f} GiB of GPU memory is available "
+                    f"after cleanup; the working set needs about {(profile_act + VRAM_FLOOR) / 2**30:.1f} GiB "
+                    "including headroom. Lower the resolution, batch size or clip length.")
             job["model_switch"] = True   # narration: "clearing vram · loading the model"
             msg = (f"*Making room - this render stages ~{(weights + act) / 2**30:.0f}GB: "
                    + "; ".join(notes))
-            if free < need:
+            if free is not None and free < need:
                 # Name the squatters only when the driver proves them (WDDM
                 # usually will not - gpu_hogs returns empty there by design).
                 hogs = await asyncio.to_thread(gpu_hogs)
-                who = ", ".join(f"{n} ({b / 2**30:.1f}GB)"
-                                for n, b in hogs) or "something outside Pixal"
-                msg += (f". Still tight ({free / 2**30:.1f}GB free) - {who} "
-                        f"holds the rest, so this one may crawl*")
+                who = ", ".join(f"{n} ({b / 2**30:.1f}GB)" for n, b in hogs)
+                msg += (f". Still tight ({free / 2**30:.1f}GB free); "
+                        "ComfyUI may need to offload model weights"
+                        + (f". Other GPU use: {who}" if who else "") + "*")
             else:
                 msg += "*"
             self.broadcast(type="text", cid=job["cid"], text=msg)
+        except MemoryPressureError:
+            raise
         except Exception as exc:
-            # The butler is an optimization, never a gate - a render must not
-            # die because a nvidia-smi call hiccuped.
+            # Missing telemetry still fails open; proven critical pressure does
+            # not. A render must not die because nvidia-smi hiccuped.
             print(f"[pixal] vram butler skipped: {exc}", flush=True)
 
     def options(self):
@@ -15196,12 +14902,20 @@ class Hub:
                "seed": base_seed, "count": count, "started": time.time(), "parent": parent,
                "images": [], "seen": set(), "done_pids": set(), "prompt_ids": [],
                "texts": [], "spec": {}, "info": None, "error": None,
+               "_draining": True,
                **(flags or {})}
         if scene_repairs:
             # 9.64: what the gate tidied in a brain-written scene. The card's
             # "tidied: 2 negations" copy is a later brief; the data rides now.
             job["scene_repairs"] = scene_repairs
         self.jobs[job_id] = job
+        origin = self.jobs.get(job.get("_oom_retry_of"))
+        if origin and origin.get("_oom_cancelled"):
+            # No await between creating the child and linking it to its origin:
+            # Stop sees either the pending recovery or this child, never a gap.
+            job["error"] = "stopped"
+            self.finalize(job)
+            return job
         if scene_fault:
             # Refuse before the card exists: a "job" event here would put a
             # render card in the lane that can only ever say it failed.
@@ -15211,7 +14925,14 @@ class Hub:
             return job
         self.broadcast(type="job", job_id=job_id, cid=cid, template=template,
                        scene=scene, seed=base_seed, count=count)
+        admission = None
         try:
+            admission = await self.acquire_memory_turn(job)
+            if admission is None:
+                return job
+            await self.ensure_host_memory(job)
+            if job.get("finalized"):
+                return job
             spec_args = {k: v for k, v in spec_args.items() if k in SIGS[template]}
             job["spec"] = dict(spec_args)
             async with aiohttp.ClientSession() as s:
@@ -15222,7 +14943,20 @@ class Hub:
                     apply_special_decoder(g, template, info)
                     validate_job_model_info(template, info, g)
                     if i == 0:
+                        canvas = still_canvas(g) if template not in VIDEO_TEMPLATES else None
+                        if canvas:
+                            canvas["resizable"] = not any(
+                                n.get("class_type") in (PID_DECODE_NODE, PID_UPSCALE_NODE)
+                                for n in g.values())
+                            job["_memory_canvas"] = canvas
+                            info.setdefault("canvas_mp", canvas["width"] * canvas["height"] / 1e6)
+                            info["memory_batch"] = canvas["batch"]
+                        # Save sizing before preflight can refuse; recovery and
+                        # diagnostics must describe the graph that was built.
+                        job["_memory_info"] = dict(info)
                         await self.ensure_vram(template, g, job, info)
+                    if job.get("finalized"):
+                        return job  # Stop may have arrived while reclaiming.
                     if not job.get("info"):
                         if job.pop("_warm", None):
                             # 10.2 - the butler proved the encode is cached;
@@ -15271,14 +15005,27 @@ class Hub:
                         pid = resp["prompt_id"]
                         job["prompt_ids"].append(pid)
                         self.by_prompt[pid] = job_id
+                        if job.get("_cancel_requested"):
+                            # Stop may have landed while /prompt was in flight,
+                            # before its id was known. Cancel the late receipt.
+                            await cancel_comfy_job(s, job)
+                            return job
                         print(f"[pixal] queued {pid[:8]} for job {job_id} ({template})",
                               flush=True)
                     job["full_prompt"] = full
             asyncio.create_task(self.watch(job_id))
         except Exception as e:
+            if job.get("_cancel_requested"):
+                return job  # a late transport error must not undo Stop
+            if isinstance(e, MemoryPressureError):
+                job["_memory_blocked"] = True
             job["error"] = str(e)
             self.broadcast(type="error", job_id=job_id, cid=cid, message=str(e))
             self.finalize(job)
+        finally:
+            job.pop("_draining", None)
+            if admission is not None:
+                admission.release()
         return job
 
     async def watch(self, job_id):
@@ -16637,8 +16384,8 @@ H3_REF2V_INVENTORY_NOTE = (
 
 LOCAL_LLM_PORT = 8191
 LOCAL_LLM_URL = f"http://127.0.0.1:{LOCAL_LLM_PORT}/v1"
-LLM_STATE = HERE / ".local_llm.json"     # {pid, model} of the server WE spawned -
-LLM_LOG = HERE / "llama_server.log"      # survives sidecar restarts (adopt, don't strand)
+LLM_STATE = DATA_DIR / ".local_llm.json"     # {pid, model} of the server WE spawned -
+LLM_LOG = DATA_DIR / "llama_server.log"      # survives sidecar restarts (adopt, don't strand)
 
 # When the brain was last actually wanted. local_keep used to mean "resident
 # forever": the only alternative was local_keep off, which hands the VRAM back
@@ -21531,485 +21278,138 @@ def data_url_for(filename):
     except Exception:
         return None
 
+def _settings_inventory(cfg):
+    """Resolve external facts once for this settings response.
+
+    These probes remain legacy integration adapters until catalog/brain ownership
+    moves. The public projection never calls back into them or reloads config.
+    """
+    vsr_available = bool(_video_upscale_node())
+    runtime = dlss5_runtime_dir()
+    return SettingsInventory(
+        llm={"local_llms": local_llm_models(), "official_families": official_prompt_families()},
+        critic={"brain": brain_vision(),
+                "installed": [{"name": n, "nsfw": _pretty_name(n)["nsfw"]}
+                              for n in installed_vl_models()]},
+        upscale={"installed": upscale_model_options(),
+                 "image_modes": list(UPSCALE_IMAGE_MODES),
+                 "pid_available": _pid_upscale_available(),
+                 "vsr_available": vsr_available, "vsr_tiers": list(UPSCALE_VSR_TIERS),
+                 "video_modes": list(UPSCALE_VIDEO_MODES),
+                 "video_fps_options": list(UPSCALE_VIDEO_FPS_OPTIONS),
+                 "video_available": vsr_available,
+                 "ltx25_video_available": not _ltx25_upscale_missing()},
+        edit={"installed": [{"name": e["rel"], "size": e.get("size")}
+                            for e in recipe_model_candidates("qwen_edit")],
+              "default": QWEN_EDIT_MODEL,
+              "inpaint_installed": [{"name": e["rel"], "size": e.get("size")}
+                                    for e in recipe_model_candidates("klein_inpaint")],
+              "inpaint_default": KLEIN_MODEL},
+        vae={"installed": [e["rel"] for e in model_catalog("vae")],
+             "stock": list(ZIMAGE_VAE_CANDIDATES),
+             "special_decoders": [
+                 {"id": k, "label": s["label"], "factor": s["factor"],
+                  "file_installed": _catalog_has("vae", s["vae"]),
+                  "available": _special_decoder_available(s)}
+                 for k, s in SPECIAL_DECODERS.items()]},
+        pid={"decode_available": _pid_node_available(PID_DECODE_NODE)},
+        h3=h3_settings_payload(cfg),
+        video={"upscale_2x_available": h3_upscale_available(),
+               "h3_resolutions": [{"id": k, "label": s["label"], "mp": s["mp"]}
+                                  for k, s in H3_RESOLUTIONS.items()],
+               "engines": [{"id": e["id"], "label": e["label"],
+                            "available": e.get("available", True),
+                            "models": [{"id": m["id"], "label": m["label"],
+                                        "available": m.get("available", True)}
+                                       for m in e["models"]]}
+                           for e in video_engine_options()]},
+        still={"dlss5_available": dlss5_available(),
+               "dlss5_node": runtime.parent.is_dir(),
+               "dlss5_dll": (runtime / DLSS5_DLL_NAME).is_file(),
+               "one_frame": h3_one_frame_available()},
+        model_roots=[str(r) for r in model_roots(cfg)],
+        catalog_size=len(model_catalog()), vram=vram_profile_state(), comfy_url=COMFY)
+
+
 async def settings_get(_req):
     await refresh_comfy_nodes()
     cfg = load_config()
-    key = cfg["llm"].get("api_key", "")
-    return web.json_response({
-        # One source for the number the About card shows. A version baked into
-        # the bundle survives a sidecar update and then lies about what is
-        # running; this cannot.
-        "pixal_version": PIXAL_VERSION,
-        "pixal_channel": PIXAL_CHANNEL,
-        "llm": {"base_url": cfg["llm"]["base_url"], "model": cfg["llm"]["model"],
-                "key_set": bool(key), "key_tail": key[-4:] if key else "",
-                "local_model": cfg["llm"].get("local_model", ""),
-                "local_keep": cfg["llm"].get("local_keep", True),
-                "local_gpu_layers": cfg["llm"].get("local_gpu_layers", -1),
-                "local_idle_minutes": cfg["llm"].get(
-                    "local_idle_minutes", LLM_IDLE_EVICT_S // 60),
-                "local_llms": local_llm_models(),
-                "official_prompting": cfg["llm"].get("official_prompting", True),
-                "official_families": official_prompt_families()},
-        "critic": {"model": cfg["critic"]["model"],
-                   # The Vision section names whoever ACTUALLY reviews, and
-                   # brain_vl_read gets first refusal - see brain_vision.
-                   "brain": brain_vision(),
-                   "installed": [{"name": n, "nsfw": _pretty_name(n)["nsfw"]}
-                                 for n in installed_vl_models()]},
-        "upscale": {**cfg["upscale"],
-                    "installed": upscale_model_options(),
-                    "image_modes": list(UPSCALE_IMAGE_MODES),
-                    "pid_available": _pid_upscale_available(),
-                    # The still VSR segment hides behind the same probe the
-                    # video lane uses - one pack serves both (9.79).
-                    "vsr_available": bool(_video_upscale_node()),
-                    # The still tier row reads its own list: video_modes
-                    # belongs to the clip tab (9.79).
-                    "vsr_tiers": list(UPSCALE_VSR_TIERS),
-                    "video_modes": list(UPSCALE_VIDEO_MODES),
-                    "video_fps_options": list(UPSCALE_VIDEO_FPS_OPTIONS),
-                    "video_available": bool(_video_upscale_node()),
-                    "ltx25_video_available": not _ltx25_upscale_missing()},
-        "edit": {**cfg["edit"],
-                 "inpaint_color_match": bool(
-                     cfg["edit"].get("inpaint_color_match", False)),
-                 # Both lanes, each option carrying what it weighs on disk
-                 # (9.29) - name+size objects like the critic block above,
-                 # never bare strings.
-                 "installed": [{"name": e["rel"], "size": e.get("size")}
-                               for e in recipe_model_candidates("qwen_edit")],
-                 "default": QWEN_EDIT_MODEL,
-                 "inpaint_installed": [{"name": e["rel"], "size": e.get("size")}
-                                       for e in recipe_model_candidates("klein_inpaint")],
-                 "inpaint_default": KLEIN_MODEL},
-        "vae": {**cfg["vae"],
-                "installed": [e["rel"] for e in model_catalog("vae")],
-                "stock": list(ZIMAGE_VAE_CANDIDATES),
-                "special_decoders": [
-                    {"id": k, "label": s["label"], "factor": s["factor"],
-                     "file_installed": _catalog_has("vae", s["vae"]),
-                     "available": _special_decoder_available(s)}
-                    for k, s in SPECIAL_DECODERS.items()]},
-        "pid": {**cfg["pid"],
-                "decode_available": _pid_node_available(PID_DECODE_NODE)},
-        # The two H3 model slots (9.91): stored picks, per-lane candidates,
-        # what Automatic resolves to, and the stale flag - everything the
-        # two Settings rows draw, from the one resolver the renders read.
-        "h3": h3_settings_payload(cfg),
-        "video": {"default_engine": cfg["video"]["default_engine"],
-                  "default_model": cfg["video"]["default_model"],
-                  # The H3 2x default (9.31), published with whether it can
-                  # run at all - pack plus 659 MB weights - so the Settings
-                  # row disables itself honestly instead of offering a
-                  # setting that silently does nothing.
+    return web.json_response(settings_response(
+        cfg, _settings_inventory(cfg), version=PIXAL_VERSION, channel=PIXAL_CHANNEL,
+        idle_minutes=LLM_IDLE_EVICT_S // 60, de_shine_strength=DE_SHINE_STRENGTH,
+        dlss5_styles=DLSS5_STYLES, h3_resolution=H3_RESOLUTION_DEFAULT))
 
-                  "upscale_2x": bool(cfg["video"].get("upscale_2x", False)),
-                  "upscale_2x_available": h3_upscale_available(),
-                  # The 9.55 Resolution row's standing default, published with
-                  # the tier list itself - the same discipline as
-                  # upscale_2x_available: this endpoint carries what its own
-                  # controls draw (Settings never fetches /api/options).
-                  "h3_resolution": cfg["video"].get("h3_resolution",
-                                                    H3_RESOLUTION_DEFAULT),
-                  "h3_resolutions": [
-                      {"id": tier_id, "label": spec["label"], "mp": spec["mp"]}
-                      for tier_id, spec in H3_RESOLUTIONS.items()],
-                  # The 9.38 tags/quotes switch (MiniMax-H3 #76), published
-                  # with its default so an old config still reads "quotes".
-                  "h3_dialogue_tags": cfg["video"].get("h3_dialogue_tags",
-                                                       "quotes"),
-                  "engines": [{"id": e["id"], "label": e["label"],
-                               "available": e.get("available", True),
-                               "models": [{"id": m["id"], "label": m["label"],
-                                           "available": m.get("available", True)}
-                                          for m in e["models"]]}
-                              for e in video_engine_options()]},
-        # The still finishers - both numpy on the delivered frame, nothing
-        # to probe, so the toggles are the whole state. film_grain replaced
-        # skin_finish in 10.1 (skin1x retired by Jesse's eye).
-        "still": {"film_grain": bool((cfg.get("still") or {})
-                                     .get("film_grain", False)),
-                  "film_grain_amount": still_film_grain_amount(),
-                  "de_shine": bool((cfg.get("still") or {})
-                                   .get("de_shine", False)),
-                  "de_shine_strength": still_de_shine_strength(),
-                  # 10.5: the first finisher's keys, published with whether
-                  # the node AND its runtime DLL are actually there, so the
-                  # row disables itself honestly - the same discipline as
-                  # upscale_2x_available. available is False on a cold
-                  # ComfyUI; the next settings open re-probes.
-                  "dlss5": bool((cfg.get("still") or {})
-                                .get("dlss5", False)),
-                  "dlss5_style": still_dlss5_style(),
-                  "dlss5_tone": still_dlss5_tone(),
-                  "dlss5_available": dlss5_available(),
-                  # The two halves separately, so the row can offer the
-                  # right fix: the node pack missing wants an install, the
-                  # DLL missing wants the user's own copy seated (the
-                  # /api/dlss5/dll picker) - one flag cannot say which.
-                  "dlss5_node": dlss5_runtime_dir().parent.is_dir(),
-                  "dlss5_dll": (dlss5_runtime_dir()
-                                / DLSS5_DLL_NAME).is_file(),
-                  # The one-frame spine is not a setting - there is no reason
-                  # to prefer five frames and throw four away - but Settings
-                  # says whether it is running, because it is the difference
-                  # between two graphs and About is where that gets checked.
-                  "one_frame": h3_one_frame_available()},
-        "extra_model_roots": cfg["extra_model_roots"],
-        "model_roots": [str(r) for r in model_roots(cfg)],
-        "catalog_size": len(model_catalog()),
-        "vram": vram_profile_state(),
-        "comfy_url": COMFY,
-        "comfy_editor": cfg["comfy_editor"],
-        "comfy_console": cfg["comfy_console"],
-        "explicit": cfg["explicit"],
-    })
+class _SettingsCatalog:
+    """Request-local adapter until the legacy catalog gets its own owner."""
+
+    def __init__(self):
+        self._video_engines = None
+
+    def resolve_upscaler(self, name):
+        return resolve_upscale_model(name)
+
+    def model_names(self, recipe):
+        return tuple(entry["rel"] for entry in recipe_model_candidates(recipe))
+
+    def has_vae(self, name):
+        return _catalog_has("vae", name)
+
+    def h3_model_names(self, lane):
+        return tuple(entry["rel"] for entry in h3_lane_options(lane))
+
+    def h3_encoder_available(self, name):
+        known = next((option for option in H3_TEXT_ENCODER_OPTIONS if option["id"] == name), None)
+        return bool(known is not None
+                    and _video_asset("text_encoders", known["encoder"])
+                    and _video_asset("clip_projections", known["projection"]))
+
+    def video_engines(self):
+        # Engine and model validation share one view. Never retain it across saves.
+        if self._video_engines is None:
+            self._video_engines = video_engine_options()
+        return self._video_engines
+
+
+def _settings_choices():
+    return SettingsChoices(
+        image_modes=tuple(UPSCALE_IMAGE_MODES), vsr_tiers=tuple(UPSCALE_VSR_TIERS),
+        video_modes=tuple(UPSCALE_VIDEO_MODES), scale_range=tuple(UPSCALE_VIDEO_SCALE_RANGE),
+        video_fps=tuple(UPSCALE_VIDEO_FPS_OPTIONS), special_decoders=tuple(SPECIAL_DECODERS),
+        dlss5_styles=tuple(DLSS5_STYLES), h3_resolutions=tuple(H3_RESOLUTIONS))
+
 
 async def settings_post(req):
     body = await req.json()
-    cfg = load_config()
-    # The brain that is ALREADY running was spawned with the old placement
-    # baked into its argv. Saving "chat brain on CPU" rewrote config and
-    # nothing else, so a GPU-resident brain kept its layers until some later
-    # chat turn happened to notice the mismatch - and with local_keep on, that
-    # turn may never come. Jesse's 4B Q8 + f16 projector + 16k ctx sat on the
-    # card for hours after he moved it to CPU (2026-08-22: 8.4 GB, measured).
+    cfg = load_config()  # A detached working copy; failed validation is never saved.
     was_brain = (str(cfg["llm"].get("local_model") or ""),
                  cfg["llm"].get("local_gpu_layers", -1))
-    llm = body.get("llm") or {}
-    for k in ("base_url", "model"):
-        if llm.get(k):
-            cfg["llm"][k] = llm[k].strip()
-    if llm.get("api_key"):
-        cfg["llm"]["api_key"] = llm["api_key"].strip()
-    if "local_model" in llm and isinstance(llm["local_model"], str):
-        cfg["llm"]["local_model"] = llm["local_model"].strip()
-    if "local_keep" in llm:
-        cfg["llm"]["local_keep"] = bool(llm["local_keep"])
-    if "local_gpu_layers" in llm:
-        want = llm["local_gpu_layers"]
-        # bool IS an int in Python - True/False are not layer counts.
-        if isinstance(want, bool) or not isinstance(want, int) or want < -1:
-            return web.json_response(
-                {"ok": False, "error": f"not a gpu layer count: {want}"},
-                status=400)
-        cfg["llm"]["local_gpu_layers"] = want
-    if "local_idle_minutes" in llm:
-        want = llm["local_idle_minutes"]
-        # bool IS an int in Python - True/False are not minute counts.
-        if isinstance(want, bool) or not isinstance(want, (int, float)) or want < 0:
-            return web.json_response(
-                {"ok": False, "error": f"not a minute count: {want}"}, status=400)
-        cfg["llm"]["local_idle_minutes"] = want   # 0 = keep it resident forever
-    if "official_prompting" in llm:
-        cfg["llm"]["official_prompting"] = bool(llm["official_prompting"])
-    critic = body.get("critic") or {}
-    if critic.get("model"):
-        cfg["critic"]["model"] = critic["model"].strip()
-    # The chat strip's brain chip is push-only, so a brain changed in Settings
-    # has to say so or the chip keeps naming the old one until a reload.
-    if llm:
-        HUB.broadcast(type="brain", **brain_badge())
-    upscale = body.get("upscale") or {}
-    if "image_model" in upscale and isinstance(upscale["image_model"], str):
-        # "" is a real choice: it means "ask me / none selected yet". Anything else
-        # is resolved against the catalog now rather than at render time, so a name
-        # that does not exist is refused here instead of failing every later
-        # upscale; storing the resolved relpath is what ComfyUI wants verbatim.
-        want = upscale["image_model"].strip()
-        if not want:
-            cfg["upscale"]["image_model"] = ""
-        else:
-            try:
-                cfg["upscale"]["image_model"] = resolve_upscale_model(want)
-            except ValueError as e:
-                return web.json_response({"ok": False, "error": str(e)}, status=400)
-    edit_cfg = body.get("edit") or {}
-    if "model" in edit_cfg and isinstance(edit_cfg["model"], str):
-        # Same contract as the upscaler above: "" means "use the recipe default",
-        # and anything else is checked against the installed compatible set now,
-        # so a deleted or renamed release is refused here rather than failing
-        # every later edit. The whole-frame slot holds BOTH edit families
-        # (9.44): a Qwen build runs qwen_edit, a Klein build routes the same
-        # mask-less edit to klein_edit - either candidate list validates.
-        want = edit_cfg["model"].strip().replace("/", "\\")
-        lanes = (recipe_model_candidates("qwen_edit")
-                 + recipe_model_candidates("klein_edit"))
-        if want and not any(entry["rel"].replace("/", "\\").lower() == want.lower()
-                            for entry in lanes):
-            return web.json_response(
-                {"ok": False, "error": f"not an installed edit model: {want}"},
-                status=400)
-        cfg["edit"]["model"] = want
-    if "inpaint_model" in edit_cfg and isinstance(edit_cfg["inpaint_model"], str):
-        # The masked lane's pick, same contract as the whole-frame one above:
-        # "" means "use the recipe default", anything else must be an installed
-        # klein-family build or it is refused here with the file named, rather
-        # than failing every later masked edit.
-        want = edit_cfg["inpaint_model"].strip().replace("/", "\\")
-        if want and not any(entry["rel"].replace("/", "\\").lower() == want.lower()
-                            for entry in recipe_model_candidates("klein_inpaint")):
-            return web.json_response(
-                {"ok": False, "error": f"not an installed Klein Inpaint model: {want}"},
-                status=400)
-        cfg["edit"]["inpaint_model"] = want
-    if ("inpaint_color_match" in edit_cfg
-            and isinstance(edit_cfg["inpaint_color_match"], bool)):
-        cfg["edit"]["inpaint_color_match"] = edit_cfg["inpaint_color_match"]
-    vae = body.get("vae") or {}
-    if "zimage" in vae and isinstance(vae["zimage"], str):
-        want = vae["zimage"].strip().replace("/", "\\")
-        if want and not _catalog_has("vae", want):
-            return web.json_response(
-                {"ok": False, "error": f"VAE is not installed: {want}"}, status=400)
-        cfg["vae"]["zimage"] = want
-    if "special" in vae:
-        want = (vae["special"] or "").strip()
-        if want and want not in SPECIAL_DECODERS:
-            return web.json_response(
-                {"ok": False, "error": f"not a special decoder: {want}"}, status=400)
-        cfg["vae"]["special"] = want
-    if "special_force" in vae:
-        cfg["vae"]["special_force"] = bool(vae["special_force"])
-    if upscale.get("image_mode") in UPSCALE_IMAGE_MODES:
-        cfg["upscale"]["image_mode"] = upscale["image_mode"]
-    if "image_vsr_mode" in upscale:
-        # Only the VSR tiers enlarge a still: LTX 2.5 is a video re-render,
-        # and the Deno node's restoration modes are same-size passes. The
-        # same loud refusal "not a console style" gives - a silent fallback
-        # would stand a tier the user never picked.
-        want = upscale["image_vsr_mode"]
-        if want not in UPSCALE_VSR_TIERS:
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not one of {'|'.join(UPSCALE_VSR_TIERS)}: {want}"},
-                status=400)
-        cfg["upscale"]["image_vsr_mode"] = want
-    if upscale.get("image_vsr_scale") is not None:
-        try:
-            low, high = UPSCALE_VIDEO_SCALE_RANGE
-            cfg["upscale"]["image_vsr_scale"] = min(
-                max(float(upscale["image_vsr_scale"]), low), high)
-        except (TypeError, ValueError):
-            pass
-    pid_cfg = body.get("pid") or {}
-    if "identity_finish" in pid_cfg:
-        cfg["pid"]["identity_finish"] = bool(pid_cfg["identity_finish"])
-    still_cfg = body.get("still") or {}
-    if "film_grain" in still_cfg:
-        # Strictly a bool, the upscale_2x rule: a truthy string would stand a
-        # setting the user never chose on every still they render.
-        if not isinstance(still_cfg["film_grain"], bool):
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not a bool: {still_cfg['film_grain']}"}, status=400)
-        cfg.setdefault("still", {})["film_grain"] = still_cfg["film_grain"]
-    if "film_grain_amount" in still_cfg:
-        try:
-            amt = float(still_cfg["film_grain_amount"])
-        except (TypeError, ValueError):
-            amt = float("nan")
-        if not math.isfinite(amt):
-            return web.json_response(
-                {"ok": False, "error":
-                 f"not a number: {still_cfg['film_grain_amount']}"}, status=400)
-        # the resolver's clamp, applied at write time too - one range
-        cfg.setdefault("still", {})["film_grain_amount"] = \
-            min(max(amt, 0.1), 8.0)
-    if "de_shine" in still_cfg:
-        # The same strict-bool rule as film_grain (9.93).
-        if not isinstance(still_cfg["de_shine"], bool):
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not a bool: {still_cfg['de_shine']}"}, status=400)
-        cfg.setdefault("still", {})["de_shine"] = still_cfg["de_shine"]
-    if "de_shine_strength" in still_cfg:
-        # 10.9: the film_grain_amount contract - a number, finite, clamped
-        # at write time to the resolver's range so there is one range.
-        try:
-            amt = float(still_cfg["de_shine_strength"])
-        except (TypeError, ValueError):
-            amt = float("nan")
-        if not math.isfinite(amt):
-            return web.json_response(
-                {"ok": False, "error":
-                 f"not a number: {still_cfg['de_shine_strength']}"}, status=400)
-        cfg.setdefault("still", {})["de_shine_strength"] = \
-            min(max(amt, 0.1), 1.0)
-    if "dlss5" in still_cfg:
-        # The same strict-bool rule as film_grain and de_shine (10.5).
-        if not isinstance(still_cfg["dlss5"], bool):
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not a bool: {still_cfg['dlss5']}"}, status=400)
-        cfg.setdefault("still", {})["dlss5"] = still_cfg["dlss5"]
-    if "dlss5_style" in still_cfg:
-        # One of the three judged styles, refused by name otherwise: the
-        # numeric experimental ladder arms are deliberately not offered, so
-        # saving one would be a config the resolver silently rewrites.
-        style = still_cfg["dlss5_style"]
-        if style not in DLSS5_STYLES:
-            return web.json_response(
-                {"ok": False,
-                 "error": f"unknown dlss5 style: {style}"}, status=400)
-        cfg.setdefault("still", {})["dlss5_style"] = style
-    if "dlss5_tone" in still_cfg:
-        try:
-            amt = float(still_cfg["dlss5_tone"])
-        except (TypeError, ValueError):
-            amt = float("nan")
-        if not math.isfinite(amt):
-            return web.json_response(
-                {"ok": False, "error":
-                 f"not a number: {still_cfg['dlss5_tone']}"}, status=400)
-        # the resolver's clamp, applied at write time too - one range
-        cfg.setdefault("still", {})["dlss5_tone"] = \
-            min(max(amt, 0.0), 2.0)
-    h3_cfg = body.get("h3") or {}
-    for key, lane in (("ref_model", "ref"), ("fl_model", "fl")):
-        if key in h3_cfg and isinstance(h3_cfg[key], str):
-            # edit.model's contract (9.91): "" clears back to the scan
-            # ("Automatic"); anything else must be an installed build that
-            # serves the slot's lane, or it is refused here by name rather
-            # than failing every later render. A hybrid validates for BOTH
-            # slots - it carries both architectures.
-            want = h3_cfg[key].strip().replace("/", "\\")
-            if want:
-                low = want.lower()
-                if not any(o["rel"].replace("/", "\\").lower() == low
-                           for o in h3_lane_options(lane)):
-                    words = {"ref": "reference",
-                             "fl": "first/last-frame"}[lane]
-                    return web.json_response(
-                        {"ok": False,
-                         "error": f"not an installed H3 {words} build: {want}"},
-                        status=400)
-            cfg.setdefault("h3", {})[key] = want
-    if "text_encoder" in h3_cfg and isinstance(h3_cfg["text_encoder"], str):
-        # The same contract the model slots keep (9.94): "" clears back to
-        # Automatic (the 32B); anything else must be an OFFERABLE option -
-        # a known id whose encoder AND projection both resolve right now -
-        # or it is refused here by name rather than degrading every later
-        # render to Automatic with no explanation.
-        want = h3_cfg["text_encoder"].strip()
-        if want:
-            known = next((o for o in H3_TEXT_ENCODER_OPTIONS
-                          if o["id"] == want), None)
-            offerable = known is not None and \
-                _video_asset("text_encoders", known["encoder"]) and \
-                _video_asset("clip_projections", known["projection"])
-            if not offerable:
-                return web.json_response(
-                    {"ok": False,
-                     "error": f"not an installed H3 text encoder: {want}"},
-                    status=400)
-        cfg.setdefault("h3", {})["text_encoder"] = want
-    video_cfg = body.get("video") or {}
-    if "default_engine" in video_cfg and isinstance(video_cfg["default_engine"], str):
-        # "" is a real choice: it means "the server's order" (LTX 2.5 first).
-        want = video_cfg["default_engine"].strip()
-        if want and want not in {e["id"] for e in video_engine_options()}:
-            return web.json_response(
-                {"ok": False, "error": f"not a video engine: {want}"}, status=400)
-        cfg["video"]["default_engine"] = want
-    if "default_model" in video_cfg and isinstance(video_cfg["default_model"], str):
-        # "" is a real choice: it means "the engine's first available model".
-        # Anything else must name a chip some engine lists - an unavailable
-        # one is still settable (its file may land later); the render-time
-        # availability gates decide what actually runs, same as today.
-        want = video_cfg["default_model"].strip()
-        if want and want not in {m["id"] for e in video_engine_options()
-                                 for m in e["models"]}:
-            return web.json_response(
-                {"ok": False, "error": f"not a video model: {want}"}, status=400)
-        cfg["video"]["default_model"] = want
-    if "upscale_2x" in video_cfg:
-        # Strictly a bool (9.31): a truthy string would silently stand a
-        # ~3x-cost default ON - the same refusal this endpoint gives "not a
-        # gpu layer count" and "not a console style".
-        if not isinstance(video_cfg["upscale_2x"], bool):
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not a bool: {video_cfg['upscale_2x']}"}, status=400)
-        cfg["video"]["upscale_2x"] = video_cfg["upscale_2x"]
-    if "h3_resolution" in video_cfg:
-        # 9.55: the same refusal "not a console style" gives - a typo would
-        # stand a silent fallback as the Resolution row's opening position.
-        want = video_cfg["h3_resolution"]
-        if not isinstance(want, str) or want not in H3_RESOLUTIONS:
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not one of {'|'.join(H3_RESOLUTIONS)}: {want}"},
-                status=400)
-        cfg["video"]["h3_resolution"] = want
-    if "h3_dialogue_tags" in video_cfg:
-        # 9.38: tags is the trained form, quotes the #76 workaround - the
-        # same refusal "not a console style" gives, or a typo would stand a
-        # silent fallback ON for every brief.
-        want = video_cfg["h3_dialogue_tags"]
-        if want not in ("tags", "quotes"):
-            return web.json_response(
-                {"ok": False,
-                 "error": f"not one of tags|quotes: {want}"}, status=400)
-        cfg["video"]["h3_dialogue_tags"] = want
-    if "comfy_editor" in body:
-        cfg["comfy_editor"] = bool(body["comfy_editor"])
-    if "comfy_console" in body:
-        want = str(body.get("comfy_console") or "")
-        if want not in ("tui", "plain"):
-            return web.json_response(
-                {"ok": False, "error": f"not a console style: {want}"}, status=400)
-        cfg["comfy_console"] = want
-    if upscale.get("video_mode") in UPSCALE_VIDEO_MODES:
-        cfg["upscale"]["video_mode"] = upscale["video_mode"]
-    if upscale.get("video_scale") is not None:
-        try:
-            low, high = UPSCALE_VIDEO_SCALE_RANGE
-            cfg["upscale"]["video_scale"] = min(max(float(upscale["video_scale"]), low), high)
-        except (TypeError, ValueError):
-            pass
-    if upscale.get("video_fps") is not None:
-        # Clamp to the offered rates (9.53): RIFE multipliers are integers,
-        # so an in-between value snaps to the nearest option - same degrade-
-        # never-die policy as the number dials, never a 400 for a dial guess.
-        try:
-            want = int(upscale["video_fps"])
-        except (TypeError, ValueError):
-            want = None
-        if want is not None:
-            cfg["upscale"]["video_fps"] = min(
-                UPSCALE_VIDEO_FPS_OPTIONS, key=lambda o: (abs(o - want), o))
-    if isinstance(body.get("extra_model_roots"), list):
-        cfg["extra_model_roots"] = [r.strip() for r in body["extra_model_roots"]
-                                    if isinstance(r, str) and r.strip()]
+    was_roots = tuple(cfg.get("extra_model_roots") or ())
+    try:
+        apply_settings_patch(cfg, body, choices=_settings_choices(), catalog=_SettingsCatalog())
+    except InvalidSetting as error:
+        return web.json_response({"ok": False, "error": str(error)}, status=400)
+    save_config(cfg)
+
+    # Runtime effects happen only after validation and a successful file commit.
+    catalog_changed = was_roots != tuple(cfg.get("extra_model_roots") or ())
     if "comfy_url" in body:
-        cfg["comfy_url"] = (body.get("comfy_url") or "").strip()
         old = COMFY
         apply_comfy_url(cfg["comfy_url"])
         if COMFY != old:
-            _LM["at"] = 0.0                   # thumbs/titles come from the new box
-            ws = getattr(HUB, "_ws", None)    # drop the bridge; it reconnects re-aimed
+            catalog_changed = True
+            _LM["at"] = 0.0
+            ws = getattr(HUB, "_ws", None)
             if ws is not None and not ws.closed:
                 asyncio.create_task(ws.close())
-    if "vram_profile" in body:
-        want = str(body.get("vram_profile") or "")
-        if want not in ("auto", "32", "24", "16"):
-            return web.json_response(
-                {"ok": False, "error": f"not a VRAM profile: {want}"}, status=400)
-        cfg["vram_profile"] = want
-    if "explicit" in body:
-        want = str(body.get("explicit") or "")
-        if want not in ("auto", "on", "off"):
-            return web.json_response(
-                {"ok": False, "error": f"not an explicit mode: {want}"}, status=400)
-        cfg["explicit"] = want
-    save_config(cfg)
-    _CATALOG["at"] = 0                         # rescan on next options call
-    _SIDECAR_META.clear()
-    # Moving the brain between card and CPU - or to a different model - only
-    # takes effect on a fresh process. Evict ours now rather than leaving the
-    # old placement holding VRAM until something else notices.
+    if body.get("llm"):
+        HUB.broadcast(type="brain", **brain_badge())
+    # A grain/console/brain toggle does not change model files. Keep the TTL
+    # cache warm; new roots/engine changes and explicit Rescan still invalidate.
+    if catalog_changed:
+        _CATALOG["at"] = 0
+        _SIDECAR_META.clear()
+    # Running brains retain their old placement until restarted. Free only
+    # after the new model/placement was successfully persisted.
     if was_brain != (str(cfg["llm"].get("local_model") or ""),
                      cfg["llm"].get("local_gpu_layers", -1)):
         await free_brain_vram()
@@ -24397,27 +23797,38 @@ async def stop(req):
     # pruned, and the explicit-id branch below does not filter finalized the
     # way the no-id branch does. ComfyUI's /interrupt is GLOBAL, so answering
     # that late click kills whatever started rendering next. A finalized job
-    # has nothing left to cancel - say so without touching ComfyUI. Not by
-    # filtering it out of `jobs` instead: an empty list falls through to the
-    # untracked-orphan sweep below and interrupts anyway.
-    if jid in HUB.jobs and HUB.jobs[jid].get("finalized"):
-        return web.json_response({"ok": True, "stopped": 0})
-    jobs = [HUB.jobs[jid]] if jid in HUB.jobs else \
-        [j for j in HUB.jobs.values() if not j.get("finalized")]
+    # has nothing left to cancel UNLESS it owns a pending OOM recovery/retry.
+    # Resolve that ownership first, and never let an ordinary finalized target
+    # fall through to the untracked-orphan sweep and interrupt unrelated work.
+    selected = [HUB.jobs[jid]] if jid in HUB.jobs else list(HUB.jobs.values())
+    if jid in HUB.jobs:
+        # The retry card is a distinct job. A Stop aimed at the original failure
+        # still owns that child, but must never affect an unrelated next render.
+        selected += [j for j in HUB.jobs.values() if j.get("_oom_retry_of") == jid]
+    jobs = [j for j in selected if not j.get("finalized")]
+    recoveries = [j for j in selected if j.get("_oom_pending")]
+    for job in jobs:
+        origin = HUB.jobs.get(job.get("_oom_retry_of"))
+        if origin and origin.get("_oom_pending") and origin not in recoveries:
+            recoveries.append(origin)
+    # All cancellation marks precede the first network await. A pending task
+    # cannot begin cleanup or enqueue a new sibling while Stop waits on ComfyUI.
+    for job in recoveries:
+        job["_oom_cancelled"] = True
+        job["_oom_pending"] = False
+        job["error"] = "stopped"
+        HUB.broadcast(type="error", job_id=job["id"], cid=job["cid"], message="stopped")
+    for job in jobs:
+        job["_cancel_requested"] = True
+        job["error"] = "stopped"
+        HUB.finalize(job)
+    stopped = len(jobs) + sum(not any(j.get("_oom_retry_of") == r["id"] for j in jobs)
+                              for r in recoveries)
+    if not jobs and (recoveries or jid in HUB.jobs):
+        return web.json_response({"ok": True, "stopped": stopped})
     async with aiohttp.ClientSession() as s:
         for job in jobs:
-            for pid in job["prompt_ids"]:
-                try:
-                    await s.post(f"{COMFY}/queue", json={"delete": [pid]}, timeout=10)
-                except Exception:
-                    pass
-            if job["prompt_ids"]:
-                try:
-                    await s.post(f"{COMFY}/interrupt", timeout=10)
-                except Exception:
-                    pass
-            job["error"] = "stopped"
-            HUB.finalize(job)
+            await cancel_comfy_job(s, job)
         # HUB.jobs is in-memory, so a sidecar restart orphans whatever ComfyUI
         # is still rendering: the card freezes at step 1 and stop finds nothing
         # to cancel. Fall back to ComfyUI's own queue, which is the truth.
@@ -24431,7 +23842,31 @@ async def stop(req):
                     pass
                 return web.json_response({"ok": True, "stopped": len(orphans),
                                           "untracked": True})
-    return web.json_response({"ok": True, "stopped": len(jobs)})
+    return web.json_response({"ok": True, "stopped": stopped})
+
+
+async def cancel_comfy_job(session, job):
+    """Delete this job's queued prompts; interrupt only if one is running.
+
+    ComfyUI's interrupt is global. A queued/stale prompt id is not permission to
+    interrupt the renderer's unrelated current job. This also handles a /prompt
+    response arriving after Stop, when the first cancellation knew no prompt id.
+    """
+    pids = set(job.get("prompt_ids") or ())
+    if not pids:
+        return
+    try:
+        await session.post(f"{COMFY}/queue", json={"delete": sorted(pids)}, timeout=10)
+        async with session.get(f"{COMFY}/queue", timeout=10) as response:
+            queue = await response.json()
+        if not isinstance(queue, dict):
+            raise ValueError("ComfyUI queue response was not an object")
+        running = {row[1] for row in queue.get("queue_running", ())
+                   if isinstance(row, (list, tuple)) and len(row) > 1}
+        if pids & running:
+            await session.post(f"{COMFY}/interrupt", timeout=10)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError, TypeError) as exc:
+        print(f"[pixal] could not confirm render cancellation: {exc}", flush=True)
 
 
 async def comfy_queue_ids(session):
@@ -24865,6 +24300,7 @@ HEADROOM_MIN_PRICED_FRAC = 0.5
 # not a measurement, and the ACT_PROFILES constant prices the job alone.
 LEDGER_ACT_SAMPLES = 8
 LEDGER_ACT_MIN_SAMPLES = 3
+LEDGER_ACT_SCAN_LIMIT = 256  # bounded preflight work even with a lifetime ledger
 
 # reclaim_vram's poll. /free returns before the pages do (cudaMallocAsync trims
 # its pool asynchronously), so the deadline is what makes waiting safe rather
@@ -25201,8 +24637,7 @@ def _lane_word(template):
 # on device 0 would exceed allowed memory. (out of memory)" where the native
 # caching allocator says "CUDA out of memory. Tried to allocate ...". Match on
 # the phrases common to both rather than on either one's full sentence.
-OOM_MARKERS = ("out of memory", "exceed allowed memory", "outofmemoryerror",
-               "cuda error: out of memory", "cublas_status_alloc_failed")
+OOM_MARKERS = GPU_OOM_MARKERS  # compatibility alias; policy lives in pixal.memory
 
 # Recipes that sample at their source's size but take no megapixels argument.
 # Their canvas nodes are reachable through the `overrides` list every builder
@@ -25210,6 +24645,8 @@ OOM_MARKERS = ("out of memory", "exceed allowed memory", "outofmemoryerror",
 OOM_SHRINK_NODES = {
     "klein_inpaint": ("ki:scale", "ki:maskscale"),
     "face_mint": ("fm:scale",),
+    "qwen_edit": ("qe:scale",),
+    "klein_edit": ("ke:scale",),
 }
 
 # A decode OOM is a different failure from a sampling OOM and wants a different
@@ -25231,9 +24668,8 @@ DECODE_TEMPORAL_MIN = 8       # ComfyUI's own floor for temporal_size
 
 
 def looks_like_oom(text):
-    """Is this failure the card running out of room, rather than a bad graph?"""
-    low = str(text or "").lower()
-    return any(marker in low for marker in OOM_MARKERS)
+    """GPU or host allocation failure, not a rejected graph or cancellation."""
+    return memory_failure_kind(text) is not None
 
 # template -> (base GB, GB per canvas megapixel, GB per megapixel-FRAME).
 #
@@ -25463,7 +24899,7 @@ def _mp_bucket(mp):
     return int(round(float(mp)))
 
 
-def ledger_activation_estimate(entries, template, mp):
+def ledger_activation_estimate(entries, template, mp, *, context=None):
     """Median real activation footprint in bytes from the ledger, or None.
 
     `entries` is Hub.ledger_read()'s list (newest first); a sample is one
@@ -25471,24 +24907,41 @@ def ledger_activation_estimate(entries, template, mp):
     reads, and (peak - start) is the growth the card actually did for it.
     When the caller's canvas is known, an entry whose own canvas_mp field
     exists must share its bucket - a 30MP inpaint and a 1MP edit of one
-    recipe are not the same job; entries that predate the field are
-    template evidence, not bucket evidence, and still count. At most
+    recipe are not the same job. Unknown sizes cannot calibrate a known size.
+    Match the model and batch when available, and bound the history scan so
+    preflight cost does not grow with the user's lifetime ledger. At most
     LEDGER_ACT_SAMPLES samples; fewer than LEDGER_ACT_MIN_SAMPLES is an
     anecdote, not a measurement, and answers None so the ACT_PROFILES
     constant prices the job alone."""
-    want = _mp_bucket(mp) if isinstance(mp, (int, float)) and mp > 0 else None
+    want = _mp_bucket(mp) if positive_number(mp) else None
+    context = context or {}
     samples = []
-    for e in entries:
+    for e in entries[:LEDGER_ACT_SCAN_LIMIT]:
         if e.get("template") != template:
+            continue
+        e_info = e.get("info") or {}
+        model = context.get("model_path") or context.get("model")
+        if model and model != (e_info.get("model_path") or e_info.get("model")):
+            continue
+        if e_info.get("memory_batch", 1) != context.get("memory_batch", 1):
+            continue
+        frames = context.get("peak_frames") or context.get("frames")
+        if positive_number(frames) and frames != (e_info.get("peak_frames") or e_info.get("frames")):
             continue
         v = e.get("vram") or {}
         peak, start = v.get("peak"), v.get("start")
-        if not isinstance(peak, (int, float)) or not isinstance(start, (int, float)):
+        if not positive_number(peak) or not isinstance(start, (int, float)) \
+                or not math.isfinite(start) or start < 0 or peak < start:
             continue
         if want is not None:
-            e_mp = (e.get("info") or {}).get("canvas_mp")
-            if isinstance(e_mp, (int, float)) and e_mp > 0 \
-                    and _mp_bucket(e_mp) != want:
+            e_mp = e_info.get("canvas_mp")
+            # Old Identity Edit records omitted canvas_mp, but a plain size
+            # is its sampling canvas. PiD/output sizes must never be inferred.
+            if not positive_number(e_mp) and template in ("identity_edit", "zara_edit"):
+                size = re.fullmatch(r"(\d+)x(\d+)", str(e_info.get("size") or ""))
+                if size:
+                    e_mp = int(size[1]) * int(size[2]) / 1e6
+            if not positive_number(e_mp) or _mp_bucket(e_mp) != want:
                 continue
         samples.append(peak - start)
         if len(samples) >= LEDGER_ACT_SAMPLES:
@@ -25555,10 +25008,12 @@ def graph_activation_bytes(template, g, info=None, entries=None):
             if isinstance(length, (int, float)):
                 frames = max(frames, float(length))
         frames = frames or 1.0
-    est = int((base_gb + per_mp * mp + per_mp_frame * mp * frames) * 2**30)
+    batch = info.get("memory_batch", 1)
+    batch = batch if positive_number(batch) else 1
+    est = int((base_gb + (per_mp * mp + per_mp_frame * mp * frames) * batch) * 2**30)
     if entries:
         measured = ledger_activation_estimate(
-            entries, template, info.get("canvas_mp"))
+            entries, template, info.get("canvas_mp"), context=info)
         if measured is not None:
             est = max(est, int(measured))
     return est
@@ -25567,24 +25022,8 @@ def graph_activation_bytes(template, g, info=None, entries=None):
 def ram_free_bytes():
     """Available physical RAM via GlobalMemoryStatusEx - no dependency needed,
     and 'available' (not 'free') is the number that predicts paging."""
-    import ctypes
-    class MEMORYSTATUSEX(ctypes.Structure):
-        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong),
-                    ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong),
-                    ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong),
-                    ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-    st = MEMORYSTATUSEX()
-    st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-    try:
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
-            return int(st.ullAvailPhys)
-    except (AttributeError, OSError):
-        pass
-    return None
+    state = host_memory_status()
+    return state.available if state else None
 
 
 async def comfy_vram_free_bytes():
@@ -25929,7 +25368,7 @@ COMFY_BOOT_FALLBACK_SECONDS = 45.0
 # and draws it - phase meter, card meter, and the errors-only log below, which
 # is the part that outlives the window. Settings can put the raw .bat back.
 COMFY_TUI = HERE / "comfy_tui.py"
-COMFY_LOGS = HERE / "logs"
+COMFY_LOGS = DATA_DIR / "logs"
 # Written by the TUI the first time a boot says something that looks like a
 # failure. One line, so the overlay can name the actual cause instead of
 # sending everyone to a console window that has already closed.
@@ -26525,13 +25964,14 @@ async def exit_when_unwatched():
 
 
 async def on_start(app):
-    app["bridge"] = asyncio.create_task(HUB.bridge())
-    app["gpu"] = asyncio.create_task(HUB.gpu_watch())
-    app["exit"] = asyncio.create_task(exit_when_unwatched())
-    app["brain_reaper"] = asyncio.create_task(brain_idle_reaper())
+    owner = app[TASKS_KEY]
+    app["bridge"] = owner.start("bridge", HUB.bridge())
+    app["gpu"] = owner.start("gpu", HUB.gpu_watch())
+    app["exit"] = owner.start("exit", exit_when_unwatched())
+    app["brain_reaper"] = owner.start("brain_reaper", brain_idle_reaper())
     # no disk scan before the user has consented to one (first-run setup)
     if load_config()["setup_done"]:
-        app["warmup"] = asyncio.create_task(warmup_catalog())
+        app["warmup"] = owner.start("warmup", warmup_catalog())
         # Starting Pixal means starting the studio. Booting ComfyUI only when
         # the web page is SERVED is not enough: an installed PWA answers its
         # own navigation out of the service worker cache, so that request never
@@ -26665,35 +26105,8 @@ UPDATE_CHECK_TTL = 6 * 60 * 60          # hours between network calls
 _update_check_cache = {"at": 0.0, "result": None}
 
 
-def parse_version(text):
-    """"1.0.4b" / "v1.0.4b" -> ((1, 0, 4), "b"); None on anything else."""
-    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)([a-zA-Z]*)", str(text).strip())
-    if not m:
-        return None
-    return tuple(int(p) for p in m.group(1).split(".")), m.group(2).lower()
 
 
-def compare_versions(a, b):
-    """-1/0/1 for a older/equal/newer than b. Numeric parts compare as numbers
-    (1.0.10b > 1.0.9b, never string order), then the pre-release letter
-    (1.0.4b > 1.0.4a), and the bare release outranks every letter
-    (1.0.4 > 1.0.4b)."""
-    pa, pb = parse_version(a), parse_version(b)
-    if pa is None or pb is None:
-        raise ValueError(f"unparseable version: {a!r} vs {b!r}")
-    (na, sa), (nb, sb) = pa, pb
-    width = max(len(na), len(nb))
-    na += (0,) * (width - len(na))
-    nb += (0,) * (width - len(nb))
-    if na != nb:
-        return -1 if na < nb else 1
-    if sa == sb:
-        return 0
-    if not sa:
-        return 1
-    if not sb:
-        return -1
-    return -1 if sa < sb else 1
 
 
 def _fetch_latest_release():
@@ -27016,6 +26429,85 @@ async def update_launch_post(_req):
         {"ok": True, "note": "the installer is open - Pixal is closing"})
 
 
+def create_app():
+    """Desktop compatibility adapter. Legacy state is still single-instance."""
+    from pixal.app import LifecycleHooks, create_app as application_factory
+
+    app = application_factory(
+        paths=PATHS,
+        handlers={
+            "index": index,
+            "manifest": manifest,
+            "service_worker": service_worker,
+            "events": events,
+            "chat": chat,
+            "lane_get": lane_get,
+            "chats_get": chats_get,
+            "chats_post": chats_post,
+            "reroll": reroll,
+            "stop": stop,
+            "comfy_free": comfy_free,
+            "restart_comfy": restart_comfy,
+            "restart_sidecar": restart_sidecar,
+            "free_chat_model": free_chat_model,
+            "ram_free": ram_free,
+            "desktop_reset": desktop_reset,
+            "vram_table": vram_table,
+            "history": history,
+            "history_delete": history_delete,
+            "options": options,
+            "h3_canvas": h3_canvas,
+            "quant_alternatives": quant_alternatives,
+            "quant_fetch": quant_fetch,
+            "upload": upload,
+            "dlss5_dll": dlss5_dll,
+            "input_ref_type_post": input_ref_type_post,
+            "setup_get": setup_get,
+            "setup_post": setup_post,
+            "settings_get": settings_get,
+            "settings_post": settings_post,
+            "settings_test": settings_test,
+            "settings_rescan": settings_rescan,
+            "update_check_get": update_check_get,
+            "update_download_post": update_download_post,
+            "update_cancel_post": update_cancel_post,
+            "update_launch_post": update_launch_post,
+            "animate": animate,
+            "animate_brief": animate_brief,
+            "edit": edit,
+            "input_stage": input_stage,
+            "upscale": upscale,
+            "review": review,
+            "trailer": trailer,
+            "styles_post": styles_post,
+            "style_from_image": style_from_image,
+            "style_sampler": style_sampler,
+            "sampler_combo_star": sampler_combo_star,
+            "sampler_combo_forget": sampler_combo_forget,
+            "styles_delete": styles_delete,
+            "characters_post": characters_post,
+            "characters_preview": characters_preview,
+            "characters_delete": characters_delete,
+            "characters_get_one": characters_get_one,
+            "character_ref_thumb": character_ref_thumb,
+            "status": status,
+            "events_poll": events_poll,
+            "image": image,
+            "output_thumbnail": output_thumbnail,
+            "input_thumbnail": input_thumbnail,
+            "comfy_compat": comfy_compat,
+            "manager_status": manager_status,
+            "comfy_asset": comfy_asset,
+        },
+        middlewares=(access_gate, config_errors),
+        client_max_size=DLSS5_DLL_MAX_BYTES + 1_000_000,
+        lifecycle=LifecycleHooks(startup=(on_start,), shutdown=(on_shutdown,),
+                                 cleanup=(on_cleanup,)),
+    )
+    app["convo"] = HUB.convo  # Legacy alias until chat ownership migrates.
+    return app
+
+
 def main():
     global ACCESS_KEY
     state = sidecar_port_state()
@@ -27038,93 +26530,7 @@ def main():
         cfg["access_key"] = secrets.token_urlsafe(18)
         save_config(cfg)
     ACCESS_KEY = cfg["access_key"]
-    # aiohttp defaults to a 1 MiB request body, which made normal camera photos
-    # fail before upload() could enforce and explain Pixal's real 40 MB limit.
-    # The app-wide cap sits above the DLSS runtime seat (~158 MB, streamed);
-    # every other route still enforces its own tighter limit (upload() keeps
-    # the 40 MB image rule), so only /api/dlss5/dll ever sees a body this big.
-    app = web.Application(middlewares=[access_gate],
-                          client_max_size=DLSS5_DLL_MAX_BYTES + 1_000_000)
-    app["convo"] = HUB.convo               # legacy alias; HUB owns per-chat convos now
-    app.router.add_get("/", index)
-    app.router.add_get("/manifest.webmanifest", manifest)
-    app.router.add_get("/sw.js", service_worker)
-    app.router.add_static("/icons", HERE / "web" / "icons")
-    app.router.add_get("/api/events", events)
-    app.router.add_post("/api/chat", chat)
-    app.router.add_get("/api/lane", lane_get)
-    app.router.add_get("/api/chats", chats_get)
-    app.router.add_post("/api/chats", chats_post)
-    app.router.add_post("/api/reroll", reroll)
-    app.router.add_post("/api/stop", stop)
-    app.router.add_post("/api/comfy/free", comfy_free)
-    app.router.add_post("/api/comfy/restart", restart_comfy)
-    app.router.add_post("/api/sidecar/restart", restart_sidecar)
-    app.router.add_post("/api/llm/free", free_chat_model)
-    app.router.add_post("/api/ram/free", ram_free)
-    app.router.add_post("/api/desktop/reset", desktop_reset)
-    app.router.add_get("/api/vram/table", vram_table)
-    app.router.add_get("/api/history", history)
-    app.router.add_post("/api/history/delete", history_delete)
-    app.router.add_get("/api/options", options)
-    app.router.add_get("/api/h3/canvas", h3_canvas)
-    app.router.add_get("/api/quant_alternatives", quant_alternatives)
-    app.router.add_post("/api/quant_fetch", quant_fetch)
-    app.router.add_post("/api/upload", upload)
-    app.router.add_post("/api/dlss5/dll", dlss5_dll)
-    app.router.add_post("/api/input-ref-type", input_ref_type_post)
-    app.router.add_get("/api/setup", setup_get)
-    app.router.add_post("/api/setup", setup_post)
-    app.router.add_get("/api/settings", settings_get)
-    app.router.add_post("/api/settings", settings_post)
-    app.router.add_post("/api/settings/test", settings_test)
-    app.router.add_post("/api/settings/rescan", settings_rescan)
-    app.router.add_get("/api/update-check", update_check_get)
-    app.router.add_post("/api/update/download", update_download_post)
-    app.router.add_post("/api/update/cancel", update_cancel_post)
-    app.router.add_post("/api/update/launch", update_launch_post)
-    app.router.add_post("/api/animate", animate)
-    app.router.add_post("/api/animate/brief", animate_brief)
-    app.router.add_post("/api/edit", edit)
-    app.router.add_post("/api/input/stage", input_stage)
-    app.router.add_post("/api/upscale", upscale)
-    app.router.add_post("/api/review", review)
-    app.router.add_post("/api/trailer", trailer)
-    app.router.add_post("/api/styles", styles_post)
-    app.router.add_post("/api/styles/from-image", style_from_image)
-    # Before the {style_id} route: "sampler" is a verb, not an id.
-    app.router.add_get("/api/styles/sampler", style_sampler)
-    # The sampler card's star. Both are POSTs taking the pair itself, not a
-    # row id - see _combo_request for why an id cannot ride in the path.
-    app.router.add_post("/api/sampler/combos/star", sampler_combo_star)
-    app.router.add_post("/api/sampler/combos/forget", sampler_combo_forget)
-    app.router.add_delete("/api/styles/{style_id}", styles_delete)
-    app.router.add_post("/api/characters", characters_post)
-    # Before the {character_id} routes: "preview" is a verb, not an id, and the
-    # dynamic DELETE/GET would otherwise be free to match it.
-    app.router.add_post("/api/characters/preview", characters_preview)
-    app.router.add_delete("/api/characters/{character_id}", characters_delete)
-    app.router.add_get("/api/characters/{character_id}", characters_get_one)
-    app.router.add_get("/api/characters/{character_id}/ref-thumb", character_ref_thumb)
-    app.router.add_get("/api/status", status)
-    app.router.add_get("/api/poll", events_poll)
-    app.router.add_get("/api/image", image)
-    app.router.add_get("/api/thumb", output_thumbnail)
-    app.router.add_get("/api/input-thumb", input_thumbnail)
-    # before the {tail} catch-all, which would proxy "compat" to ComfyUI
-    app.router.add_get("/api/comfy/compat", comfy_compat)
-    app.router.add_get("/api/comfy/manager/status", manager_status)
-    app.router.add_get("/api/comfy/{tail:.*}", comfy_asset)
-    app.router.add_static("/vendor", HERE / "web" / "vendor")
-    # Self-hosted Geist and Syne. Without this route the @font-face src 404s
-    # and every string in Pixal silently falls back to Arial - which is what
-    # it had been doing for the life of the app (2026-09-04).
-    app.router.add_static("/fonts", HERE / "web" / "fonts")
-    app.router.add_get("/app.js", lambda r: web.FileResponse(
-        HERE / "web" / "app.js", headers={"Content-Type": "application/javascript"}))
-    app.on_startup.append(on_start)
-    app.on_shutdown.append(on_shutdown)
-    app.on_cleanup.append(on_cleanup)
+    app = create_app()
     # LISTEN stays loopback for every self-probe in this file; only the socket
     # we actually serve on widens. ComfyUI is never exposed - remote viewers
     # reach it through the /api/comfy passthrough on this port.

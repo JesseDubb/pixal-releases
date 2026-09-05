@@ -19,6 +19,7 @@ import { characterPreview, characterRecord, inputFullUrl, inputImages,
          inputImgUrl, stageInput, upload } from "../transport.js";
 import { api, useJobLive, useStore } from "../store.js";
 import { DotMatrix } from "../lib/DotMatrix.jsx";
+import { Thinking } from "../lib/Thinking.jsx";
 import { EditDirector } from "./EditDirector.jsx";
 import { InfoTip } from "./InfoTip.jsx";
 
@@ -420,6 +421,14 @@ const EditingVeil = ({ label }) => {
   const live = useJobLive(jobId);
   const p = live.progress || {};
   const pct = p.max ? Math.round((100 * p.value) / p.max) : 0;
+  // What the sidecar is narrating for the job right now - loading the model,
+  // encoding the prompt, finishing the frame - the same stage line the lane
+  // shows. Until the first sampling step the tile had a static "queued…" and
+  // no motion at all, which read as nothing happening (Jesse, 2026-09-05);
+  // the working indicator carries it through the model load.
+  const stage = (store.progressMsg && store.progressMsg.local) || null;
+  const status = p.max ? `sampling ${p.value}/${p.max}`
+               : stage || (jobId ? "starting…" : "queued…");
   return (
     <div aria-hidden="true"
       style={{ position: "absolute", inset: 0, overflow: "hidden",
@@ -429,6 +438,13 @@ const EditingVeil = ({ label }) => {
           inside its padding letterboxed inside a box that had no room to
           give. */}
       <DotMatrix preview={live.preview} fill />
+      {!live.preview && (
+        <div style={{ position: "absolute", inset: 0, display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      paddingBottom: SPACE[48] }}>
+          <Thinking mode="working" />
+        </div>
+      )}
       <div style={{ position: "absolute", left: SPACE[12], right: SPACE[12],
                     bottom: SPACE[12] }}>
         <span style={{ display: "block", marginBottom: SPACE[6],
@@ -446,7 +462,7 @@ const EditingVeil = ({ label }) => {
         </div>
         <span style={{ display: "block", marginTop: SPACE[6], fontFamily: MONO,
                        fontSize: TYPE.micro, color: "var(--accent)" }}>
-          {p.max ? `sampling ${p.value}/${p.max}` : "queued…"}
+          {status}
         </span>
       </div>
     </div>

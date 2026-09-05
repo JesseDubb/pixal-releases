@@ -1,0 +1,1145 @@
+{
+ "cases": [
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. A blue ceramic cup beside an open book. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. A blue ceramic cup beside an open book. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-7-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "0-7-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. A blue ceramic cup beside an open book. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. A blue ceramic cup beside an open book. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "0-424242-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_blue_ceramic_cup_beside_an_open_bo\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, A blue ceramic cup beside an open book.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, A blue ceramic cup beside an open book.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "0-424242-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "A blue ceramic cup beside an open book.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. A cyclist pauses beneath a red maple tree. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. A cyclist pauses beneath a red maple tree. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-7-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "1-7-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. A cyclist pauses beneath a red maple tree. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. A cyclist pauses beneath a red maple tree. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "1-424242-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/a_cyclist_pauses_beneath_a_red_maple\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, A cyclist pauses beneath a red maple tree.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, A cyclist pauses beneath a red maple tree.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "1-424242-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "A cyclist pauses beneath a red maple tree.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 7, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. Three paper boats float in a shallow stone fountain. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. Three paper boats float in a shallow stone fountain. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-7-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 7, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "2-7-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 7
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-base-default",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {},
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"synthetic negative\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1152, \"width\": 704}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 17}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"synthetic negative\", \"size\": \"704x1152\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-base-canvas-overrides",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "aspect": "3:4 (Portrait Standard)",
+    "mp": 1.0,
+    "negative": "synthetic negative",
+    "overrides": [
+     {
+      "input": "steps",
+      "node": "8",
+      "value": 17
+     },
+     {
+      "input": "width",
+      "node": "6",
+      "value": 704
+     }
+    ]
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 832, \"width\": 640}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.35}}, \"z:lora1\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/soft.safetensors\", \"model\": [\"z:lora0\", 0], \"strength_model\": 0.6}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.35, \"zone\": \"editable\"}, {\"locked\": false, \"name\": \"Synthetic/soft.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.6, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.35\", \"soft@0.6\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"640x832\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-base-lora-plan",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 832,
+    "lora_plan": {
+     "entries": [
+      {
+       "name": "Synthetic/ink.safetensors",
+       "strength": 0.35
+      },
+      {
+       "name": "Synthetic/soft.safetensors",
+       "strength": 0.6
+      },
+      {
+       "enabled": false,
+       "name": "Synthetic/off.safetensors"
+      }
+     ],
+     "mode": "replace_editable",
+     "recipe": "zimage",
+     "recipe_revision": 1,
+     "version": 1
+    },
+    "width": 640
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 1024, \"width\": 1024}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"1\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.safetensors\", \"model_variant\": \"turbo\", \"size\": \"1024x1024\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-turbo-default",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.safetensors",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "negative": "ignored by distilled profile"
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UnetLoaderGGUF\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_turbo.gguf\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"z:v4:low\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"Synthetic/ink.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.25}}, \"z:v4:extend\": {\"class_type\": \"ExtendIntermediateSigmas\", \"inputs\": {\"end_at_sigma\": 0.8, \"sigmas\": [\"z:v4:first\", 0], \"spacing\": \"linear\", \"start_at_sigma\": 1.0, \"steps\": 2}}, \"z:v4:first\": {\"class_type\": \"SetFirstSigma\", \"inputs\": {\"sigma\": 0.906, \"sigmas\": [\"z:v4:split\", 1]}}, \"z:v4:high\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": true, \"cfg\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:split\", 0]}}, \"z:v4:low\": {\"class_type\": \"SamplerCustom\", \"inputs\": {\"add_noise\": false, \"cfg\": 1.0, \"latent_image\": [\"z:v4:high\", 0], \"model\": [\"z:lora0\", 0], \"negative\": [\"5\", 0], \"noise_seed\": 424242, \"positive\": [\"4\", 0], \"sampler\": [\"z:v4:sampler\", 0], \"sigmas\": [\"z:v4:extend\", 0]}}, \"z:v4:sampler\": {\"class_type\": \"KSamplerSelect\", \"inputs\": {\"sampler_name\": \"euler\"}}, \"z:v4:sigmas\": {\"class_type\": \"KarrasScheduler\", \"inputs\": {\"rho\": 0.3, \"sigma_max\": 0.99, \"sigma_min\": 0.08, \"steps\": 8}}, \"z:v4:split\": {\"class_type\": \"SplitSigmas\", \"inputs\": {\"sigmas\": [\"z:v4:sigmas\", 0], \"step\": 2}}}, \"Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_turbo_v4\", \"lora_stack\": [{\"locked\": false, \"name\": \"Synthetic/ink.safetensors\", \"role\": \"style\", \"source\": \"user\", \"strength\": 0.25, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"ink@0.25\"], \"model\": \"zimage_turbo\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_turbo.gguf\", \"model_variant\": \"turbo\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-turbo-gguf-loras",
+   "model_entry": {
+    "execution_profile": "zimage_turbo_v4",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_turbo.gguf",
+    "supported": true,
+    "variant": "turbo"
+   },
+   "options": {
+    "height": 512,
+    "loras": [
+     "Synthetic/ink.safetensors:0.25"
+    ],
+    "width": 768
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_zimage",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"She is person. An adult with short silver hair. Three paper boats float in a shallow stone fountain. She is fully dressed in the clothing described above.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"She is person. An adult with short silver hair. Three paper boats float in a shallow stone fountain. She is fully dressed in the clothing described above.\", {\"character\": \"Synthetic Adult\", \"execution_profile\": \"zimage_base\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"3D, ai generated, semi realistic, illustrated, drawing, comic, digital painting, 3D model, blender, video game screenshot, screenshot, render, high-fidelity, smooth textures, CGI, masterpiece, grainy, text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-base-character",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "character": {
+     "gender": "other",
+     "id": "synthetic",
+     "name": "Synthetic Adult",
+     "style": "an adult with short silver hair"
+    },
+    "height": 512,
+    "width": 512
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_fantasy",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/zimage_base.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ae.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"D&D Painterly, Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\"}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 768, \"width\": 512}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"z:lora0\", 0], \"shift\": 1.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 4.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"res_2s\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 22}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}, \"z:lora0\": {\"class_type\": \"LoraLoaderModelOnly\", \"inputs\": {\"lora_name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"model\": [\"1\", 0], \"strength_model\": 0.9}}}, \"D&D Painterly, Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_base\", \"lora_stack\": [{\"locked\": false, \"name\": \"ZImage\\\\Base\\\\DnDPainterlyCleanZBase.safetensors\", \"role\": \"style\", \"slot\": \"painterly\", \"source\": \"recipe\", \"strength\": 0.9, \"zone\": \"editable\"}], \"lora_warnings\": [], \"loras\": [\"DnDPainterlyCleanZBase@0.9\"], \"model\": \"zimage_base\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/zimage_base.safetensors\", \"model_variant\": \"base\", \"negative\": \"text, writing, subtitle, watermark, logo, blurry, low quality, jpeg, artifacts\", \"size\": \"512x768\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"ae\"}]",
+   "id": "2-424242-fantasy-base",
+   "model_entry": {
+    "execution_profile": "zimage_base",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/zimage_base.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 768,
+    "width": 512
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  },
+  {
+   "builder": "build_anime",
+   "expected": "[{\"1\": {\"class_type\": \"UNETLoader\", \"inputs\": {\"unet_name\": \"Synthetic/clear_anime.safetensors\", \"weight_dtype\": \"default\"}}, \"10\": {\"class_type\": \"SaveImage\", \"inputs\": {\"filename_prefix\": \"pixal_dm/three_paper_boats_float_in_a_shallow\", \"images\": [\"9\", 0]}}, \"2\": {\"class_type\": \"CLIPLoader\", \"inputs\": {\"clip_name\": \"qwen_3_4b.safetensors\", \"type\": \"lumina2\"}}, \"3\": {\"class_type\": \"VAELoader\", \"inputs\": {\"vae_name\": \"ZImage\\\\zImageClearVae_natural.safetensors\"}}, \"4\": {\"class_type\": \"CLIPTextEncode\", \"inputs\": {\"clip\": [\"2\", 0], \"text\": \"anime, Japanese anime, Three paper boats float in a shallow stone fountain.\"}}, \"5\": {\"class_type\": \"ConditioningZeroOut\", \"inputs\": {\"conditioning\": [\"4\", 0]}}, \"6\": {\"class_type\": \"EmptySD3LatentImage\", \"inputs\": {\"batch_size\": 1, \"height\": 512, \"width\": 768}}, \"7\": {\"class_type\": \"ModelSamplingAuraFlow\", \"inputs\": {\"model\": [\"1\", 0], \"shift\": 6.0}}, \"8\": {\"class_type\": \"KSampler\", \"inputs\": {\"cfg\": 1.0, \"denoise\": 1.0, \"latent_image\": [\"6\", 0], \"model\": [\"7\", 0], \"negative\": [\"5\", 0], \"positive\": [\"4\", 0], \"sampler_name\": \"euler\", \"scheduler\": \"beta\", \"seed\": 424242, \"steps\": 12}}, \"9\": {\"class_type\": \"VAEDecode\", \"inputs\": {\"samples\": [\"8\", 0], \"vae\": [\"3\", 0]}}}, \"anime, Japanese anime, Three paper boats float in a shallow stone fountain.\", {\"character\": null, \"execution_profile\": \"zimage_clear_anime\", \"lora_stack\": [], \"lora_warnings\": [], \"loras\": [], \"model\": \"clear_anime\", \"model_family\": \"zimage\", \"model_path\": \"Synthetic/clear_anime.safetensors\", \"model_variant\": \"base\", \"size\": \"768x512\", \"text_encoder\": \"qwen_3_4b\", \"vae\": \"zImageClearVae_natural\"}]",
+   "id": "2-424242-anime-clear",
+   "model_entry": {
+    "execution_profile": "zimage_clear_anime",
+    "family": "zimage",
+    "kind": "diffusion_models",
+    "rel": "Synthetic/clear_anime.safetensors",
+    "supported": true,
+    "variant": "base"
+   },
+   "options": {
+    "height": 512,
+    "width": 768
+   },
+   "scene": "Three paper boats float in a shallow stone fountain.",
+   "seed": 424242
+  }
+ ],
+ "checkpoint": "ed5fa71"
+}

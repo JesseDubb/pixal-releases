@@ -683,20 +683,16 @@ class PromptContractTests(unittest.TestCase):
         self.assertNotIn("camera_clause", info)
 
     def test_the_local_brains_template_line_names_the_lane(self):
-        # The brain half of the contract: one line, three rules, and the
-        # camera clause NOT restated (the server appends it - saying it
-        # twice invites a competing version).
+        # Both reference recipes share active-turn guidance rather than
+        # duplicating a fixed influencer look in the global template menu.
         templates = server.SYSTEM_LOCAL.split("Templates:")[1]
-        self.assertIn("- h3_ref_still: the anchored character, photographed.",
+        self.assertIn("- h3_ref_still / h3_ref_still_2x: the anchored character, photographed.",
                       templates)
-        # The lighting half of 9.80 was retracted the same day it shipped -
-        # Jesse rejected a whole set built on lamps in frame - so the line
-        # now asks for light from OUT of frame and a room that stays lit.
-        self.assertIn("Light arrives from out of frame", templates)
-        self.assertIn("never name a lamp, bulb or neon", templates)
+        self.assertIn("H3 REFERENCE DIRECTION", templates)
+        self.assertIn("character facts and the current request supply age", templates)
         self.assertNotIn("INSIDE a real place", templates)
-        self.assertIn("never full length", templates)
-        self.assertIn("clear of her face", templates)
+        self.assertIn("Waist-up or closer", templates)
+        self.assertIn("clear of the face", templates)
         self.assertNotIn("HDR holding the highlights", server.SYSTEM_LOCAL)
     # -- 9.85: the three measured rules ----------------------------------
 

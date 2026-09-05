@@ -83,11 +83,15 @@ PIXAL_CRAFT = "ONE named light source"
 # 2026-09-02, second change of the day: the H3 caption rule stopped being a
 # word budget and became a sentence-length rule, in BOTH writers' lane lines
 # and in the end contract that rides every lane's prompt - so all four moved.
+# 2026-09-05: intentional prompt-only refinement. H3 reference craft now
+# lives in pixal.prompting and is appended only for active, enhanced H3 ref
+# turns. The local menu points to it. These baseline hashes change, while
+# graph fixtures and enhancement-off render behavior remain untouched.
 OFF_SNAPSHOT = {
-    (False, False): "681a80a59cf3420ae0ac39f583c654b72d4d94f38bf78893912c018a8b5d7d4f",
-    (False, True): "1d719f7733a28181bfabe80b9682ef59aab30bce4aa3a2a37a77c02a25055dec",
-    (True, False): "2c62f1122c2e6d94f79e90a159586f3999c96ca1316568ca26af040d2b90d0bb",
-    (True, True): "981b0eb317297474cceede4eef34c07ac413cf451866800a86b461387bd00401",
+    (False, False): "a21b999bb0cc5d822abff1df2b087ccff485e4e026b3a5e4a7a478bee504129b",
+    (False, True): "aba6c58eb13c768312ec0972da9a5749a78ea02781512eb37d7cd07f5c5e9626",
+    (True, False): "faca99f1fa97f96aa0e1a126c15d80520699c1134121d00eb9b8d600bc54fdf6",
+    (True, True): "7dbe8e927458dbd6ad577649e8ed3e940723d18991e828a7cc97310df59a8da6",
 }
 
 

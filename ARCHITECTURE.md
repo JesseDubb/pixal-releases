@@ -33,8 +33,16 @@ the release readiness record above. Version/channel authority remains `PIXAL_VER
 | Configuration defaults, merge rules and persistence | [rules](pixal/config/rules.py), [ConfigStore](pixal/config/store.py); legacy `load_config` / `save_config` delegate |
 | Settings validation and public response | [patch rules](pixal/config/settings.py), [projection](pixal/config/presentation.py), [finisher values](pixal/config/values.py); server adapters resolve inventory and perform post-save effects |
 | Extracted pure recipe/version rules | [canvas](pixal/recipes/canvas.py), [style rules](pixal/recipes/style_rules.py), [version comparison](pixal/versioning.py) |
+| Scoped H3 reference writer guidance | [prompting](pixal/prompting.py): shared active-recipe direction and typed character-age context; legacy writer assembly and graph builders remain in `server.py` |
+| Intent-aware image review | [creative review](pixal/creative_review.py): bounded saved-brief context and validated four-section results, shared by direct vision and ComfyUI review; routing/artifact ownership remain in `server.py` |
+| Still post-processing delivery | [postprocessing](pixal/postprocessing.py): copy-on-write stages, validated atomic publication and per-image original/finish provenance; `Hub.add_image` supplies the existing finishers. [PostProcessCompare](web/src/components/PostProcessCompare.jsx) masks the two images with shared zoom/pan. |
 | Memory policy | [memory](pixal/memory.py): failure classification, host physical/commit readings and safe still-canvas recovery; `Hub` owns serialized admission, engine reclamation and workload pricing |
-| Catalogs, recipe builders, jobs, chat/events and engine/brain supervision | Still predominantly in [server.py](server.py), including shared `Hub`; graph templates also live in [templates/](templates/) |
+| Model roots, recursive inventory, metadata and input catalog | [Catalog](pixal/catalog/store.py): revisioned read-only snapshots, explicit invalidation, shared scan for warmup and TTL reads; server adapters retain call-time patched names and legacy dictionary aliases. Options roots memo is synchronous build-scoped, never a TTL. |
+| Z-Image family graph assembly | [zimage](pixal/recipes/families/zimage.py): explicit canvas/model/LoRA stack/sampler seat/overrides/capability facts in, graph/caption/info out; server resolves legacy dependencies and keeps build_zimage/build_fantasy/build_anime signatures. 48 checkpoint fixtures pin both sampler graphs. |
+| Event publishing and replay | [EventPublisher](pixal/jobs/events.py): per-app subscribers, sequence/ring, fan-out, poll activity and stream shutdown; Hub delegates and retains lane persistence between record and fan-out. |
+| JSONL ledger | [Ledger](pixal/storage/ledger.py): per-owner mtime/size cache, own-append tail parsing and delete rewrite; Hub keeps call-compatible adapters. Each server app gets an independent cache even for the same file. |
+| ComfyUI process supervision | [ComfySupervisor](pixal/backends/comfy/supervisor.py): one boot/desired/observed owner; injected ProcessRunner for spawn, poll, listener lookup and tree termination. Server supplies current callbacks and preserves COMFY_BOOT plus public function names. Boot-meter projection and HTTP/network reachability remain adapters. |
+| Other recipe builders, jobs, chat and brain supervision | Still predominantly in [server.py](server.py), including shared `Hub`; graph templates also live in [templates/](templates/) |
 | Frontend and generated assets | [web/src/](web/src/); [build_web.mjs](tools/build_web.mjs) owns production bundling/cache stamps, invoked by `npm run build` and `web/build.bat` |
 
 ## Contracts to preserve
@@ -76,20 +84,47 @@ the release readiness record above. Version/channel authority remains `PIXAL_VER
 ## Limits and next work
 
 The generic app factory and config store are constructible independently, but
-two `server.create_app()` instances still share legacy state. Importing `server`
+two `server.create_app()` instances still share jobs, chat, catalog and engine/brain
+state. Event publishers and ledger caches are independent per app. Narrow
+service scopes bind those two owners to requests and lifecycle-created tasks;
+async tasks and `asyncio.to_thread` inherit them. Calls outside an app scope use
+Hub's own compatibility owners, and patched server.LEDGER remains call-time
+resolved there. These scopes do not make the rest of Hub multi-instance safe. Importing `server`
 still initializes `Hub` and can touch its selected data directory. Do not import
 it casually to inspect the code; use source/AST inspection or an isolated harness.
 Temporary test roots are isolation measures, not an OS/network sandbox.
 
-Next: give catalog scanning/cache state an explicit owner, then extract a
-representative recipe family with graph parity. `Hub`, process supervisors,
+Catalog ownership has moved; its legacy server dictionary aliases remain writable
+for compatibility with test patches. New consumers use read-only snapshots.
+Z-Image assembly and event/ledger ownership have moved. Remaining `Hub` state, brain supervision,
 remaining background work, frontend decomposition and distribution hardening
-remain later stages. Database authority changes and release promotion are
+remain later stages. ComfyUI supervision is still a single desktop owner, not
+per-app engine isolation; its writable COMFY_BOOT alias is retained for patches.
+Desired/observed state records supervision intent and evidence without changing
+the boot payload or adding process probes. Database authority changes and release promotion are
 separate decisions, not implied by an approved refactor.
 
 Removing redundant work can improve responsiveness; moving code alone does not
 make GPU sampling faster. Record the workload, before/after measurement and
 limitations for every performance claim.
+
+## Extracting the next recipe family
+
+1. Map builder dependencies and server patch points before moving code. Capture
+   fixed synthetic graph/caption/info results from the old checkpoint, with
+   models and capabilities faked and data roots temporary. Pin sorted JSON bytes;
+   never regenerate the fixture to accommodate extraction failures.
+2. Leave a signature-compatible server adapter that resolves catalog, caption,
+   canvas, LoRA plan and sampler choices through current server bindings. Pass
+   explicit resolved inputs to a pure family assembler. The Z-Image adapter
+   supplies three shared pure graph helpers at call time so existing patches
+   remain observable; it supplies no module namespace or universal runtime.
+3. Move graph construction, node wiring, family caption prefixes and final graph
+   readback into the family owner. Preserve IDs, template values, overrides,
+   defaults and info fields. Test direct assembly for repeatability/no I/O and
+   test server patch effects alongside byte parity.
+4. Run the full gate and unchanged import boundaries, record any source-reading
+   test relocation with its behavioral proof, update this map, then commit.
 
 ## Verification and evidence
 

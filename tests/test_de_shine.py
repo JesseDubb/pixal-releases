@@ -52,6 +52,7 @@ arrays, stubbed config, no generation, no ComfyUI, no GPU, no server.
 
 import asyncio
 import inspect
+import io
 import json
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
@@ -249,23 +250,74 @@ class FaceMaskTests(unittest.TestCase):
             self.assertIsNone(server.find_faces(Path(td) / "x.png"))
 
     def test_find_faces_parses_the_subprocess_and_never_raises(self):
+        # The one-shot path: what runs when the warm worker cannot start.
         with TemporaryDirectory() as td:
             root = Path(td)
             (root / "models" / "ultralytics" / "bbox").mkdir(parents=True)
             (root / "models" / "ultralytics" / "bbox" / "Face.pt").write_bytes(b"x")
+            no_worker = patch.object(server.subprocess, "Popen",
+                                     side_effect=OSError("no worker"))
             ok = type("P", (), {"returncode": 0, "stdout": "noise\n[[1, 2, 30, 40, 0.9]]\n",
                                 "stderr": ""})()
-            with patch.object(server, "CDIR", root), \
+            with patch.object(server, "CDIR", root), no_worker, \
                     patch.object(server.subprocess, "run", return_value=ok):
                 self.assertEqual(server.find_faces(root / "x.png"),
                                  [(1.0, 2.0, 30.0, 40.0)])
             bad = type("P", (), {"returncode": 1, "stdout": "", "stderr": "boom"})()
-            with patch.object(server, "CDIR", root), \
+            with patch.object(server, "CDIR", root), no_worker, \
                     patch.object(server.subprocess, "run", return_value=bad):
                 self.assertIsNone(server.find_faces(root / "x.png"))
-            with patch.object(server, "CDIR", root), \
+            with patch.object(server, "CDIR", root), no_worker, \
                     patch.object(server.subprocess, "run", side_effect=OSError("no exe")):
                 self.assertIsNone(server.find_faces(root / "x.png"))
+
+    def test_find_faces_keeps_one_warm_worker_and_survives_its_death(self):
+        """The detector process loads torch once and answers each request on
+        a line. A failed request, a dead worker and a silent one all come
+        back as None without raising, and the one-shot finder is never
+        consulted for a per-request failure - only for a worker that could
+        not start at all."""
+        class Worker:
+            spawned = 0
+
+            def __init__(self, *args, **kwargs):
+                Worker.spawned += 1
+                self.stdin = io.StringIO()
+                self.stdout = io.StringIO(
+                    "Ultralytics banner\n"
+                    '{"ready": true}\n'
+                    '{"boxes": [[1, 2, 30, 40, 0.9]]}\n'
+                    '{"error": "boom"}\n')
+                self.killed = False
+
+            def poll(self):
+                return 1 if self.killed else None
+
+            def kill(self):
+                self.killed = True
+
+            def wait(self, timeout=None):
+                return 0
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "models" / "ultralytics" / "bbox").mkdir(parents=True)
+            (root / "models" / "ultralytics" / "bbox" / "Face.pt").write_bytes(b"x")
+            self.addCleanup(server._FACE_FINDER.stop)
+            with patch.object(server, "CDIR", root), \
+                    patch.object(server.subprocess, "Popen", Worker), \
+                    patch.object(server.subprocess, "run",
+                                 side_effect=AssertionError("one-shot must not run")):
+                self.assertEqual(server.find_faces(root / "x.png"),
+                                 [(1.0, 2.0, 30.0, 40.0)])
+                self.assertIsNone(server.find_faces(root / "x.png"))   # {"error"}
+                self.assertEqual(Worker.spawned, 1)                     # still warm
+                # Its stdout ends: the worker is gone. None, no raise, and the
+                # next call respawns rather than talking to a corpse.
+                self.assertIsNone(server.find_faces(root / "x.png"))
+                self.assertEqual(server.find_faces(root / "x.png"),
+                                 [(1.0, 2.0, 30.0, 40.0)])
+                self.assertEqual(Worker.spawned, 2)
 
 
 def _write_png(path, im):
@@ -299,17 +351,18 @@ class DeliveryTests(unittest.TestCase):
             self.deliver(root, "realism", {"still": {"de_shine": False}})
             self.assertEqual(src.read_bytes(), before)
 
-    def test_on_rewrites_the_still_and_keeps_the_embedded_graph(self):
+    def test_on_keeps_original_and_embedded_graph_in_processed_copy(self):
         with TemporaryDirectory() as td:
             root = Path(td)
             (root / "output").mkdir()
             src = root / "output" / "still.png"
             _write_png(src, face())
             before = src.read_bytes()
-            self.deliver(root, "realism", {"still": {"de_shine": True}})
-            after = src.read_bytes()
-            self.assertNotEqual(after, before)
-            with Image.open(src) as im:
+            job = self.deliver(root, "realism", {"still": {"de_shine": True}})
+            self.assertEqual(src.read_bytes(), before)
+            processed = root / "output" / job["images"][0]["filename"]
+            self.assertNotEqual(processed.read_bytes(), before)
+            with Image.open(processed) as im:
                 self.assertEqual(im.text.get("prompt"),
                                  '{"9": {"class_type": "SaveImage"}}')
                 self.assertTrue((arr(im) <= arr(face())).all())

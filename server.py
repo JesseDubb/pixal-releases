@@ -28,8 +28,10 @@ import shutil
 import signal
 import socket
 import statistics
+import queue
 import struct
 import subprocess
+import threading
 import sys
 import tempfile
 import time
@@ -47,18 +49,54 @@ from pixal.memory import (
     GPU_OOM_MARKERS, MemoryPressureError, host_memory_status,
     memory_failure_kind, positive_number, shrink_still_spec, still_canvas,
 )
+from pixal.recipes.families import zimage as _zimage_family
 from pixal.recipes.canvas import CANVAS_MULTIPLE, CANVAS_RATIO_WEIGHT, dims_for
 from pixal.recipes.style_rules import (
     TUNING_KEYS, _style_prompt_text, _style_slots, fill_style_slots,
     style_slug, validate_style_tuning,
 )
 from pixal.versioning import compare_versions, parse_version
+from pixal.prompting import reference_character_direction, reference_writer_direction
+from pixal.creative_review import parse_review, review_question
 from pixal.config.rules import default_config
 from pixal.config.store import ConfigStore
 from pixal.config.settings import InvalidSetting, SettingsChoices, apply_settings_patch
 from pixal.config.presentation import SettingsInventory, settings_response
 from pixal.config.values import dlss5_style, finite_still_value
+from pixal.postprocessing import artifact_paths, finish_image
 from pixal.http.errors import config_errors
+from pixal.backends.comfy.supervisor import (
+    COMFY_LAUNCHER_PREFERENCE, ComfySupervisor, ProcessRunner,
+)
+from pixal.jobs import events as _event_service
+from pixal.storage import ledger as _ledger_service
+from pixal.jobs.events import EventPublisher, EVENTS_KEY
+from pixal.storage.ledger import Ledger, LEDGER_KEY
+
+from pixal.catalog import Catalog, KIND_DIRS, MODEL_EXTS, INPUT_IMAGE_SUFFIXES
+
+CATALOG = Catalog()
+_YAML_ROOTS = CATALOG.yaml_roots
+_MODEL_ROOTS_MEMO = CATALOG.roots_memo
+_CATALOG = CATALOG.cache
+_SIDECAR_META = CATALOG.sidecar_meta
+_INPUT_ROOT = CATALOG.input_root
+
+
+def _catalog_owner():
+    # Existing tests replace these dictionaries, as well as patching functions.
+    # Keep that compatibility at the boundary; production state has one owner.
+    CATALOG.yaml_roots = _YAML_ROOTS
+    CATALOG.roots_memo = _MODEL_ROOTS_MEMO
+    CATALOG.cache = _CATALOG
+    CATALOG.sidecar_meta = _SIDECAR_META
+    CATALOG.input_root = _INPUT_ROOT
+    return CATALOG
+
+
+def invalidate_catalog(*, metadata=True):
+    _catalog_owner().invalidate(metadata=metadata)
+
 
 HERE = Path(__file__).absolute().parent
 
@@ -82,6 +120,7 @@ def apply_comfy_root(root):
     c = resolve_comfy_dir(root) if root else None
     if c:
         CDIR = c
+        invalidate_catalog()
     return c
 
 # Character canon is DATA (characters/*.json), not code - the app ships with no one.
@@ -109,10 +148,7 @@ def load_characters():
 
 CHARACTERS = load_characters()
 
-INPUT_IMAGE_SUFFIXES = {
-    ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".bmp", ".tif", ".tiff",
-    ".avif",
-}
+
 MAX_UPLOAD_BYTES = 40_000_000
 UPLOAD_CLIENT_MAX_BYTES = MAX_UPLOAD_BYTES + 1_000_000
 INPUT_REF_TYPES_FILE = DATA_DIR / "input_ref_types.json"
@@ -124,20 +160,16 @@ def resolve_character(ref):
         return ref
     return CHARACTERS.get(str(ref or "")) or None
 
+def _input_parts(ref):
+    return _catalog_owner()._input_parts(ref)
+
+
+def _input_root_resolved():
+    return _catalog_owner()._input_root_resolved(CDIR)
+
+
 def input_ref_name(ref):
-    """Normalize a ComfyUI/input-relative image path; reject path traversal."""
-    name = str(ref or "").strip().replace("\\", "/").removeprefix("input/")
-    parts = name.split("/")
-    if (not name or name.startswith("/") or "\0" in name or
-            any(part in ("", ".", "..") or ":" in part for part in parts)):
-        return ""
-    root = (CDIR / "input").resolve()
-    candidate = root.joinpath(*parts).resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        return ""
-    return "/".join(parts)
+    return _catalog_owner().input_ref_name(ref, parts_for=_input_parts, root_for=_input_root_resolved)
 
 
 def reference_kind(value):
@@ -171,43 +203,17 @@ def set_input_ref_type(name, kind):
 
 
 def input_image_record(name, *, mtime=None):
-    """One browser-safe record for an image under ComfyUI/input."""
-    canonical = input_ref_name(name)
-    if not canonical:
-        return None
-    parts = canonical.split("/")
-    record = {
-        "name": canonical,
-        "filename": parts[-1],
-        "subfolder": "/".join(parts[:-1]),
-        "type": "input",
-    }
-    if mtime is not None:
-        record["mtime"] = mtime
-    kind = INPUT_REF_TYPES.get(canonical)
-    if kind:
-        record["kind"] = kind
-    return record
+    return _catalog_owner().input_image_record(
+        name, mtime=mtime, ref_name=input_ref_name, record_from_parts=_input_record_from_parts)
+
+
+def _input_record_from_parts(parts, mtime=None):
+    return _catalog_owner()._input_record_from_parts(parts, mtime, ref_types=INPUT_REF_TYPES)
 
 
 def input_image_catalog():
-    """Every supported ComfyUI input image, newest first, including subfolders."""
-    root = CDIR / "input"
-    if not root.is_dir():
-        return []
-    records = []
-    for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in INPUT_IMAGE_SUFFIXES:
-            continue
-        try:
-            rel = path.relative_to(root).as_posix()
-            record = input_image_record(rel, mtime=path.stat().st_mtime)
-        except (OSError, ValueError):
-            continue
-        if record:
-            records.append(record)
-    records.sort(key=lambda item: (-item.get("mtime", 0), item["name"].lower()))
-    return records
+    return _catalog_owner().input_image_catalog(
+        comfy_root=CDIR, parts_for=_input_parts, record_from_parts=_input_record_from_parts)
 
 
 def _save_input_ref_types():
@@ -292,7 +298,13 @@ def migrate_percent_encoded_inputs():
 
 @lru_cache(maxsize=512)
 def _input_thumbnail_bytes(path_text, mtime_ns):
-    """Small first-frame WebP cached by resolved path + modification time."""
+    """Small first-frame WebP cached by resolved path + modification time,
+    in-process and on disk (_thumb_cached)."""
+    return _thumb_cached("input-192-q78", path_text, mtime_ns,
+                         lambda: _encode_input_thumbnail(path_text))
+
+
+def _encode_input_thumbnail(path_text):
     from PIL import Image, ImageOps
     with Image.open(path_text) as source:
         source.seek(0)
@@ -486,7 +498,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.3.2b"
+PIXAL_VERSION = "1.4.0b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = DATA_DIR / "history.jsonl"
@@ -586,62 +598,23 @@ def vl_download_gb(name):
 def save_config(cfg):
     _config_store().save(cfg)
 
-_YAML_ROOTS = {"key": None, "roots": []}
 
 def _yaml_model_roots(yaml_path):
-    """The base_path entries of extra_model_paths.yaml, parsed once per file
-    version. A catalog build asks for the roots about 800 times (once per LoRA
-    and model row), and re-parsing the YAML on each ask was three of the
-    build's four seconds."""
-    try:
-        st = yaml_path.stat()
-    except OSError:
-        return []
-    key = (str(yaml_path), st.st_mtime_ns, st.st_size)
-    if _YAML_ROOTS["key"] == key:
-        return list(_YAML_ROOTS["roots"])
-    roots = []
-    try:
-        import yaml
-        for section in (yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}).values():
-            if isinstance(section, dict):
-                bp = section.get("base_path")
-                if bp:
-                    roots.append(Path(bp))
-    except Exception:
-        pass
-    _YAML_ROOTS.update(key=key, roots=roots)
-    return list(roots)
+    return _catalog_owner()._yaml_model_roots(yaml_path)
+
+# A picker build asks for the roots ~800 times (once per LoRA and model row)
+# and each ask re-read config.json from disk - 0.4 s of the build's 1.1 s
+# (profiled 2026-09-05). The memo is scoped to one build, never a TTL: it is
+# armed by Hub.options around its synchronous body and disarmed after, so
+# nothing outside that window can ever read a stale root list.
+
 
 def model_roots(cfg=None):
-    """Every root we scan: ComfyUI/models, extra_model_paths.yaml entries, and any
-    roots the user added in settings (other drives, other layouts)."""
-    cfg = cfg or load_config()
-    roots = [CDIR / "models"]
-    roots.extend(_yaml_model_roots(CDIR / "extra_model_paths.yaml"))
-    for r in cfg["extra_model_roots"]:
-        p = Path(r)
-        if p.is_dir():
-            roots.append(p)
-    seen, out = set(), []
-    for r in roots:
-        k = str(r).lower()
-        if k not in seen and r.is_dir():
-            seen.add(k)
-            out.append(r)
-    return out
+    return _catalog_owner().model_roots(cfg, read_config=load_config, uncached=_model_roots_uncached)
 
-KIND_DIRS = ["checkpoints", "loras", "diffusion_models", "unet", "vae", "clip",
-             "text_encoders", "controlnet", "upscale_models",
-             # the LTX spatial upscalers live here; without it in the scan the
-             # 2.5 engine read as missing its upscaler with the file on disk
-             "latent_upscale_models",
-             # the mmh3 ClipProj weights a small Qwen3-VL encoder needs to
-             # stand in for MiniMax H3's 32B one (9.94); unscanned, the
-             # encoder row could never offer a pick
-             "clip_projections"]
-MODEL_EXTS = (".safetensors", ".gguf", ".ckpt", ".pt", ".pth", ".bin")
-_CATALOG = {"at": 0, "data": None}
+def _model_roots_uncached(cfg):
+    return _catalog_owner()._model_roots_uncached(cfg, comfy_root=CDIR, yaml_roots=_yaml_model_roots)
+
 
 # Deno's RTX Video Super Resolution filter. Modes are <filter> <quality>; VSR is
 # the upscaling family, the others are restoration passes at the same size.
@@ -672,32 +645,7 @@ UPSCALE_VIDEO_SCALE_RANGE = (1.0, 4.0)
 UPSCALE_VIDEO_FPS_OPTIONS = (0, 30, 48, 60)
 
 def model_catalog(kind=None, ttl=30):
-    """Recursive scan of every model root, 30s TTL. Entries carry the relpath ComfyUI
-    resolves (relative to the kind dir) so other drives/layouts work unchanged."""
-    now = time.time()
-    if _CATALOG["data"] is None or now - _CATALOG["at"] > ttl:
-        entries = []
-        for root in model_roots():
-            for kd in KIND_DIRS:
-                base_dir = root / kd
-                if not base_dir.is_dir():
-                    continue
-                for p in base_dir.rglob("*"):
-                    if p.is_file() and p.suffix.lower() in MODEL_EXTS \
-                            and ".cache" not in p.parts:
-                        # One stat, both facts: mtime feeds the NEW badge, size
-                        # lets pickers say what a build weighs on disk (9.29).
-                        try:
-                            st = p.stat()
-                            mtime, size = st.st_mtime, st.st_size
-                        except OSError:
-                            mtime, size = 0, 0
-                        entries.append({"kind": kd, "root": str(root),
-                                        "rel": str(p.relative_to(base_dir)),
-                                        "mtime": mtime, "size": size})
-        _CATALOG.update(at=now, data=entries)
-    data = _CATALOG["data"]
-    return [e for e in data if e["kind"] == kind] if kind else data
+    return _catalog_owner().model_catalog(kind, ttl, roots=model_roots, clock=time.time)
 
 # Both naming conventions in the wild: "4x-UltraSharp" and "..._x2_PSNR".
 _UPSCALE_SCALE_HINT = re.compile(r"(?:^|[^0-9a-z])(?:([1248])x|x([1248]))", re.I)
@@ -2505,26 +2453,10 @@ PUBLIC_RECIPE_IDS = tuple(RECIPE_SPECS)
 SOURCE_ONLY_RECIPE_IDS = frozenset(
     rid for rid, spec in RECIPE_SPECS.items() if spec.get("needs_source_image"))
 
-_SIDECAR_META = {}
+
 
 def adjacent_metadata(kind, rel):
-    """Best-effort Lora-Manager sidecar metadata for one installed asset."""
-    key = (kind, str(rel).lower())
-    if key in _SIDECAR_META:
-        return _SIDECAR_META[key]
-    out = {}
-    for root in model_roots():
-        p = root / kind / rel
-        mp = p.with_suffix(".metadata.json")
-        if not mp.is_file():
-            continue
-        try:
-            out = json.loads(mp.read_text(encoding="utf-8"))
-        except Exception:
-            out = {}
-        break
-    _SIDECAR_META[key] = out
-    return out
+    return _catalog_owner().adjacent_metadata(kind, rel, roots=model_roots)
 
 # One family table, read by both classifiers (brief 9.19a). It lives beside
 # install/catalog.json so it stays next to the installer's own notion of what
@@ -2812,16 +2744,54 @@ _IDENTITY_PATCH_NAME = re.compile(
     r"krea2_identity_edit_v(\d+)(?:_(\d+))?(?:_r(\d+))?\.safetensors$", re.I)
 
 
+_IDENTITY_SHA_STORE = {"data": None}
+
+
+def _identity_sha_store():
+    """Identity-patch digests keyed by path|mtime|size, kept on disk: an
+    in-process cache re-hashed ~1.6 GB of builds on the first /api/options
+    after every sidecar restart - 2.7 s, and every code change is a restart
+    (2026-09-05)."""
+    if _IDENTITY_SHA_STORE["data"] is None:
+        try:
+            data = json.loads((DATA_DIR / ".cache" / "identity_patch_sha.json")
+                              .read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        _IDENTITY_SHA_STORE["data"] = data if isinstance(data, dict) else {}
+    return _IDENTITY_SHA_STORE["data"]
+
+
+def _save_identity_sha_store(data):
+    try:
+        folder = DATA_DIR / ".cache"
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f".identity_patch_sha.{uuid.uuid4().hex}.tmp"
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True),
+                       encoding="utf-8")
+        os.replace(tmp, folder / "identity_patch_sha.json")
+    except OSError as exc:
+        print(f"[pixal] identity sha store not written: {exc}", flush=True)
+
+
 @lru_cache(maxsize=64)
 def _identity_patch_sha_cached(path_text, mtime_ns, size):
-    """sha256 of an identity-patch build, cached by (path, mtime, size) so a
-    file is hashed once ever per process, never re-hashed on every
-    /api/options call. The hashing itself is the catalog's own Civitai
-    matcher (_sha256_of)."""
+    """sha256 of an identity-patch build, cached by (path, mtime, size) in
+    this process and on disk, so a file is hashed once ever - never on every
+    /api/options call, never again after a restart. The hashing itself is
+    the catalog's own Civitai matcher (_sha256_of)."""
+    key = f"{path_text}|{mtime_ns}|{size}"
+    store = _identity_sha_store()
+    hit = store.get(key)
+    if isinstance(hit, str) and len(hit) == 64:
+        return hit
     try:
-        return _sha256_of(Path(path_text))
+        sha = _sha256_of(Path(path_text))
     except OSError:
         return None
+    store[key] = sha
+    _save_identity_sha_store(store)
+    return sha
 
 
 def _identity_patch_sha(entry, patch_file, stat):
@@ -6696,94 +6666,34 @@ def set_clip_loader(graph, node_id, name, clip_type):
 def _build_zimage(recipe_id, scene, seed, width=None, height=None, loras=(), overrides=(),
                    standing=True, nsfw=False, model=None, aspect=None, mp=None,
                    character=None, lora_plan=None, negative=None):
-    g = json.loads(json.dumps(TEMPLATES["zimage"]))
+    """Resolve legacy planning dependencies, then delegate pure family assembly."""
     model_entry = pick_recipe_model(model, recipe_id)
-    set_unet_loader(g, "1", model_entry)
     execution_profile, settings = _zimage_settings(model_entry)
     clip_name = _pick_catalog_asset(
         "text_encoders", settings["clip_candidates"], "a Qwen3-4B non-VL text encoder")
     vae_name = _pick_catalog_asset("vae", zimage_vae_candidates(settings),
                                    "the Z-Image VAE")
-    set_clip_loader(g, "2", clip_name, settings["clip_type"])
-    g["3"]["inputs"]["vae_name"] = vae_name
-
     cap, ch = _character_caption(scene, character, standing, nsfw, lock_generic=False)
-    if recipe_id == "fantasy" and not cap.lower().startswith("d&d painterly"):
-        cap = "D&D Painterly, " + cap
-    elif recipe_id == "anime" and not cap.lower().startswith(("anime", "japanese anime")):
-        cap = "anime, Japanese anime, " + cap
-    g["4"]["inputs"]["text"] = cap
-    if settings["zero_negative"]:
-        # Distilled: guidance is baked in and the official Turbo pipeline does
-        # not read a negative at all. Zeroing it is the documented behaviour.
-        g["5"] = {"class_type": "ConditioningZeroOut",
-                  "inputs": {"conditioning": ["4", 0]}}
-    else:
-        # A saved preset may carry its own. Until 2026-09-03 this builder took
-        # no `negative` at all, so a style that set one had it dropped by the
-        # kwarg filter in the chat path and silently rendered without it.
-        g["5"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": ["2", 0],
-                             "text": negative or zimage_base_negative(recipe_id)}}
-
+    resolved_negative = (negative or zimage_base_negative(recipe_id)) if not settings["zero_negative"] else None
     if aspect and not (width and height):
         width, height = dims_for(aspect, mp or RECIPE_SPECS[recipe_id]["mp"])
     elif mp and not (width and height):
         width, height = dims_for(RECIPE_SPECS[recipe_id]["aspect"], mp)
-    if width:
-        g["6"]["inputs"]["width"] = int(width)
-    if height:
-        g["6"]["inputs"]["height"] = int(height)
-
     entries, dropped = resolve_recipe_lora_stack(
         recipe_id, loras, lora_plan, family="zimage", variant=model_entry["variant"])
-    tail = apply_lora_nodes(g, "1", entries, "z:lora")
-    if settings["sampler_graph"] == "amazing_v4":
-        # Amazing Z-Image v4's measured Turbo schedule. The raw model feeds two
-        # Euler passes; applying AuraFlow here caused severe artifacts.
-        g.pop("7", None)
-        g.pop("8", None)
-        g["z:v4:sampler"] = {"class_type": "KSamplerSelect",
-                              "inputs": {"sampler_name": settings["sampler"]}}
-        g["z:v4:sigmas"] = {"class_type": "KarrasScheduler", "inputs": {
-            "steps": 8, "sigma_max": 0.99, "sigma_min": 0.08, "rho": 0.3}}
-        g["z:v4:split"] = {"class_type": "SplitSigmas",
-                            "inputs": {"sigmas": ["z:v4:sigmas", 0], "step": 2}}
-        g["z:v4:first"] = {"class_type": "SetFirstSigma",
-                            "inputs": {"sigmas": ["z:v4:split", 1], "sigma": 0.906}}
-        g["z:v4:extend"] = {"class_type": "ExtendIntermediateSigmas", "inputs": {
-            "sigmas": ["z:v4:first", 0], "steps": 2, "start_at_sigma": 1.0,
-            "end_at_sigma": 0.8, "spacing": "linear"}}
-        common = {"model": [tail, 0], "cfg": settings["cfg"],
-                  "positive": ["4", 0], "negative": ["5", 0],
-                  "sampler": ["z:v4:sampler", 0]}
-        g["z:v4:high"] = {"class_type": "SamplerCustom", "inputs": {
-            **common, "add_noise": True, "noise_seed": int(seed),
-            "sigmas": ["z:v4:split", 0], "latent_image": ["6", 0]}}
-        g["z:v4:low"] = {"class_type": "SamplerCustom", "inputs": {
-            **common, "add_noise": False, "noise_seed": int(seed),
-            "sigmas": ["z:v4:extend", 0], "latent_image": ["z:v4:high", 0]}}
-        g["9"]["inputs"]["samples"] = ["z:v4:low", 0]
-    else:
-        g["7"]["inputs"].update(model=[tail, 0], shift=settings["shift"])
-        g["8"]["inputs"].update(seed=int(seed), steps=settings["steps"],
-                                cfg=settings["cfg"], sampler_name=settings["sampler"],
-                                scheduler=settings["scheduler"])
-    g["10"]["inputs"]["filename_prefix"] = f"pixal_dm/{slug(scene)}"
-    for o in overrides:
-        g[str(o["node"])]["inputs"][o["input"]] = o["value"]
-    info = {**model_job_info(model_entry, execution_profile),
-            "text_encoder": base(clip_name), "vae": base(vae_name),
-            **lora_job_info(entries, dropped),
-            "size": f"{g['6']['inputs']['width']}x{g['6']['inputs']['height']}",
-            "character": ch["name"] if ch else None}
-    # Read back off the graph, not off the argument: on a distilled profile the
-    # branch above zeroes the negative whatever was asked for, and the ledger
-    # should say what RAN. The recipe rule - info is what ran, the plan is what
-    # you asked for - is the same one the LoRA stack already follows.
-    if g["5"]["class_type"] == "CLIPTextEncode":
-        info["negative"] = g["5"]["inputs"]["text"]
-    return g, cap, info
+    return _zimage_family.build_zimage(
+        template=TEMPLATES["zimage"], recipe_id=recipe_id, seed=seed,
+        canvas=(width, height), model=model_entry, lora_stack=(entries, dropped),
+        sampler_seat=settings, overrides=overrides,
+        capabilities={"clip": clip_name, "vae": vae_name}, caption=cap,
+        character_name=ch["name"] if ch else None, negative=resolved_negative,
+        filename_prefix=f"pixal_dm/{slug(scene)}",
+        job_info={**model_job_info(model_entry, execution_profile),
+                  "text_encoder": base(clip_name), "vae": base(vae_name),
+                  **lora_job_info(entries, dropped)},
+        set_unet_loader=set_unet_loader, set_clip_loader=set_clip_loader,
+        apply_lora_nodes=apply_lora_nodes)
+
 
 
 def build_anima(scene, seed, width=None, height=None, loras=(), overrides=(),
@@ -8436,7 +8346,7 @@ def _dlss5_http(url, payload=None, timeout=10.0):
 
 
 def _dlss5_delivered(path, style, tone, timeout=DLSS5_TIMEOUT,
-                     interval=0.5):
+                     interval=0.25):
     """Run one delivered still through the DLSS 5 node, in place.
 
     Stages the file into ComfyUI/input under a one-run temp name (the
@@ -8625,16 +8535,168 @@ def _face_finder_python():
     return Path(sys.executable)
 
 
-def find_faces(path, conf=FACE_FINDER_CONF, timeout=FACE_FINDER_TIMEOUT):
-    """Face boxes (x0, y0, x1, y1) in pixels for one image file.
+# The warm worker: the same detector, kept alive between stills. One JSON
+# request per stdin line, one JSON reply per stdout line, a ready line first.
+_FACE_WORKER_SCRIPT = (
+    "import json,sys,threading,queue\n"
+    "from ultralytics import YOLO\n"
+    "m=YOLO(sys.argv[1]);idle=float(sys.argv[2]);q=queue.Queue()\n"
+    "def rd():\n"
+    "    for line in sys.stdin: q.put(line)\n"
+    "    q.put(None)\n"
+    "threading.Thread(target=rd,daemon=True).start()\n"
+    "print(json.dumps({'ready':True}),flush=True)\n"
+    "while True:\n"
+    "    try: line=q.get(timeout=idle)\n"
+    "    except queue.Empty: break\n"
+    "    if line is None: break\n"
+    "    try:\n"
+    "        req=json.loads(line)\n"
+    "        r=m.predict(req['path'],device='cpu',verbose=False,conf=float(req['conf']))[0]\n"
+    "        out={'boxes':[[float(v) for v in b.xyxy[0]] for b in r.boxes]}\n"
+    "    except Exception as e:\n"
+    "        out={'error':str(e)[-300:]}\n"
+    "    print(json.dumps(out),flush=True)\n")
+FACE_FINDER_IDLE_SECONDS = 600.0   # the warm worker lets go of torch after this
 
-    Returns None when no finder exists (no model file, no ultralytics, a
-    crash, a timeout) so the caller can tell "nothing to find with" from
-    "looked and found no face" - the two mean different things to the
-    de-shine pass. Never raises."""
-    model = _face_bbox_model()
-    if model is None:
-        return None
+
+class _FaceFinderUnavailable(Exception):
+    """The warm worker could not be started; the one-shot path is the fallback."""
+
+
+class _FaceFinderWorker:
+    """One warm detector process, fed a path per line.
+
+    The one-shot finder paid a fresh python, the torch import and the model
+    load on every still: 3.2 s of the 3.3 s a detection cost (2026-09-05).
+    This keeps that process alive between stills and reads one JSON line
+    back per request, so a detection is the inference alone. The child
+    exits on its own after FACE_FINDER_IDLE_SECONDS without a request, and
+    when this sidecar dies its stdin closes and the child follows - no
+    orphan holds torch. Any failure (no ultralytics, a crash, a silent
+    child) never raises past request(): the caller gets None and the next
+    request starts a fresh worker."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._proc = None
+        self._lines = None
+        self._log = None
+        self._model = None
+
+    def _spawn(self, model, timeout):
+        try:
+            (DATA_DIR / "logs").mkdir(parents=True, exist_ok=True)
+            self._log = open(DATA_DIR / "logs" / "face_finder.log", "a",
+                             encoding="utf-8")
+            stderr = self._log
+        except OSError:
+            stderr = subprocess.DEVNULL
+        proc = subprocess.Popen(
+            [str(_face_finder_python()), "-c", _FACE_WORKER_SCRIPT,
+             str(model), str(FACE_FINDER_IDLE_SECONDS)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
+            text=True, encoding="utf-8", bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        lines = queue.Queue()
+
+        def pump():
+            try:
+                for line in proc.stdout:
+                    lines.put(line)
+            except Exception:
+                pass
+            lines.put(None)             # EOF: the child is gone
+
+        threading.Thread(target=pump, daemon=True,
+                         name="pixal-face-finder").start()
+        self._proc, self._lines, self._model = proc, lines, model
+        ready = self._recv(timeout)
+        if not (isinstance(ready, dict) and ready.get("ready")):
+            raise RuntimeError("no ready line" if ready is None else str(ready))
+
+    def _recv(self, timeout):
+        """The next JSON object the child prints, or None once it is gone or
+        silent past the timeout. Non-JSON lines (an ultralytics banner) are
+        skipped."""
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            try:
+                line = self._lines.get(timeout=remaining)
+            except queue.Empty:
+                return None
+            if line is None:
+                return None
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(reply, dict):
+                return reply
+
+    def request(self, model, path, conf, timeout):
+        """Boxes for one image, or None. Raises _FaceFinderUnavailable only
+        when no worker could be started at all."""
+        with self._lock:
+            if self._proc is None or self._proc.poll() is not None \
+                    or self._model != model:
+                self.stop()
+                try:
+                    self._spawn(model, timeout)
+                except Exception as exc:
+                    self.stop()
+                    raise _FaceFinderUnavailable(str(exc)) from exc
+            try:
+                self._proc.stdin.write(
+                    json.dumps({"path": str(path), "conf": conf}) + "\n")
+                self._proc.stdin.flush()
+                reply = self._recv(timeout)
+            except Exception as exc:
+                print(f"[pixal] face finder worker lost: {exc}", flush=True)
+                self.stop()
+                return None
+            if reply is None:
+                # Silent or dead mid-request: never keep talking to it.
+                print("[pixal] face finder worker went silent; a fresh one "
+                      "answers the next still", flush=True)
+                self.stop()
+                return None
+            if "boxes" not in reply:
+                print(f"[pixal] face finder failed: "
+                      f"{str(reply.get('error'))[-300:]}", flush=True)
+                return None
+            return reply["boxes"]
+
+    def stop(self):
+        proc, self._proc = self._proc, None
+        self._lines, self._model = None, None
+        if proc is not None:
+            for step in (lambda: proc.stdin.close(), proc.kill,
+                         lambda: proc.wait(timeout=5)):
+                try:
+                    step()
+                except Exception:
+                    pass
+        if self._log is not None:
+            try:
+                self._log.close()
+            except Exception:
+                pass
+            self._log = None
+
+
+_FACE_FINDER = _FaceFinderWorker()
+
+
+def _find_faces_oneshot(model, path, conf, timeout):
+    """The original one-process-per-image finder, the fallback for when the
+    warm worker cannot start. Raw boxes, or None."""
     try:
         proc = subprocess.run(
             [str(_face_finder_python()), "-c", _FACE_FINDER_SCRIPT,
@@ -8646,10 +8708,35 @@ def find_faces(path, conf=FACE_FINDER_CONF, timeout=FACE_FINDER_TIMEOUT):
                   flush=True)
             return None
         line = proc.stdout.strip().splitlines()[-1]
-        boxes = json.loads(line)
-        return [tuple(float(v) for v in b[:4]) for b in boxes]
+        return json.loads(line)
     except Exception as exc:
         print(f"[pixal] face finder unavailable: {exc}", flush=True)
+        return None
+
+
+def find_faces(path, conf=FACE_FINDER_CONF, timeout=FACE_FINDER_TIMEOUT):
+    """Face boxes (x0, y0, x1, y1) in pixels for one image file.
+
+    Returns None when no finder exists (no model file, no ultralytics, a
+    crash, a timeout) so the caller can tell "nothing to find with" from
+    "looked and found no face" - the two mean different things to the
+    de-shine pass. Never raises. The warm worker answers; the one-shot
+    finder only runs when the worker could not start."""
+    model = _face_bbox_model()
+    if model is None:
+        return None
+    try:
+        boxes = _FACE_FINDER.request(model, path, conf, timeout)
+    except _FaceFinderUnavailable as exc:
+        print(f"[pixal] face finder worker unavailable ({exc}); one-shot "
+              "fallback", flush=True)
+        boxes = _find_faces_oneshot(model, path, conf, timeout)
+    if boxes is None:
+        return None
+    try:
+        return [tuple(float(v) for v in b[:4]) for b in boxes]
+    except Exception as exc:
+        print(f"[pixal] face finder returned junk: {exc}", flush=True)
         return None
 
 
@@ -9956,7 +10043,7 @@ async def _quant_fetch_run(repo, filename, kind):
         if total is not None and got != total:
             raise aiohttp.ClientError(f"truncated at {got} of {total} bytes")
         os.replace(part, dest)
-        _CATALOG["at"] = 0            # the new build lists without a rescan
+        invalidate_catalog(metadata=False)  # the new build lists without a rescan
         say(got, total, done=True)
     except Exception as exc:
         try:
@@ -12299,15 +12386,7 @@ def build_h3_ref2v(motion, seed, refs, seconds=5, width=None, height=None,
     return graph, brief, info
 
 
-CRITIC_Q = ("You are a blunt creative director reviewing one AI-generated photo. Reply in "
-            "EXACTLY these four labeled lines:\n"
-            "LOOKS: one sentence - what the photo is doing.\n"
-            "WORKS: the single strongest concrete thing (light, gesture, or detail).\n"
-            "PROBLEMS: blunt list of visible issues - check hands and fingers, extra or "
-            "warped limbs, warped text, ghost or dark blobs, plastic skin, a dead "
-            "stock-photo pose, a gaze that reads to nothing; write 'none' if clean.\n"
-            "FIX: one sentence - the single change that would most improve a re-roll.\n"
-            "Under 90 words total.")
+CRITIC_Q = review_question()
 
 # PiD runs at v1.5's 2kto4k profile (1024px tiles, any aspect) with the INT8
 # ConvRot diffusion model - near-bf16 quality at half the size - and the FP8
@@ -12780,12 +12859,15 @@ def _build_ltx25_upscale_video(scene, seed, path, prompt, overrides):
     return g, scene, info
 
 
-def build_review(scene, seed, image, overrides=()):
+def build_review(scene, seed, image, overrides=(), brief=None, recipe=None):
     """Local VL critique of a finished still: Qwen3-VL-4B inside ComfyUI (no sidecar
     torch fighting for VRAM). The saved file is the record - finalize reads it back
     (survives a websocket drop during the 8 GB model load)."""
     m = re.search(r"#(\w+)", scene)
-    out_file = f"pixal_dm/review_{m.group(1) if m else 'x'}.txt"
+    # A second review of the same image must not read the first one's file
+    # when execution fails. The seed identifies this attempt, before modulo
+    # reduction for the vision node's narrower seed input.
+    out_file = f"pixal_dm/review_{m.group(1) if m else 'x'}_{int(seed)}.txt"
     g = {
         "1": {"class_type": "LoadImage", "inputs": {"image": image}},
         "2": {"class_type": "AILab_QwenVL", "inputs": {
@@ -12793,7 +12875,7 @@ def build_review(scene, seed, image, overrides=()):
             "quantization": "None (FP16)",   # avoids backend-specific bitsandbytes DLL issues
             "attention_mode": "auto",
             "preset_prompt": "\U0001f5bc\ufe0f Simple Description",
-            "custom_prompt": CRITIC_Q,
+            "custom_prompt": review_question(brief, recipe),
             "max_tokens": 512, "keep_model_loaded": True,
             "seed": int(seed) % 4294967295 + 1,      # node INT range is 1..2^32-1
             "image": ["1", 0]}},
@@ -12807,7 +12889,8 @@ def build_review(scene, seed, image, overrides=()):
         # what the bridge's capture actually reads; the file stays as backup.
         "5": {"class_type": "ShowText|pysssss", "inputs": {"text": ["2", 0]}},
     }
-    info = {"model": "qwen3-vl-4b", "loras": [], "size": "review"}
+    info = {"model": g["2"]["inputs"]["model_name"], "loras": [], "size": "review",
+            "review_file": out_file}
     return g, scene, info
 
 
@@ -12889,18 +12972,30 @@ SIGS = {name: set(inspect.signature(fn).parameters) - {"scene", "seed"}
 
 # ----------------------------------------------------------------------------- state
 
+def _hub_publisher(hub):
+    scoped = _event_service.current(hub)
+    if scoped is not None:
+        return scoped
+    if not hasattr(hub, "_events"):
+        hub._events = EventPublisher(clock=lambda: time.time())
+    return hub._events
+
+
+def _hub_ledger(hub):
+    scoped = _ledger_service.current(hub)
+    if scoped is not None:
+        return scoped
+    owner = getattr(hub, "_ledger_store", None)
+    if owner is None or owner.path != LEDGER:
+        hub._ledger_store = Ledger(LEDGER)
+    return hub._ledger_store
+
+
 class Hub:
     """SSE fan-out + job/ledger tracking + the ComfyUI websocket bridge."""
     def __init__(self):
-        self.subs = set()            # asyncio.Queue per browser tab
-        # Replay log for /api/poll, the no-open-stream transport. 4000 is a few
-        # minutes of the heaviest traffic this emits (sampler progress at ~8/s),
-        # so a phone that polls every second can never outrun it; a client that
-        # falls further behind than the window is told to resync rather than
-        # handed a hole it cannot see.
-        self.event_log = collections.deque(maxlen=4000)
-        self.event_seq = 0
-        self.last_poll = 0.0         # last /api/poll hit - a window with no SSE
+        self._events = EventPublisher(clock=lambda: time.time())
+        self._ledger_store = Ledger(LEDGER)
         self.jobs = {}               # job_id -> job dict
         self.by_prompt = {}          # comfy prompt_id -> job_id
         self.client_id = str(uuid.uuid4())
@@ -12964,6 +13059,38 @@ class Hub:
         else:
             self.new_chat()
 
+    @property
+    def subs(self):
+        return _hub_publisher(self).subs
+
+    @subs.setter
+    def subs(self, value):
+        _hub_publisher(self).subs = value
+
+    @property
+    def event_log(self):
+        return _hub_publisher(self).event_log
+
+    @event_log.setter
+    def event_log(self, value):
+        _hub_publisher(self).event_log = value
+
+    @property
+    def event_seq(self):
+        return _hub_publisher(self).event_seq
+
+    @event_seq.setter
+    def event_seq(self, value):
+        _hub_publisher(self).event_seq = value
+
+    @property
+    def last_poll(self):
+        return _hub_publisher(self).last_poll
+
+    @last_poll.setter
+    def last_poll(self, value):
+        _hub_publisher(self).last_poll = value
+
     # the LLM context and the visible lane both belong to the ACTIVE chat
     @property
     def convo(self):
@@ -13016,17 +13143,9 @@ class Hub:
         self._save_chat(c)
 
     def broadcast(self, **event):
-        event["ts"] = time.time()
-        # Every event also lands in a sequenced replay log. SSE is the fast
-        # path, but a never-ending HTTP response is hostile to the free tunnels
-        # a remote session runs over - Cloudflare's edge buffers the stream and
-        # releases nothing, and localtunnel hands it the whole connection pool
-        # so every image request behind it 502s. /api/poll reads this log
-        # instead, so the studio works over a plain sequence of short requests
-        # with no open stream at all. See events_poll().
-        self.event_seq += 1
-        event["seq"] = self.event_seq
-        self.event_log.append(event)
+        _hub_publisher(self).broadcast(after_record=self._broadcast_lane, **event)
+
+    def _broadcast_lane(self, event):
         t = event.get("type")
         if t == "text" and (event.get("text") or "").strip():
             self.lane_add({"role": "assistant", "text": event["text"]})
@@ -13037,14 +13156,6 @@ class Hub:
                            "fix": event.get("fix"), "parent": event.get("parent")})
         elif t == "error" and not event.get("job_id"):
             self.lane_add({"role": "error", "text": event.get("message")})
-        dead = []
-        for q in self.subs:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self.subs.discard(q)
 
     def handle_preview(self, raw):
         """ComfyUI preview frame (BinaryEventTypes.PREVIEW_IMAGE = 1): 4-byte
@@ -13075,48 +13186,13 @@ class Hub:
             pass
 
     def ledger_append(self, entry):
-        with LEDGER.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return _hub_ledger(self).ledger_append(entry)
 
     def ledger_delete(self, eid):
-        """Rewrite the ledger without one entry; returns the removed entry or None.
-        The ONE sanctioned exception to append-only - user-initiated delete."""
-        entries = self.ledger_read()[::-1]          # back to file order
-        entry = next((e for e in entries if e.get("id") == eid), None)
-        if entry:
-            with LEDGER.open("w", encoding="utf-8") as f:
-                for e in entries:
-                    if e.get("id") != eid:
-                        f.write(json.dumps(e, ensure_ascii=False) + "\n")
-        return entry
+        return _hub_ledger(self).ledger_delete(eid, read=self.ledger_read)
 
     def ledger_read(self):
-        """Newest first. Cached on (mtime, size): /api/status polls every
-        second and every chat turn resolves prior renders, which re-parsed the
-        whole 600KB+ file each time. The sidecar is the only writer, so a
-        changed file always changes the key. Callers must not mutate the list
-        or its entries - copy before editing (ledger_delete already does)."""
-        if not LEDGER.exists():
-            return []
-        try:
-            stat = LEDGER.stat()
-            key = (stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            key = None
-        if key is not None and getattr(self, "_ledger_key", None) == key:
-            return self._ledger_cache
-        out = []
-        for line in LEDGER.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-        out = out[::-1]              # newest first
-        if key is not None:
-            self._ledger_key, self._ledger_cache = key, out
-        return out
+        return _hub_ledger(self).ledger_read()
 
     def note_step_rate(self, job, data):
         """Say something when a sampling step is running many times too slow.
@@ -13319,7 +13395,7 @@ class Hub:
                             elif t == "executed" and job:
                                 out = data.get("output") or {}
                                 for img in (out.get("images") or []) + (out.get("gifs") or []):
-                                    self.add_image(job, img)
+                                    await self.add_image_async(job, img)
                                 if out.get("text"):
                                     job.setdefault("texts", []).extend(
                                         str(x) for x in out["text"])
@@ -13373,20 +13449,25 @@ class Hub:
                 self.broadcast(type="status", comfy=False)
             await asyncio.sleep(3)
 
-    def add_image(self, job, img):
+    def _image_passes(self, job, img):
+        """Admit one engine output: dedupe it, classify its media and choose
+        its finish passes. None when it is not ours to deliver."""
         if img.get("type") != "output":
-            return
+            return None
         if not keep_video_output(job.get("template"), img.get("filename")):
             print(f"[pixal] skipped VHS silent twin {img.get('filename')}", flush=True)
-            return
+            return None
         key = (img.get("filename"), img.get("subfolder"))
         if key in job["seen"]:
-            return
+            return None
         job["seen"].add(key)
         fmt = str(img.get("format", ""))
         name = str(img.get("filename", "")).lower()
         img["media"] = "video" if fmt.startswith("video") or \
             name.endswith((".mp4", ".webm", ".mov", ".gif")) else "image"
+        if img["media"] == "image":
+            img.setdefault("finish", "")
+        passes = []
         if img["media"] == "image" and job.get("template") != "upscale_image" \
                 and still_dlss5_active():
             # 10.5: DLSS 5 runs FIRST - a whole-frame neural re-render must
@@ -13396,9 +13477,8 @@ class Hub:
             # pre-upscale file already carries it, so the upscale lane's
             # own output must not be re-rendered again.
             style, tone = still_dlss5_style(), still_dlss5_tone()
-            if _dlss5_delivered(CDIR / "output" / (img.get("subfolder") or "")
-                                / img["filename"], style, tone):
-                _record_finish(job, dlss5_finish_tag(style, tone))
+            passes.append((dlss5_finish_tag(style, tone),
+                           lambda path: _dlss5_delivered(path, style, tone)))
         if img["media"] == "image" and job.get("template") != "upscale_image" \
                 and still_de_shine_active():
             # 9.93: de-shine runs on the delivered frame, which is what makes
@@ -13407,26 +13487,94 @@ class Hub:
             # own output is exempt above, so the percentile is never measured
             # on already-textured skin.
             strength = still_de_shine_strength()
-            if _de_shine_delivered(CDIR / "output" / (img.get("subfolder") or "")
-                                   / img["filename"], strength):
-                # deshine@0.85, the grain@1.6 shape: the strength that
-                # touched the pixels is on the job, not only in Settings.
-                _record_finish(job, f"deshine@{strength:g}")
+            passes.append((f"deshine@{strength:g}",
+                           lambda path: _de_shine_delivered(path, strength)))
         if img["media"] == "image" and still_film_grain_active():
             # 10.1: the judged chain's LAST step, after de-shine, after
             # whatever the graph did - grain belongs to final pixels, so
             # upscale outputs get it too. Recorded on the job because an
             # invisible setting on an artifact is the 08-30 lesson.
             amt = still_film_grain_amount()
-            if _film_grain_delivered(
-                    CDIR / "output" / (img.get("subfolder") or "")
-                    / img["filename"], job.get("seed") or 0, amt):
-                _record_finish(job, f"grain@{amt:g}")
+            passes.append((f"grain@{amt:g}", lambda path: _film_grain_delivered(
+                path, job.get("seed") or 0, amt)))
+        return img, passes
+
+    def _image_delivered(self, job, img):
+        """Record and announce a finished output. On the loop: it mutates the
+        job and fans out over SSE."""
+        for tag in img.get("finish", "").split("+"):
+            if tag:
+                _record_finish(job, tag)  # legacy job summary; image is authoritative
         job["images"].append(img)
         self.broadcast(type="image", job_id=job["id"],  # img carries its own "type" - rename
                        filename=img.get("filename"), subfolder=img.get("subfolder", ""),
-                       img_type=img.get("type"), media=img["media"])
+                       img_type=img.get("type"), media=img["media"],
+                       original=img.get("original"), finish=img.get("finish", ""))
         print(f"[pixal] {img['media']} {img.get('filename')} <- job {job['id']}", flush=True)
+
+    def add_image(self, job, img):
+        """Deliver one engine output with its finishers run inline. For callers
+        with no loop to yield to (the trailer stitcher, tests); the bridge and
+        the history fallback use add_image_async."""
+        admitted = self._image_passes(job, img)
+        if admitted is None:
+            return
+        img, passes = admitted
+        # Keep the engine output intact. Per-image provenance survives SSE,
+        # chat reload and the ledger, including mixed-success batches.
+        self._image_delivered(job, finish_image(CDIR / "output", img, passes))
+
+    async def add_image_async(self, job, img):
+        """The same delivery with the finishers off the event loop.
+
+        De-shine spawns a face finder (~3 s: a fresh python importing torch
+        and ultralytics per image), DLSS 5 polls ComfyUI with time.sleep and
+        grain is a full-frame numpy pass. Run inline in the bridge's message
+        loop they froze every SSE stream and HTTP response for ~4.5 s per
+        1728x1152 still (measured 2026-09-05) - a four-image batch was 18 s
+        of dead UI right as the pictures should land. Admission stays on the
+        loop so a replayed output is deduped before any work starts, and
+        delivery stays on the loop so job state and the fan-out never race."""
+        admitted = self._image_passes(job, img)
+        if admitted is None:
+            return
+        img, passes = admitted
+        if passes and job.get("stage") != "finishing the frame":
+            # The lane otherwise sits on "saving the frame" for the whole
+            # chain - face finder, de-shine, grain - with nothing moving.
+            job["stage"] = "finishing the frame"
+            self.broadcast(type="thinking", cid=job["cid"], note=job["stage"])
+        finished = await asyncio.to_thread(finish_image, CDIR / "output", img, passes)
+        self._image_delivered(job, finished)
+        if job.get("finalized"):
+            self._late_image_row(job, finished)
+
+    def _late_image_row(self, job, img):
+        """A finished picture whose job was finalized while its finishers ran
+        (Stop mid-chain, or the fallback poller finishing first) is on disk
+        and on the card, and used to be nowhere else: finalize saw no images,
+        so it wrote no ledger row, and a refresh dropped the card. Write the
+        row now - once - so the gallery and the lane keep what rendered. A job
+        that already has a row (a batch, some frames landed in time) is only
+        logged: the durable record is append-only."""
+        if job.get("_row_written"):
+            print(f"[pixal] {img.get('filename')} landed after job {job['id']} "
+                  "finalized; its row was already written", flush=True)
+            return
+        entry = {"id": job["id"], "ts": job["started"], "template": job["template"],
+                 "scene": job["scene"], "full_prompt": job.get("full_prompt", ""),
+                 "seed": job["seed"], "count": job["count"], "spec": job.get("spec"),
+                 "info": job.get("info"), "images": job["images"],
+                 "elapsed": job.get("elapsed"),
+                 "src": "reroll" if job.get("parent") else "chat"}
+        if job.get("parent"):
+            entry["parent"] = job["parent"]
+        self.ledger_append(entry)
+        job["_row_written"] = True
+        print(f"[pixal] {img.get('filename')} landed after job {job['id']} "
+              "finalized; row written late", flush=True)
+        self.broadcast(type="ledger", job_id=job["id"],
+                       entry=_history_row(entry, lite=True))
 
     def pid_done(self, job, pid):
         job["done_pids"].add(pid)
@@ -13443,14 +13591,19 @@ class Hub:
             # looks; ensure_vram trusts this flag instead of flush-thrashing
             # an 8B reload per review. Every cache flush clears it.
             self.critic_hot = not job.get("error")
-        if job["template"] == "vl_review":
+        if job["template"] == "vl_review" and not job.get("error"):
             text = "\n".join(job.get("texts", [])).strip()
             if not text:                       # ws dropped mid-load - the file is the record
-                fp = CDIR / "output" / \
-                    f"pixal_dm/review_{job.get('parent') or job['id']}.txt"
-                if fp.is_file():
+                # Only this attempt's graph-generated file is eligible. The
+                # legacy parent-only file may contain an older successful review.
+                review_file = (job.get("info") or {}).get("review_file", "")
+                safe_file = isinstance(review_file, str) and re.fullmatch(
+                    r"pixal_dm/review_\w+_-?\d+\.txt", review_file)
+                fp = CDIR / "output" / review_file if safe_file else None
+                if fp is not None:
                     try:
-                        text = fp.read_text(encoding="utf-8").strip()
+                        if fp.stat().st_mtime >= job["started"]:
+                            text = fp.read_text(encoding="utf-8").strip()
                     except Exception as exc:
                         print(f"[pixal] review file unreadable: {exc}", flush=True)
                 else:
@@ -13459,17 +13612,17 @@ class Hub:
                     print(f"[pixal] review file not there yet: {fp}", flush=True)
             print(f"[pixal] review finalize: texts={len(job.get('texts', []))} "
                   f"file_text={len(text)} chars", flush=True)
-            fix_m = re.search(r"^FIX:\s*(.+)$", text, re.M)
-            if text:
+            result = parse_review(text)
+            if result:
                 self.broadcast(type="review", job_id=job["id"], cid=job["cid"],
-                               parent=job.get("parent"), text=text,
-                               fix=fix_m.group(1).strip() if fix_m else None)
+                               parent=job.get("parent"), text=result.text, fix=result.fix)
                 if self.convo is not None:
                     self.convo.append({"role": "system", "content":
-                        f"[critic on #{job.get('parent') or job['id']}: {text}]"})
+                        f"[critic on #{job.get('parent') or job['id']}: {result.text}]"})
             else:
+                job["error"] = "critic returned an incomplete review" if text else "critic returned nothing"
                 self.broadcast(type="error", job_id=job["id"], cid=job["cid"],
-                               message="critic returned nothing")
+                               message=job["error"])
         if not job["images"] and not job.get("error") and \
                 job["template"] not in ("vl_review", "vl_look"):
             # "success" with zero outputs = a graph value was silently invalid
@@ -13483,6 +13636,7 @@ class Hub:
         # job is recorded as unobserved, never as a miss.
         cache = (cache_summary(job["node_types"], job.get("_cached_nodes"))
                  if job.get("node_types") else None)
+        row = None
         if job["images"]:
             entry = {"id": job["id"], "ts": job["started"], "template": job["template"],
                      "scene": job["scene"], "full_prompt": job.get("full_prompt", ""),
@@ -13524,6 +13678,11 @@ class Hub:
                         and cache.get("observed") and not cache.get("hit"):
                     job["info"]["warm"] = "encode-missed"
             self.ledger_append(entry)
+            job["_row_written"] = True
+            # The row the browser would fetch back, on the jobdone event: the
+            # client appends it instead of refetching the whole gallery
+            # (2.5 MB lite) after every render (2026-09-05).
+            row = _history_row(entry, lite=True)
             # 10.2 - a successfully finalized priced job is the warm
             # re-roll's anchor: its encode side is provably in ComfyUI's
             # node cache as of now, on this ComfyUI, in this flush epoch.
@@ -13571,7 +13730,7 @@ class Hub:
             self.broadcast(type="jobinfo", job_id=job["id"], **job["info"])
         self.broadcast(type="jobdone", job_id=job["id"], cid=job["cid"],
                        elapsed=job["elapsed"], images=len(job["images"]),
-                       error=job["error"])
+                       error=job["error"], entry=row)
         if job.get("_vram_peak"):
             # The line that makes ACT_PROFILES tunable by reading instead of
             # archaeology: what the butler priced next to what the card did.
@@ -14562,6 +14721,12 @@ class Hub:
             print(f"[pixal] vram butler skipped: {exc}", flush=True)
 
     def options(self):
+        """The picker payload. model_roots is memoized for this build's own
+        duration only - see _MODEL_ROOTS_MEMO."""
+        with _catalog_owner().build_scope():
+            return self._options_build()
+
+    def _options_build(self):
         # recursive, every model root (ComfyUI/models + extra_model_paths.yaml + settings)
         model_entries = {}
         for kind in ("diffusion_models", "unet"):
@@ -15060,7 +15225,7 @@ class Hub:
                         else:
                             for out in rec.get("outputs", {}).values():
                                 for img in (out.get("images") or []) + (out.get("gifs") or []):
-                                    self.add_image(job, img)
+                                    await self.add_image_async(job, img)
                         self.pid_done(job, pid)
                 except Exception:
                     pass
@@ -15314,31 +15479,6 @@ Identity-edit craft (identity_edit; every rule was measured, each cost a session
 - BRANDS: models suck at marks. Real brand = spell the word in quotes + describe the actual mark like you are looking at it + placement/colour/scale. Better: a fictional brand (described art + one short invented word). Audit EVERY text-bearing surface - describe it or state it positively blank. Never paragraphs of text in frame.
 - A SET is ONE EVENT: hair/wardrobe/accessories/scene stay pinned across frames - any styling element you leave unstated re-rolls per seed. For a set, generate with count 3-4 on one scene, then re-roll for more seeds; expect 1-2 identity-drift throwaways and say so.
 
-H3 reference-still SKELETON (h3_ref_still and h3_ref_still_2x). THE TEST THIS WHOLE SECTION SERVES: everything in the scene has a connected relationship around the subject, and the angle, the light and the skin tone are all realistic and natural. Every object she holds is attached to a named hand or resting on a named surface. The camera is where a real person could be standing. The light comes from a source you named and lands on surfaces you named. Anything floating free of that web - a prop nobody is holding, a viewpoint nobody could occupy, a light with nothing to fall on - is what reads as fake, and it drags the geometry and the skin down with it.
-This lane has a shape, taken from the 2026-09-02 keeper frames by reading their captions back out of the rendered files. Write these twelve sentences, in this order, one idea in each. The frames that hold up run 240-330 words across fifteen to twenty sentences; what fails is never a long caption, it is a long SENTENCE, because a detail that must land arrives in clause six of one and renders as its opposite.
-FACE - her age, her makeup and her attitude. NEVER HER FEATURES. The reference photo carries her face and the caption's job is to leave it alone: on this family a named feature is not read as identification, it is read as an instruction to PERFORM that feature. "The two front teeth a touch larger than the rest" - true of her, copied straight off her own character card - rendered as buck teeth, measured on one seed against an arm that named nothing (2026-09-03). Her nose, teeth, chin, cheekbones, jaw, face shape and eye shape stay out of the caption entirely, and so does any word for the shape of her face. Age is the one exception, and it is not a feature but a category.
-1. Her age, on its own: "She is 19 years old and she looks it." Write it EVERY TIME. This lane drops the character card's age on the theory the photo carries it, and against a written caption it does not - without this sentence she renders a woman in her thirties, and that reads as the reference failing when it is the caption.
-2. Makeup on the eyes ALONE, described as if you are looking at it: liner, lashes, brows. That is styling rather than anatomy, so it is safe to describe. Blush and gloss together read as "too much makeup".
-3. "The rest of her face is bare, clean skin and her own bare lips in their own natural colour."
-4. One short line of attitude and register.
-SHOT
-5. WHO IS HOLDING THE CAMERA, in one short line, and let the framing follow from it. There are only three honest answers and every frame is one of them. SELFIE, when her hands are free: her own arm's length away, a little above her, close enough that her face fills the top of the frame, both eyes into the lens. A FRIEND, when both hands are busy and someone is with her: put the camera where that friend is actually standing, a step or two away and off to one side, and she is reacting to that person rather than posing at a lens. HER PHONE ON A TRIPOD OR A SELFIE STICK, when both hands are busy and she is alone: the camera is planted a couple of feet away at chest height and dead steady, and she is performing to it, which is the influencer setup and reads honestly as one. Default to the selfie - this lane composes one whether or not you ask, so writing it is more reliable than fighting it with a lens spec. A frame nobody could plausibly have taken is what reads as staged, and a stated lens ("waist-up on an 85mm at f2") belongs only in the friend shot.
-6. The place and the light in one sentence: the hour, where she is, the single hard source, the direction it comes from, and what it does - one side of her lit hot, the other falling into shadow.
-7. Her pose: planted, ONE gesture, and where her eyes go. COUNT HER HANDS. In a selfie one hand is holding the camera, so exactly one hand is left and it gets exactly one job - the drink, the box, the door handle, her hair, never two of them. Every prop she holds says which hand and how it is held ("fingers curled over its edge, thumb across the fold"); a prop with no hand named and no surface under it floats in mid-air beside her.
-8. The room's clutter, three or four things she could reach out and touch. A sparse scene renders plastic - the model fills it with smooth generic surfaces and the light has nothing to fall on. Anyone else in frame gets described by their features, because only the wired reference carries identity.
-REALITY - these four sentences are near enough fixed. They are what makes skin read as a photograph instead of a render, so write them every time and vary only the light word:
-9. "This is a photograph of reality."
-10. "Real skin under hard real light: every pore catches its own tiny highlight and casts its own tiny shadow, the texture raked into relief where the light hits and settling smooth in the shade."
-11. "Fine peach fuzz along her jaw glows where light passes through it. Soft natural colour variation, faint natural freckling."
-12. "Matte skin with real texture, lit the way skin is actually lit, the exact detail a real camera resolves on a real young face at this distance."
-WARDROBE - one sentence, and it CLOSES the caption with nothing after it, because on this model family the last thing read decides whether she stays dressed. Complete garments: outer layer over top, bottoms, and at most one designer accent. Anchor jewellery to a size you can point at - "small thin gold hoops the size of a dime". A brand is carried as shapes, hardware or quilting rather than lettering.
-
-The rest of this lane's craft, which the skeleton assumes:
-- REAL BEATS STAGED, and this is a failure mechanism rather than a preference. It is NOT a vote for boring: the frames that hold up are a bodega window at night, a mirror selfie in a lift, an F1 pit lane, a balcony BBQ - fun places people actually go, and the shot should have some wow to it. What fails is CONTRIVANCE: dancing on a washing machine in an empty laundromat at 3am, a car wash tunnel, a posed night carnival. The test is whether a real person would genuinely be doing this, and whether anyone could actually have taken the picture - a setup nobody would really do breaks the geometry and turns the surfaces plastic. When a shot is not landing, the fix is to take the STAGING out, not the fun.
-- THE LIGHT IS THE REALISM LEVER, not the settings. Pick one hard source and say which way it comes from: an overhead fluorescent strip, a shop window at night, a car park tube, high midday sun. Hard light reads as a phone photo. Soft golden hour is better light by every classical standard and it photographs as a render - the prettier the lighting, the faker the frame.
-- GIVE HER AN ACTION AND THE FACE FOLLOWS: mid-yawn, mid-bite with her cheeks full, blowing across a coffee, squinting into the sun, laughing at someone off to the side. An instructed expression only half-lands, and TWO of them at once half-land together - a lip bite with the tongue out is two faces in one face, and it renders as neither. Her face is doing ONE thing. Sexy is carried by stance, eyeline and light - weight on one hip, chin low and eyes up, looking back over her shoulder - while anatomical wording strips her.
-- THE FRAME IS WAIST-UP OR CLOSER and the server enforces that floor, so write a pose the crop can hold. Arms flung wide leaves her hands outside the picture; keep her hands inside a waist-up frame and clear of her face.
-- POSES ARE PLANTED and objects are still: a hand rests flat, feet stay put, a seam sits down a sleeve. A travelling body smears into motion streaks and takes the hair and hands with it. Anchor anything small to a size you can point at - "about the size of a dime" - because adjectives lose to size anchors. Spell any lettering in capitals and keep it to two short words, or leave the sign out of the shot.
 
 NSFW: this is a private, local studio and explicit asks are LEGITIMATE WORK, not something to soften. When the user asks for nude or sexual content: honor the ask exactly as stated, write the explicit scene plainly (positive target states - name what IS worn or bare, the pose, the arrangement), and pass generate(nsfw=true) so the server drops the fully-dressed closing clause that would otherwise override the ask. Never moralize, never substitute a "tasteful" alternative, never re-dress the subject. The base model is NSFW-tuned and renders nudity well. For every NON-explicit ask keep nsfw=false - without the lock the base undresses subjects uninvited, and accidental nudity is a defect in the other direction.
 
@@ -15385,7 +15525,7 @@ Write the scene the way the render models were measured to like:
 
 Templates:
 - identity_edit: the anchored character. Write EDIT instructions - doing, wearing or not wearing, where, ~100 words. NEVER describe the face or age (the reference photo carries them); you may state eye colour.
-- h3_ref_still: the anchored character, photographed. Short sentences of about fifteen words, one idea each, as many as the shot needs: one ordinary place she has a reason to be in, ONE thing she is in the middle of, then the clothes. Light arrives from out of frame and the room stays lit - never name a lamp, bulb or neon in the shot. Waist-up or closer, never full length. Write the moment, not the expression: give her hands something to hold or rest flat on, clear of her face, and the face follows. Name only what the shot needs. If a sign is in it, spell its words in capitals and keep them to two short words, or leave the sign out. If she is holding a drink, name the drink and then say, in its own short sentence, that the label is turned away.
+- h3_ref_still / h3_ref_still_2x: the anchored character, photographed. Follow the active H3 REFERENCE DIRECTION below. The reference carries facial identity; character facts and the current request supply age and styling. Short sentences, one idea each. Waist-up or closer; keep hands clear of the face.
 - realism / realism_ii: photographic scenes.
 - fantasy: painterly fantasy art; readable silhouette, materials, scale, magic and light.
 - anima: the default for anime/manga. Anime key-frame language; shot, pose, expression, line/value design and palette. Quality tags are added server-side, so never write "masterpiece" or a score_ tag.
@@ -15600,7 +15740,7 @@ def official_writer_base(local_brain, recipe_id):
 _H3_STILL_END_CONTRACT = """
 H3 STILL CONTRACT - this recipe only. Where it differs from the craft rules above, this wins:
 - Short sentences, about fifteen words each, one idea in every one. Write as many as the shot needs - the frames that hold up run to fifteen or twenty of them. Anything that must land gets a sentence of its own, and the clothes are the last thing you write.
-- The light comes from outside the frame and the whole room is lit by it. Every object you name is one she could reach out and touch.
+- Preserve the light and environment the user requested. If unspecified, the light comes from outside the frame and reveals the setting naturally. Name only objects the shot needs.
 - Waist-up or closer. Name her top, and a jacket or bottoms only if they show at that height.
 """
 
@@ -15648,6 +15788,7 @@ def writer_system_prompt(local_brain, prompt_enhance, recipe_id):
     base = official_writer_base(local_brain, recipe_id) or \
         (SYSTEM_LOCAL if local_brain else SYSTEM)
     return base + recipe_end_contract(recipe_id, prompt_enhance) + \
+        reference_writer_direction(recipe_id, prompt_enhance) + \
         TURN_POLICY + \
         (PROMPT_ENHANCE_ON_POLICY if prompt_enhance else PROMPT_ENHANCE_OFF_POLICY)
 
@@ -20712,9 +20853,15 @@ async def service_worker(_req):
 SHUTTING_DOWN = asyncio.Event()
 
 
+def _event_shutdown():
+    # A patched fake HUB retains the historical SHUTTING_DOWN test seam.
+    scoped = _event_service.current(HUB)
+    return scoped.shutting_down if scoped is not None and isinstance(HUB, Hub) else SHUTTING_DOWN
+
+
 async def on_shutdown(app):
     """Let every SSE stream end itself so the process can actually exit."""
-    SHUTTING_DOWN.set()
+    _event_shutdown().set()
     for q in list(HUB.subs):
         try:
             q.put_nowait(None)
@@ -20755,7 +20902,7 @@ async def events(req):
         q.put_nowait({"type": "scan", **HUB.scan})
     try:
         await resp.write(_SSE_PAD + b": hello\n\n")
-        while not SHUTTING_DOWN.is_set():
+        while not _event_shutdown().is_set():
             try:
                 ev = await asyncio.wait_for(q.get(), 20)
                 if ev is None:                  # shutdown sentinel - let go
@@ -20989,11 +21136,18 @@ def build_directive(opts, local=False):
             # writer cannot check the photo, and inventing any of them can
             # contradict the person the reference carries - the server-side
             # identity pass then fights the prompt.
+            h3_facts = reference_character_direction(
+                lch, tpl, opts.get("prompt_enhance") is not False)
+            identity_rule = (
+                "The reference photo carries facial identity, skin, ethnicity and build. "
+                if h3_facts else
+                "Never describe her face, age, skin, ethnicity or build - the "
+                "reference photo carries them. ")
             d += (f"\n[CHARACTER: {lch['name']}. Look: {look}\n"
-                  f"Never describe her face, age, skin, ethnicity or build - the "
-                  f"reference photo carries them. "
-                  f"Place her EXACTLY where the user asked - no other locations, no "
+                  f"{identity_rule}"
+                  f"Place the subject EXACTLY where the user asked - no other locations, no "
                   f"backstory, nothing the user didn't say.]")
+            d += h3_facts
         # With an mmproj on disk the managed brain can see (2026-08-12, Jesse's
         # call): attach the refs so it reads traits off the pixels instead of
         # inventing them. Still no file names in the text - composer picks stay
@@ -21125,6 +21279,7 @@ def build_directive(opts, local=False):
         d += (f"\n[CHARACTER ANCHOR: {ch['name']}. {ch['notes']}\nHonor this canon in the "
               f"scene; do not restate their face - the reference carries it in identity_edit, and "
               f"txt2img recipes prepend their subject block server-side.]")
+    d += reference_character_direction(ch, tpl, opts.get("prompt_enhance") is not False)
     return d, vision
 
 _JOB_REF_RE = re.compile(r"#([0-9a-f]{4,12})\b", re.I)
@@ -21406,8 +21561,7 @@ async def settings_post(req):
     # A grain/console/brain toggle does not change model files. Keep the TTL
     # cache warm; new roots/engine changes and explicit Rescan still invalidate.
     if catalog_changed:
-        _CATALOG["at"] = 0
-        _SIDECAR_META.clear()
+        invalidate_catalog()
     # Running brains retain their old placement until restarted. Free only
     # after the new model/placement was successfully persisted.
     if was_brain != (str(cfg["llm"].get("local_model") or ""),
@@ -21439,8 +21593,7 @@ async def setup_post(req):
     cfg["setup_done"] = True
     save_config(cfg)
     apply_comfy_root(raw)
-    _CATALOG.update(at=0, data=None)
-    _SIDECAR_META.clear()
+    invalidate_catalog()
     asyncio.create_task(warmup_catalog())
     comfy_up = False
     try:
@@ -21457,8 +21610,7 @@ async def settings_rescan(_req):
     """Re-walk every model root now (new LoRAs, new drives) - progress streams to the
     status row via the scan events. Styles too: recipes/ is files, and this is
     the button a user reaches for after changing files (9.92)."""
-    _CATALOG["at"] = 0
-    _SIDECAR_META.clear()
+    invalidate_catalog()
     refresh_saved_styles(force=True)
     asyncio.create_task(warmup_catalog())
     return web.json_response({"ok": True})
@@ -23056,6 +23208,10 @@ async def review(req):
                                  status=404)
     dst = stage_critic_input(src, f"pixal_review_{entry['id']}.png")
     cid = body.get("cid") or uuid.uuid4().hex[:8]
+    # Snapshot only the selected render's saved intent, not current composer
+    # picks or a different chat's most recent prompt.
+    brief, recipe = entry.get("scene"), entry.get("template")
+    question = review_question(brief, recipe)
     HUB.broadcast(type="thinking", cid=cid, note="reading the shot")
 
     async def _review():
@@ -23066,7 +23222,7 @@ async def review(req):
         # fetch behind a button click is the stall 9c089d9 killed.
         try:
             try:
-                text, why = await brain_vl_read(dst, CRITIC_Q, cid=cid)
+                text, why = await brain_vl_read(dst, question, cid=cid)
             except Exception as exc:
                 # brain_vl_read is built to return its reasons; a raise is
                 # shaped like one, so the routing below stays the only routing.
@@ -23089,16 +23245,18 @@ async def review(req):
                               f"then click review again*"))
                     return
                 await HUB.submit(cid, "chat", "vl_review",
-                                 f"review of #{entry['id']}", {"image": dst},
+                                 f"review of #{entry['id']}",
+                                 {"image": dst, "brief": brief, "recipe": recipe},
                                  1, parent=entry["id"])
                 return
-            fix_m = re.search(r"^FIX:\s*(.+)$", text, re.M)
+            result = parse_review(text)
+            if result is None:
+                raise ValueError("the reviewer returned an incomplete review; try Review again")
             HUB.broadcast(type="review", job_id=uuid.uuid4().hex[:8], cid=cid,
-                          parent=entry["id"], text=text,
-                          fix=fix_m.group(1).strip() if fix_m else None)
+                          parent=entry["id"], text=result.text, fix=result.fix)
             if HUB.convo is not None:
                 HUB.convo.append({"role": "system",
-                                  "content": f"[critic on #{entry['id']}: {text}]"})
+                                  "content": f"[critic on #{entry['id']}: {result.text}]"})
         except Exception as exc:
             # The click already got its 200; a silent death here strands the
             # "reading the shot" spinner forever. Say what happened instead.
@@ -23371,13 +23529,44 @@ def _existing_media(entry):
                 / (im.get("filename") or "x")).is_file()]
 
 
-async def history(_req):
+# Fields the gallery and lane never read, but that were 45% of a 4.8 MB
+# /api/history body (1630 entries, 2026-09-05): the caption that ran, the
+# request spec, the cache summary and the VRAM telemetry. Terminal scripts
+# and the docs match ledger rows on scene/ts/info, which stay; the full row
+# is still the default and the browser asks for ?lite=1.
+_HISTORY_LITE_DROP = ("full_prompt", "spec", "cache", "vram", "paging_watchdog")
+_SCENE_OUT = {}      # entry id -> display_scene(scene); ledger rows never change
+
+
+def _entry_scene(e):
+    key = e.get("id")
+    if key is None:
+        return display_scene(e.get("scene"))
+    hit = _SCENE_OUT.get(key)
+    if hit is None:
+        hit = _SCENE_OUT[key] = display_scene(e.get("scene"))
+    return hit
+
+
+def _history_row(e, lite=False):
+    """One ledger row as the browser sees it: only the images still on
+    disk, the scene scrubbed, and (lite) without the fields the UI never
+    reads. Shared by /api/history and the jobdone event."""
+    out = {**e, "images": _existing_media(e), "scene": _entry_scene(e)}
+    if lite:
+        for key in _HISTORY_LITE_DROP:
+            out.pop(key, None)
+    return out
+
+
+async def history(req):
+    query = req.rel_url.query if req is not None else {}
+    lite = str(query.get("lite") or "").lower() not in ("", "0", "false")
     entries = []
     for e in HUB.ledger_read():
-        imgs = _existing_media(e)
-        if imgs:                     # every file gone -> the card would be
-            entries.append({**e, "images": imgs,      # nothing but broken
-                            "scene": display_scene(e.get("scene"))})
+        row = _history_row(e, lite)
+        if row["images"]:            # every file gone -> the card would be
+            entries.append(row)      # nothing but broken
     return web.json_response({"entries": entries})
 
 async def options(_req):
@@ -23493,9 +23682,14 @@ async def history_delete(req):
     out_root = (CDIR / "output").resolve()
     removed = 0
     failed = 0
-    for im in entry.get("images") or []:
+    # A cached engine output can be the original of more than one generation.
+    # Keep any file still referenced by another ledger entry or live job.
+    protected = set()
+    for other in [*HUB.ledger_read(), *HUB.jobs.values()]:
+        if str(other.get("id")) != str(entry["id"]):
+            protected.update(artifact_paths(out_root, other))
+    for p in artifact_paths(out_root, entry) - protected:
         try:
-            p = (out_root / (im.get("subfolder") or "") / (im.get("filename") or "")).resolve()
             if p.is_file() and p.is_relative_to(out_root):
                 p.unlink()
                 removed += 1
@@ -23503,7 +23697,7 @@ async def history_delete(req):
             # The ledger entry is already gone; a locked file would otherwise
             # be orphaned on disk with nothing recording it.
             failed += 1
-            print(f"[pixal] could not delete {im.get('filename')}: {exc}", flush=True)
+            print(f"[pixal] could not delete {p.name}: {exc}", flush=True)
     print(f"[pixal] deleted entry {entry['id']} ({removed} files, {failed} failed)",
           flush=True)
     return web.json_response({"ok": True, "files_removed": removed,
@@ -23973,9 +24167,9 @@ def _comfy_local_pids():
     either handle alone can miss the process that actually holds the RAM.
     Remote compute yields nothing; that is someone else's box."""
     pids = []
-    proc = COMFY_BOOT.get("proc")
-    if proc is not None and proc.poll() is None:
-        pids.append(proc.pid)
+    tracked = _comfy_supervisor().tracked_pid()
+    if tracked is not None:
+        pids.append(tracked)
     if comfy_is_local():
         pid = comfy_listener_pid()
         if pid and pid not in pids:
@@ -25122,8 +25316,75 @@ async def image(req):
                                 status=r.status)
 
 
+_THUMB_CACHE_CAP_BYTES = 600 * 2**20
+_THUMB_CACHE_WRITES = [0]
+
+
+def _thumb_cache_dir():
+    return DATA_DIR / ".cache" / "thumbs"
+
+
+def _thumb_cached(kind, path_text, mtime_ns, encode):
+    """Preview bytes from the on-disk cache, else encoded and written there.
+
+    An lru_cache alone died with every sidecar restart, and every code change
+    is a restart, so the grid re-encoded 0.15-0.25 s a tile on its first
+    scroll each time (2026-09-05). Keyed by kind, source path and mtime, so a
+    re-rendered or replaced source never serves a stale frame; written
+    atomically so a crash mid-write leaves no half tile."""
+    cached = _thumb_cache_dir() / (hashlib.sha1(
+        f"{kind}|{path_text}|{mtime_ns}".encode("utf-8", "surrogateescape")
+    ).hexdigest() + ".webp")
+    try:
+        return cached.read_bytes()
+    except OSError:
+        pass
+    data = encode()
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_name(f".{cached.stem}.{uuid.uuid4().hex}.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
+        _THUMB_CACHE_WRITES[0] += 1
+        if _THUMB_CACHE_WRITES[0] % 100 == 1:
+            _prune_thumb_cache()
+    except OSError as exc:
+        print(f"[pixal] thumbnail cache not written: {exc}", flush=True)
+    return data
+
+
+def _prune_thumb_cache(cap=_THUMB_CACHE_CAP_BYTES):
+    """Oldest previews go first once the folder passes the cap. Only this
+    folder's own *.webp files are ever touched."""
+    entries = []
+    try:
+        for p in _thumb_cache_dir().glob("*.webp"):
+            st = p.stat()
+            entries.append((st.st_mtime, st.st_size, p))
+    except OSError:
+        return
+    total = sum(size for _, size, _ in entries)
+    if total <= cap:
+        return
+    for _, size, p in sorted(entries):
+        try:
+            p.unlink()
+            total -= size
+        except OSError:
+            continue
+        if total <= cap * 0.8:
+            break
+
+
 @lru_cache(maxsize=256)
 def _output_thumbnail_bytes(path_text, mtime_ns):
+    """Lane-sized preview, memoized in-process and kept on disk (see
+    _thumb_cached); the encode itself is _encode_output_thumbnail."""
+    return _thumb_cached("output-1600-q90-m4", path_text, mtime_ns,
+                         lambda: _encode_output_thumbnail(path_text))
+
+
+def _encode_output_thumbnail(path_text):
     """Lane-sized WebP preview of a finished render. 1600px at quality 90:
     the original 1024/q80 pass visibly crushed skin and gradients on the lane
     (Jesse, 2026-08-12) — this is still ~100x under a PiD 4x PNG, which is the
@@ -25139,7 +25400,10 @@ def _output_thumbnail_bytes(path_text, mtime_ns):
     if thumb.mode not in ("RGB", "RGBA"):
         thumb = thumb.convert("RGBA" if "transparency" in thumb.info else "RGB")
     out = io.BytesIO()
-    thumb.save(out, format="WEBP", quality=90, method=6)
+    # method 4, not 6: 0.15 s against 0.25 s per 1600px frame for ~2% more
+    # bytes (2026-09-05). Compression effort only, same quality setting, so
+    # the v= tag stays.
+    thumb.save(out, format="WEBP", quality=90, method=4)
     return out.getvalue()
 
 
@@ -25318,29 +25582,9 @@ async def warmup_catalog():
         HUB.broadcast(type="scan", **HUB.scan)
     try:
         say("scanning models…")
-        entries = []
-        for root in model_roots():
-            for kd in KIND_DIRS:
-                base_dir = root / kd
-                if not base_dir.is_dir():
-                    continue
-                n0 = len(entries)
-                for p in base_dir.rglob("*"):
-                    if p.is_file() and p.suffix.lower() in MODEL_EXTS \
-                            and ".cache" not in p.parts:
-                        # One stat, both facts: mtime feeds the NEW badge, size
-                        # lets pickers say what a build weighs on disk (9.29).
-                        try:
-                            st = p.stat()
-                            mtime, size = st.st_mtime, st.st_size
-                        except OSError:
-                            mtime, size = 0, 0
-                        entries.append({"kind": kd, "root": str(root),
-                                        "rel": str(p.relative_to(base_dir)),
-                                        "mtime": mtime, "size": size})
-                if len(entries) > n0:
-                    say(f"{kd} - {len(entries) - n0} files")
-        _CATALOG.update(at=time.time(), data=entries)
+        owner = _catalog_owner()
+        entries = owner.scan(model_roots(), progress=say)
+        owner.publish(entries, time.time())
         say("reading lora titles…")
         await refresh_lm_cache(ttl=0)          # lora-manager names/previews, if present
         # Whatever lora-manager left unnamed gets Pixal's own Civitai/CivArchive
@@ -25361,8 +25605,7 @@ async def warmup_catalog():
 # --fast fp16_accumulation, --use-sage-attention and --disable-dynamic-vram,
 # plus TORCHINDUCTOR_CACHE_DIR and a vcvars call. Bypassing it silently drops
 # every one of them - measured here as a visibly slower machine.
-COMFY_LAUNCHER_PREFERENCE = ("run_nvidia_gpu_fast_fp16_accumulation.bat",
-                             "run_nvidia_gpu.bat")
+
 COMFY_BOOT_FALLBACK_SECONDS = 45.0
 # The console that window shows. comfy_tui.py runs the SAME launcher on a pipe
 # and draws it - phase meter, card meter, and the errors-only log below, which
@@ -25382,82 +25625,37 @@ COMFY_ERROR_LOG = COMFY_LOGS / "comfy-errors.log"
 # answering. That state is never auto-killed - a big model load looks identical
 # to a wedge from out here, and taskkilling the wrong one costs a live render -
 # so it is surfaced instead, and the kill stays the user's call.
-COMFY_BOOT = {"at": None, "launcher": None, "error": None, "task": None,
-              "proc": None, "stalled_since": None}
+_COMFY_RUNNER = ProcessRunner(
+    run=lambda *args, **kwargs: subprocess.run(*args, **kwargs),
+    popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
+    getpgid=lambda pid: os.getpgid(pid),
+    killpg=lambda pgid, sig: os.killpg(pgid, sig),
+    startup_info=lambda: subprocess.STARTUPINFO(),
+    show_window_flag=lambda: subprocess.STARTF_USESHOWWINDOW,
+    no_window_flag=lambda: getattr(subprocess, "CREATE_NO_WINDOW", 0),
+)
+COMFY_SUPERVISOR = ComfySupervisor(runner=_COMFY_RUNNER)
+COMFY_BOOT = COMFY_SUPERVISOR.boot
+
+
+def _comfy_supervisor():
+    # Preserve replacement COMFY_BOOT dictionaries and injected test runners.
+    COMFY_SUPERVISOR.boot = COMFY_BOOT
+    COMFY_SUPERVISOR.runner = _COMFY_RUNNER
+    return COMFY_SUPERVISOR
 
 
 def find_comfy_launcher(root=None):
-    """The launcher the user actually starts ComfyUI with - it sits BESIDE the
-    ComfyUI folder, not inside it. CPU and A/B test launchers are skipped.
-
-    nt: the tuned .bat - its flags are measured, and bypassing them is slower.
-    POSIX: a run*.sh beside the checkout wins (invoked through bash, so the
-    executable bit does not matter), else the checkout's own main.py. A .bat
-    is not bootable there, so it is never a POSIX candidate."""
-    base = Path(root or CDIR).parent
-    if not _nt():
-        for candidate in sorted(base.glob("run*.sh")):
-            low = candidate.name.lower()
-            if "cpu" not in low and "test" not in low:
-                return candidate
-        main_py = Path(root or CDIR) / "main.py"
-        return main_py if main_py.is_file() else None
-    for name in COMFY_LAUNCHER_PREFERENCE:
-        candidate = base / name
-        if candidate.is_file():
-            return candidate
-    for candidate in sorted(base.glob("run*.bat")):
-        low = candidate.name.lower()
-        if "cpu" not in low and "test" not in low:
-            return candidate
-    return None
+    return _comfy_supervisor().find_comfy_launcher(
+        root, comfy_root=CDIR, is_windows=_nt, preference=COMFY_LAUNCHER_PREFERENCE)
 
 
 def comfy_launch_command(launcher):
-    """(argv, cwd, env) for the ComfyUI console - wrapped, or raw.
-
-    Both nt paths run the same .bat: its --fast fp16_accumulation,
-    --use-sage-attention and vcvars call are load-bearing, and bypassing them is
-    measurable as a slower machine. The only question is who owns the window.
-    POSIX has no window to own and no tuned .bat: a run*.sh goes through bash,
-    a bare checkout through its own main.py with the best local python.
-    """
-    cfg = load_config()
-    env = dict(os.environ)
-    editor = bool(cfg.get("comfy_editor"))
-    if cfg.get("comfy_console") != "plain" and COMFY_TUI.is_file() \
-            and sys.platform == "win32":
-        cmd = [_console_python(), str(COMFY_TUI), "--launcher", str(launcher),
-               "--log-dir", str(COMFY_LOGS), "--url", COMFY,
-               "--expect", str(cfg.get("comfy_boot_seconds") or 0.0)]
-        if editor:
-            cmd.append("--editor")
-        # HERE, not the launcher's folder: the wrapper cd's the .bat itself, and
-        # running from Pixal's root keeps its logs where Pixal's logs live.
-        return cmd, str(HERE), env
-    if not _nt():
-        if launcher.suffix == ".sh":
-            # bash, never ./run.sh: a fresh clone may not carry the +x bit.
-            return ["bash", str(launcher)], str(launcher.parent), env
-        # The checkout's own main.py. Args actually forward here, so the
-        # comfy_editor contract keeps its shape: --disable-auto-launch is the
-        # direct form of the rundll32 trick the nt raw path is forced into.
-        python = next((str(p) for p in _posix_python_candidates(launcher.parent)
-                       if p.is_file()), sys.executable)
-        cmd = [python, str(launcher)]
-        if not editor:
-            cmd.append("--disable-auto-launch")
-        return cmd, str(launcher.parent), env
-    if not editor:
-        # ComfyUI's --windows-standalone-build implies auto-launching its graph
-        # editor, and portable launchers forward no args, so --disable-auto-launch
-        # can't be passed. The polite off-switch is the BROWSER env var Python's
-        # webbrowser honors: rundll32 with a URL argument exits silently, no
-        # window. Settings > comfy_editor turns the popup back on for the next
-        # ComfyUI boot. (The wrapper does this for itself, from --editor.)
-        env["BROWSER"] = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
-                                      "System32", "rundll32.exe")
-    return ["cmd.exe", "/c", str(launcher)], str(launcher.parent), env
+    return _comfy_supervisor().comfy_launch_command(
+        launcher, cfg=load_config(), environment=os.environ, tui=COMFY_TUI,
+        logs=COMFY_LOGS, url=COMFY, here=HERE, platform=sys.platform,
+        is_windows=_nt, console_python=_console_python,
+        python_candidates=_posix_python_candidates, executable=sys.executable)
 
 
 def _console_python():
@@ -25553,183 +25751,23 @@ async def comfy_reachable(timeout=4):
 
 
 async def ensure_comfy_running():
-    """Bring ComfyUI up through its own launcher when it isn't already.
-
-    So one click on Pixal is the whole studio: the sidecar starts, notices
-    ComfyUI is down, and boots it in its own console while the UI shows a meter.
-    """
-    if await comfy_reachable():
-        COMFY_BOOT["stalled_since"] = None      # it answered - no stall to report
-        return
-    # A boot still IN FLIGHT is not a reason to start a second one: two
-    # launchers race for port 8188, one wins the bind and the loser runs on with
-    # no port, which is precisely a ghost backend. COMFY_BOOT["at"] is what "in
-    # flight" means - every exit path in the watcher below clears it.
-    #
-    # A live child with NO boot in flight is a different animal, and conflating
-    # the two is what wedged the studio (2026-08-13). When ComfyUI crashes its
-    # .bat parks on "Press any key to continue", so cmd.exe stays alive forever
-    # and every later attempt returned right here, instantly: no boot, no error,
-    # nothing running, for the rest of the sidecar's life. That console is a
-    # corpse holding the door open - close it and start a fresh one.
-    live = COMFY_BOOT.get("proc")
-    if live is not None and live.poll() is None:
-        if COMFY_BOOT.get("at"):
-            return
-        # A BUSY ComfyUI is not a corpse. Loading the 8B VL critic or the H3
-        # stack holds its event loop long past comfy_reachable's timeout, the
-        # bridge websocket drops, and /api/status re-enters here every 4s for as
-        # long as comfy_up is false - so without this check a big model load
-        # gets its whole tree taskkill'd mid-render (2026-08-14). The port is
-        # the discriminator: a .bat parked on "Press any key" has no python left
-        # holding the socket, while a stalled one is still bound. A boot that
-        # timed out never bound it either, so it is still correctly reaped.
-        if await asyncio.to_thread(comfy_listener_pid) is not None:
-            # Never kill a process that still owns the port. But do not leave the
-            # user staring at a meterless "waiting for ComfyUI" either: record
-            # when the stall began so comfy_boot_state can offer a way out.
-            if COMFY_BOOT["stalled_since"] is None:
-                COMFY_BOOT["stalled_since"] = time.time()
-            return
-        # A TREE kill, not Popen.kill(): the handle we hold is cmd.exe, and
-        # ComfyUI's python sits UNDER it. Terminating the console alone leaves
-        # that python resident - holding VRAM, owning no port, unreachable by
-        # any later lookup - and then this function boots a rival onto the same
-        # card. That is the ghost backend, manufactured by the very code meant
-        # to prevent it. (The corpse case has no python left to reap; the
-        # timed-out-boot case very much does.)
-        try:
-            # off the loop: taskkill blocks up to 20s, and this path now runs
-            # on the same 4s poll that drives the boot meter
-            await asyncio.to_thread(_taskkill, live.pid)
-        except (OSError, subprocess.SubprocessError) as exc:
-            print(f"[pixal] could not close the stale ComfyUI console: {exc}",
-                  flush=True)
-        COMFY_BOOT["proc"] = None
-    launcher = find_comfy_launcher()
-    if not launcher:
-        shape = ".bat" if _nt() else "run*.sh or main.py"
-        COMFY_BOOT["error"] = (f"no ComfyUI launcher ({shape}) found beside the "
-                               "ComfyUI folder - start it yourself")
-        print("[pixal] " + COMFY_BOOT["error"], flush=True)
-        return
-    COMFY_BOOT.update(at=time.time(), launcher=str(launcher), error=None)
-    # A fresh ComfyUI holds nothing. The log has 25+ of these in one session and
-    # the butler credited every one of them with the dead process's residency.
-    HUB.forget_residency("comfy restarting")
-    print(f"[pixal] starting ComfyUI via {launcher.name}", flush=True)
-    try:
-        cmd, cwd, env = comfy_launch_command(launcher)
-        if _nt():
-            # The launcher gets its own normal console window - the same one
-            # you get by double-clicking it. That window IS the VRAM indicator:
-            # open means something is still on the card, and closing it takes
-            # ComfyUI down. (comfy_tui keeps that contract with a job object;
-            # see own_the_tree.) wShowWindow has to be explicit because
-            # pixal.vbs starts run.bat HIDDEN, and a new console inherits its
-            # parent's show state unless you name one.
-            show = subprocess.STARTUPINFO()
-            show.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            show.wShowWindow = 1                            # SW_SHOWNORMAL
-            COMFY_BOOT["proc"] = subprocess.Popen(
-                cmd, cwd=cwd, creationflags=0x00000010,     # CREATE_NEW_CONSOLE
-                startupinfo=show, env=env)
-        else:
-            # No console to dress on POSIX - but start_new_session is not a
-            # nicety: it makes the launcher a process-group leader, which is
-            # what lets _taskkill take launcher and python down as one tree.
-            COMFY_BOOT["proc"] = subprocess.Popen(
-                cmd, cwd=cwd, env=env, start_new_session=True)
-    except OSError as exc:
-        COMFY_BOOT.update(at=None, error=f"could not start {launcher.name}: {exc}")
-        print("[pixal] " + COMFY_BOOT["error"], flush=True)
-        return
-    # Snapshot the boot stamp: another path (an adopt, a reset, a rival boot)
-    # can clear COMFY_BOOT["at"] while this watcher sleeps, and the first
-    # reachable poll then subtracted None and took the whole task down
-    # (sidecar.log, 2026-08-26, mid H3 2x clip).
-    started = COMFY_BOOT["at"]
-    # Our OWN handle on the console we just opened. Re-reading COMFY_BOOT["proc"]
-    # every tick looked equivalent and was not: stop_comfy() nulls that field,
-    # so the moment anything stopped ComfyUI this watcher went blind to the
-    # death of the very child it had launched. It then polled a dead port for
-    # the rest of its grace - up to 15 minutes of wall clock, because each tick
-    # is a 2s sleep plus a 3s probe timeout - while kick_comfy_boot's
-    # one-attempt-at-a-time guard handed that same lost task back to every
-    # later caller. Retry, reload and /api/comfy/restart all became no-ops
-    # behind a meterless "waiting for ComfyUI" (2026-09-04).
-    mine = COMFY_BOOT.get("proc")
-    for _ in range(180):                                    # 6 minutes of grace
-        await asyncio.sleep(2)
-        # Someone stopped or replaced this boot: it is no longer ours to report
-        # on, and whoever owns COMFY_BOOT now owns its error and its meter too.
-        if COMFY_BOOT.get("proc") is not mine:
-            return
-        if await comfy_reachable(timeout=3):
-            stamp = COMFY_BOOT["at"] or started
-            took = round(time.time() - stamp, 1) if stamp else None
-            print(f"[pixal] ComfyUI up in {took}s" if took is not None
-                  else "[pixal] ComfyUI up", flush=True)
-            if took is not None:
-                cfg = load_config()                # calibrate the next boot meter
-                cfg["comfy_boot_seconds"] = took
-                save_config(cfg)
-            # Hold the boot state until the hub's own watcher agrees. Clearing it
-            # the moment the port answers blinks the UI through a frame that says
-            # "waiting for ComfyUI" with no meter, right at the finish line.
-            for _ in range(20):
-                if HUB.comfy_up:
-                    break
-                await asyncio.sleep(1)
-            COMFY_BOOT["at"] = None
-            return
-        # A launcher that has already exited is never going to answer, so a
-        # crashed boot reports in seconds instead of riding out the grace.
-        # (A .bat parked on `pause` after a crash keeps cmd.exe alive; that
-        # shape still takes the timeout - poll() catches the clean exits.)
-        proc = mine
-        if proc is not None and proc.poll() is not None:
-            # "its console window has the error" was true and useless: by the
-            # time anyone reads this the window is gone. The wrapper leaves the
-            # reason on disk, so say the reason.
-            why = comfy_last_error()
-            COMFY_BOOT.update(at=None, error=(
-                f"ComfyUI exited during boot - {why}" if why else
-                "ComfyUI exited during boot - the output is in logs\\comfy.log"))
-            print("[pixal] " + COMFY_BOOT["error"], flush=True)
-            return
-    why = comfy_last_error()
-    COMFY_BOOT.update(at=None, error=("ComfyUI did not come up within 6 minutes"
-                                      + (f" - {why}" if why else "")))
-    print("[pixal] " + COMFY_BOOT["error"], flush=True)
+    return await _comfy_supervisor().ensure_comfy_running(
+        reachable=lambda **kw: comfy_reachable(**kw),
+        listener_pid=lambda: comfy_listener_pid(),
+        taskkill=lambda *args: _taskkill(*args),
+        find_launcher=lambda: find_comfy_launcher(),
+        launch_command=lambda launcher: comfy_launch_command(launcher),
+        is_windows=lambda: _nt(),
+        forget_residency=lambda reason: HUB.forget_residency(reason),
+        comfy_up=lambda: HUB.comfy_up,
+        read_config=lambda: load_config(), save_config=lambda cfg: save_config(cfg),
+        last_error=lambda: comfy_last_error(), clock=lambda: time.time(),
+        sleep=lambda delay: asyncio.sleep(delay),
+        to_thread=lambda fn, *args: asyncio.to_thread(fn, *args))
 
 
 def comfy_listener_pid(port=None):
-    """The pid listening on ComfyUI's port, whoever started it.
-
-    We only know our own child's pid when WE launched it, and the common case
-    is a ComfyUI the user started. The port is the one handle that identifies
-    it either way.
-    """
-    port = int(port or urllib.parse.urlparse(COMFY).port or 8188)
-    try:
-        # getattr, not a bare 0x08000000: creationflags raises ValueError - which
-        # the except below does NOT catch - on any non-Windows platform, and the
-        # Linux half of CI reaches this the moment a test exercises the caller.
-        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
-                             text=True, timeout=15,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 5 and parts[3].upper() == "LISTENING" \
-                and parts[1].rsplit(":", 1)[-1] == str(port):
-            try:
-                return int(parts[4])
-            except ValueError:
-                continue
-    return None
+    return _comfy_supervisor().comfy_listener_pid(port, url=COMFY)
 
 
 def comfy_is_local():
@@ -25744,45 +25782,12 @@ def comfy_is_local():
 
 
 def _taskkill(pid, timeout=20):
-    """Kill a process and everything under it.
-
-    /T because ComfyUI's launcher .bat sits between us and python: killing
-    either one on its own leaves the other running. POSIX gets the same reach
-    from the process group: the launcher is spawned with start_new_session, so
-    one killpg takes launcher and python down together."""
-    if _nt():
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       capture_output=True, timeout=timeout,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass
+    return _comfy_supervisor()._taskkill(pid, timeout, is_windows=_nt)
 
 
 def stop_comfy(timeout=20):
-    """Stop every ComfyUI this sidecar is responsible for; return the pids killed.
-
-    Two handles, because either one alone leaves something behind. The tracked
-    child catches a ComfyUI that never bound the port - the ghost case, which by
-    definition no port lookup can find. The port owner catches one that outlived
-    the sidecar that spawned it. Remote compute is never touched; that is
-    someone else's box and someone else's session.
-    """
-    stopped = []
-    proc = COMFY_BOOT.get("proc")
-    if proc is not None:
-        if proc.poll() is None:
-            _taskkill(proc.pid, timeout)
-            stopped.append(proc.pid)
-        COMFY_BOOT["proc"] = None
-    if comfy_is_local():
-        pid = comfy_listener_pid()
-        if pid and pid not in stopped:
-            _taskkill(pid, timeout)
-            stopped.append(pid)
-    return stopped
+    return _comfy_supervisor().stop_comfy(
+        timeout, is_local=comfy_is_local, listener_pid=comfy_listener_pid, taskkill=_taskkill)
 
 
 async def restart_comfy(_req):
@@ -25808,7 +25813,7 @@ async def restart_comfy(_req):
             await asyncio.sleep(0.5)
             if not await comfy_reachable(timeout=2):
                 break
-    COMFY_BOOT.update(at=None, error=None)
+    _comfy_supervisor().reset_boot_report()
     kick_comfy_boot()
     return web.json_response({"ok": True, "stopped_pids": pids,
                               "boot": comfy_boot_state()})
@@ -25857,61 +25862,16 @@ async def restart_sidecar(_req):
 
 
 def comfy_closed_by_user():
-    """Did the ComfyUI WE started go away because someone shut its window?
-
-    Told apart from a crash by what is left behind. When ComfyUI crashes, its
-    .bat parks on "Press any key to continue" and the cmd.exe we spawned stays
-    alive holding that console - a corpse, which ensure_comfy_running is
-    already built to clear away and replace. When someone closes the window,
-    the whole process tree goes with it and our handle reports an exit code.
-
-    Only ever true for a console this process launched: a ComfyUI the user
-    started by hand was never ours to restart, and an adopted one leaves
-    COMFY_BOOT["proc"] as None, so neither is mistaken for a close.
-    """
-    proc = COMFY_BOOT.get("proc")
-    return bool(proc is not None and proc.poll() is not None
-                and not COMFY_BOOT.get("at"))
+    return _comfy_supervisor().comfy_closed_by_user()
 
 
 async def cancel_comfy_boot():
-    """Stop an attempt in flight and wait for it to actually let go.
-
-    An explicit "start it again" must not join a boot that is already lost.
-    Cancelling BEFORE stop_comfy matters: the other order lets the cancelled
-    watcher hand COMFY_BOOT a proc we have already killed.
-    """
-    task = COMFY_BOOT.get("task")
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    if COMFY_BOOT.get("task") is task:
-        COMFY_BOOT["task"] = None
+    return await _comfy_supervisor().cancel_comfy_boot()
 
 
 def kick_comfy_boot():
-    """Start ComfyUI on demand, at most one attempt in flight.
-
-    Re-entrant on purpose: if a previous attempt finished - including one that
-    failed, or one whose ComfyUI has since died - reloading the page tries
-    again, which makes the overlay's retry button mean something.
-
-    Every caller here is an INTENT to have ComfyUI running - opening the app,
-    the overlay's start button - and each of them starts a boot, which replaces
-    COMFY_BOOT["proc"] and so clears the closed-by-user reading on its own.
-    Nothing has to be un-latched. status()'s poll is the one caller that asks
-    first, because it speaks for nobody.
-    """
-    task = COMFY_BOOT.get("task")
-    if task is not None and not task.done():
-        return task
-    task = asyncio.create_task(ensure_comfy_running())
-    COMFY_BOOT["task"] = task
-    return task
+    return _comfy_supervisor().kick_comfy_boot(
+        ensure_running=lambda: ensure_comfy_running(), create_task=asyncio.create_task)
 
 
 # Closing the window IS what closing Pixal means to the user, but a browser tab
@@ -25981,13 +25941,13 @@ async def on_start(app):
         kick_comfy_boot()
 
 async def on_cleanup(app):
+    _FACE_FINDER.stop()                 # the warm detector must not outlive us
     app["bridge"].cancel()
     app["gpu"].cancel()
     app["exit"].cancel()
     if app.get("brain_reaper"):
         app["brain_reaper"].cancel()
-    if COMFY_BOOT.get("task"):
-        COMFY_BOOT["task"].cancel()
+    _comfy_supervisor().cancel_watch()
     if "warmup" in app:
         app["warmup"].cancel()
     # A sidecar restart for a CODE change should not cost a 20GB model reload.
@@ -26429,8 +26389,23 @@ async def update_launch_post(_req):
         {"ok": True, "note": "the installer is open - Pixal is closing"})
 
 
+@web.middleware
+async def _app_owner_scope(request, handler):
+    with _event_service.scope(HUB, request.app[EVENTS_KEY]), \
+            _ledger_service.scope(HUB, request.app[LEDGER_KEY]):
+        return await handler(request)
+
+
+def _scoped_lifecycle(hook):
+    async def run(app):
+        with _event_service.scope(HUB, app[EVENTS_KEY]), \
+                _ledger_service.scope(HUB, app[LEDGER_KEY]):
+            await hook(app)
+    return run
+
+
 def create_app():
-    """Desktop compatibility adapter. Legacy state is still single-instance."""
+    """Desktop adapter with per-app event/ledger owners; other state is legacy."""
     from pixal.app import LifecycleHooks, create_app as application_factory
 
     app = application_factory(
@@ -26499,11 +26474,14 @@ def create_app():
             "manager_status": manager_status,
             "comfy_asset": comfy_asset,
         },
-        middlewares=(access_gate, config_errors),
+        middlewares=(access_gate, config_errors, _app_owner_scope),
         client_max_size=DLSS5_DLL_MAX_BYTES + 1_000_000,
-        lifecycle=LifecycleHooks(startup=(on_start,), shutdown=(on_shutdown,),
-                                 cleanup=(on_cleanup,)),
+        lifecycle=LifecycleHooks(startup=(_scoped_lifecycle(on_start),),
+                                 shutdown=(_scoped_lifecycle(on_shutdown),),
+                                 cleanup=(_scoped_lifecycle(on_cleanup),)),
     )
+    app[EVENTS_KEY] = EventPublisher(clock=lambda: time.time())
+    app[LEDGER_KEY] = Ledger(LEDGER)
     app["convo"] = HUB.convo  # Legacy alias until chat ownership migrates.
     return app
 

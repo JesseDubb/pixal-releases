@@ -23,7 +23,7 @@ import { ComfyWordmark, LightricksMark, MiniMaxMark, NvidiaMark } from "../lib/B
 import { InfoTip } from "./InfoTip.jsx";
 import { Bar, LineGhost, PickerGhost, SegGhost, SkeletonStyle, SwitchGhost, ValueGhost } from "./Skeleton.jsx";
 import { familyName, prettyModel, prettyTemplate } from "../lib/names.js";
-import { useStore } from "../store.js";
+import { useGpu, useStore } from "../store.js";
 import { SettingsWorkspace } from "./SettingsWorkspace.jsx";
 import { SETTINGS, settingId } from "../lib/settings-layout.js";
 import { textOf } from "../lib/settings-search.js";
@@ -414,6 +414,7 @@ const inputStyle = {
 
 export const SettingsMenu = ({ onClose, docked, phone }) => {
   const store = useStore();
+  const gpu = useGpu();            // the meter no longer rides emit()
   const [cfg, setCfg] = useState(null);
   const [mode, setMode] = useState("api");
   const [baseUrl, setBaseUrl] = useState("");
@@ -918,7 +919,7 @@ export const SettingsMenu = ({ onClose, docked, phone }) => {
         </Section>
 
         <Section title={<>Memory <InfoTip text="Pixal releases idle models automatically when a render needs room. The manual controls below release cached weights immediately; the next use reloads them." /></>}>
-          <MemoryOverview gpu={store.gpu} />
+          <MemoryOverview gpu={gpu} />
           <Rows>
           <Field label={<>Brain idles after <InfoTip text="A warmed brain holds ~8 GB. Idle, it unloads; the next message wakes it in seconds." /></>}>
             {cfg ? (

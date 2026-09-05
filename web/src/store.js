@@ -694,6 +694,7 @@ function identityCompatibleSelections(options = state.options) {
 }
 
 const listeners = new Set();
+const gpuSubs = new Set();       // the VRAM meter's own channel - see case "gpu"
 const emit = () => listeners.forEach((fn) => fn());
 
 const cid = () => Math.random().toString(16).slice(2, 10);
@@ -793,11 +794,20 @@ function onEvent(d) {
       state.brain = { mode: d.mode, model: d.model, device: d.device,
                       vision: !!d.vision, nsfw: !!d.nsfw };
       break;
-    case "gpu":
+    case "gpu": {
+      // Telemetry outside the message tree, like progress: the watcher posts
+      // every 3 s for as long as VRAM moves, and routing it through emit()
+      // re-rendered the whole app - composer, LoRA rail, every message - on
+      // each tick of a render. Only the meter subscribes (useGpu); the first
+      // reading still emits, because the header lays out around whether a
+      // meter exists at all.
+      const first = !state.gpu;
       state.gpu = { name: d.name, used: d.used, total: d.total,
                     ram_used: d.ram_used, ram_total: d.ram_total };
-      emit();
+      gpuSubs.forEach((fn) => fn());
+      if (first) emit();
       break;
+    }
     case "scan":
       if (d.done) {
         state.scan = d.totals ? "catalog · " + d.totals : null;
@@ -865,7 +875,9 @@ function onEvent(d) {
         m.job && m.job.job_id === d.job_id
           ? { ...m, job: { ...m.job, images: [...m.job.images,
               { filename: d.filename, subfolder: d.subfolder,
-                type: d.img_type || "output", media: d.media || "image" }] } }
+                type: d.img_type || "output", media: d.media || "image",
+                ...(d.original ? { original: d.original } : {}),
+                ...(d.finish !== undefined ? { finish: d.finish } : {}) }] } }
           : m));
       break;
     case "jobdone":
@@ -873,7 +885,28 @@ function onEvent(d) {
       state.liveJobs = state.liveJobs.filter((id) => id !== d.job_id);
       patchJob(d.job_id, { done: true, elapsed: d.elapsed, error: d.error || null });
       clearThinking();
-      api.loadHistory();
+      if ("entry" in d) {
+        // The sidecar hands over the ledger row it just wrote (the lite
+        // projection /api/history?lite=1 returns): upsert it instead of
+        // refetching the whole gallery after every render. null means the
+        // job wrote no row (a review, a failed render) - nothing to do.
+        if (d.entry) {
+          state.history = [d.entry,
+                           ...(state.history || []).filter((e) => e.id !== d.entry.id)];
+          emit();
+        }
+      } else {
+        api.loadHistory();          // an older sidecar: no row on the event
+      }
+      break;
+    case "ledger":
+      // A row written after the job's done event (a picture whose finishers
+      // outlived a Stop): same upsert as jobdone's entry.
+      if (d.entry) {
+        state.history = [d.entry,
+                         ...(state.history || []).filter((e) => e.id !== d.entry.id)];
+        emit();
+      }
       break;
     case "review":
       clearThinking();
@@ -1653,6 +1686,13 @@ export function useStore() {
     return () => listeners.delete(force);
   }, []);
   return api;
+}
+
+// Reactive read of the GPU meter, for the one component that draws it.
+export function useGpu() {
+  const subscribe = useCallback(
+    (fn) => { gpuSubs.add(fn); return () => gpuSubs.delete(fn); }, []);
+  return useSyncExternalStore(subscribe, () => state.gpu);
 }
 
 // Reactive read of THE seed lock for one card. JobCards sit behind Message's

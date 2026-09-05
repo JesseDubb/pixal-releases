@@ -523,150 +523,128 @@ class PreferenceInTheLaneTests(_Lane):
 
 
 class DirectorLineTests(unittest.TestCase):
-    """The half of the contract the server cannot enforce."""
+    """The local menu routes to shared, active-recipe guidance."""
 
-    def line(self):
-        return next(l for l in server.SYSTEM_LOCAL.splitlines()
-                    if l.startswith("- h3_ref_still:"))
-
-    def test_the_lighting_rule_is_the_corrected_one(self):
-        line = self.line()
-        self.assertIn("Light arrives from out of frame", line)
-        self.assertIn("the room stays lit", line)
-        self.assertIn("never name a lamp, bulb or neon", line)
-        # 9.80's retracted half, in every spelling it was written in.
-        self.assertNotIn("lamps that are in the frame", line)
-        self.assertNotIn("INSIDE a real place", line)
-
-    def test_it_carries_the_measured_writing_rules(self):
-        line = self.line()
-        # 2026-09-02: a word budget was the wrong axis - see the comment
-        # over _H3_STILL_END_CONTRACT for the 50-caption measurement.
-        self.assertIn("Short sentences of about fifteen words", line)
-        self.assertNotIn("About 45 words", line)
-        self.assertIn("ONE thing she is in the middle of", line)
-        self.assertIn("Write the moment, not the expression", line)
-        self.assertIn("spell its words in capitals", line)
-        self.assertIn("the label is turned away", line)
-        # 9.80's hands rule survived the rewrite.
-        self.assertIn("clear of her face", line)
+    def test_the_menu_does_not_invent_a_character_or_lighting(self):
+        line = next(l for l in server.SYSTEM_LOCAL.splitlines()
+                    if l.startswith("- h3_ref_still /"))
+        self.assertIn("H3 REFERENCE DIRECTION", line)
+        self.assertIn("character facts", line)
+        for retired in ("19 years", "single hard", "never name a lamp",
+                        "the label is turned away"):
+            self.assertNotIn(retired, line)
 
 
-class BigBrainCraftTests(unittest.TestCase):
-    """The same lane, for the writer that had none of it.
+class ReferenceDirectionTests(unittest.TestCase):
+    """Writer contracts, not a claim about generated image quality."""
 
-    SYSTEM's Templates list documented seven recipes and none of the four H3
-    still rows, so the remote brain met this lane with the Krea-2-shaped photo
-    craft plus the three-point end contract and nothing else. Everything
-    DirectorLineTests pins for the local writer lived only in SYSTEM_LOCAL.
+    def prompt(self, recipe="h3_ref_still", local=False, enhance=True):
+        with patch.object(server, "load_config",
+                          return_value={"llm": {"official_prompting": False}}):
+            return server.writer_system_prompt(local, enhance, recipe)
+
+    def test_both_writers_receive_one_shared_active_contract(self):
+        from pixal.prompting import H3_REFERENCE_DIRECTION
+        for local in (False, True):
+            for recipe in ("h3_ref_still", "h3_ref_still_2x"):
+                with self.subTest(local=local, recipe=recipe):
+                    text = self.prompt(recipe, local)
+                    self.assertEqual(text.count(H3_REFERENCE_DIRECTION), 1)
+                    self.assertLess(text.index("H3 STILL CONTRACT"),
+                                    text.index(H3_REFERENCE_DIRECTION))
+                    self.assertLess(text.index(H3_REFERENCE_DIRECTION),
+                                    text.index("TURN POLICY -"))
+
+    def test_unrelated_recipes_and_verbatim_mode_do_not_get_reference_craft(self):
+        from pixal.prompting import H3_REFERENCE_DIRECTION
+        for local in (False, True):
+            for recipe in ("realism", "identity_edit", "anima", "fantasy",
+                           "zimage", "qwen_image", "h3_still", "h3_still_2x", None):
+                with self.subTest(local=local, recipe=recipe):
+                    self.assertNotIn(H3_REFERENCE_DIRECTION, self.prompt(recipe, local))
+            self.assertNotIn(H3_REFERENCE_DIRECTION,
+                             self.prompt(local=local, enhance=False))
+
+    def test_age_and_styling_are_not_a_fixed_zara_preset(self):
+        for local in (False, True):
+            text = self.prompt(local=local)
+            self.assertNotIn("She is 19 years old", text)
+            self.assertNotIn("Fine peach fuzz along her jaw glows", text)
+            self.assertNotIn("Soft golden hour is better light", text)
+            self.assertIn("When age is unspecified, leave it unspecified.", text)
+            self.assertIn("Preserve the subject's pronouns.", text)
+
+    def test_user_light_stillness_and_minimalism_outrank_taste_defaults(self):
+        text = " ".join(self.prompt().split())
+        for instruction in (
+                "Soft window light stays soft; candlelight stays candlelight.",
+                "A requested still or contemplative pose stays still",
+                "a minimal scene stays minimal",
+                "Use the supplied character age when available",
+                "an explicit age in the current request takes precedence"):
+            with self.subTest(instruction=instruction):
+                self.assertIn(instruction, text)
+
+    def test_reference_geometry_and_clothing_safeguards_are_still_taught(self):
+        text = " ".join(self.prompt().split())
+        for instruction in ("one hand holds the camera", "at most one task",
+                            "waist-up-or-closer", "Close with the wardrobe",
+                            "reference carries facial identity"):
+            self.assertIn(instruction, text)
+
+    def test_official_craft_cannot_remove_the_reference_contract(self):
+        from pixal.prompting import H3_REFERENCE_DIRECTION
+        for local in (False, True):
+            with self.subTest(local=local), \
+                 patch.object(server, "_OFFICIAL_PROMPTS",
+                              {"minimax_h3": "Official craft goes here."}), \
+                 patch.object(server, "load_config",
+                              return_value={"llm": {"official_prompting": True}}):
+                text = server.writer_system_prompt(local, True, "h3_ref_still")
+                self.assertIn("Official craft goes here.", text)
+                self.assertEqual(text.count(H3_REFERENCE_DIRECTION), 1)
+                self.assertLess(text.index("Official craft goes here."),
+                                text.index(H3_REFERENCE_DIRECTION))
+
+
+class CreativeConditioningTests(_Lane):
+    """Inspect real builder outputs at the node, on both installed-node paths.
+
+    No LLM or GPU is called: these test conditioning integrity, not whether a
+    probabilistic writer/render model follows the instruction.
     """
 
-    # The heading, not the Templates entry's "follow the H3
-    # reference-still craft below" pointer at it.
-    HEAD = "H3 reference-still SKELETON (h3_ref_still and h3_ref_still_2x)"
+    def test_explicit_age_soft_light_and_stillness_reach_the_sampler_conditioning(self):
+        scene = ("She is 64 years old. She sits perfectly still beside a window. "
+                 "Soft overcast daylight falls from the left. "
+                 "She wears a navy wool sweater.")
+        for single in (False, True):
+            with self.subTest(single=single):
+                graph, caption, info = self.build(scene, image_vae=single)
+                prompt = graph["6"]["inputs"]["prompt"]
+                for sentence in scene.split(". "):
+                    self.assertIn(sentence, prompt)
+                self.assertNotIn("19 years", prompt)
+                self.assertNotIn("hard real light", prompt)
+                self.assertIn(caption, prompt)
+                self.assertEqual(graph["9"]["inputs"]["conditioning"], ["6", 0])
+                self.assertEqual(graph["11"]["inputs"]["guider"], ["9", 0])
+                self.assertEqual(graph["6"]["inputs"]["ref_images.ref_image_0"], ["5", 0])
+                description = prompt.split("detailed_description:\n", 1)[1].split("\n\n")[0]
+                self.assertTrue(description.endswith(server.wardrobe_lock_for(CHARACTER)))
+                self.assertEqual(info["one_frame"], single)
 
-    def block(self):
-        text = server.SYSTEM
-        at = text.index(self.HEAD)
-        return text[at:text.index("\n\nNSFW:", at)]
-
-    def test_the_templates_list_routes_the_lane(self):
-        templates = server.SYSTEM.split("Templates:")[1].split("\n\n")[0]
-        self.assertIn("- h3_ref_still:", templates)
-        self.assertIn("- h3_still / h3_still_2x:", templates)
-        # The four-hour trap of 2026-09-02: h3_still wires no reference at
-        # all, so an anchored ask sent there comes back a stranger.
-        self.assertIn("no reference input at all", templates)
-
-    def test_the_skeleton_has_its_four_sections_in_order(self):
-        block = self.block()
-        at = [block.index(s) for s in ("FACE", "SHOT", "REALITY", "WARDROBE")]
-        self.assertEqual(at, sorted(at), "the four sections fell out of order")
-        # Twelve numbered sentences, and the wardrobe closes the caption.
-        for n in range(1, 13):
-            with self.subTest(sentence=n):
-                self.assertIn(f"\n{n}. ", block)
-        self.assertIn("CLOSES the caption with nothing after it", block)
-
-    def test_the_age_sentence_is_written_out_in_full(self):
-        """The cure for the one Jesse named on 2026-09-02, "a 30 year old
-        bimbo": the lane drops the card's age and the reference does not
-        carry it against a written caption. Giving the writer the rule
-        produced captions without it; giving it the SENTENCE is the fix."""
-        block = self.block()
-        self.assertIn("She is 19 years old and she looks it", block)
-        self.assertIn("Write it EVERY TIME", block)
-
-    def test_her_features_never_reach_the_caption(self):
-        """2026-09-03, measured on one seed: "the two front teeth a touch
-        larger than the rest" - true of her, copied off her own card -
-        rendered as buck teeth. A named feature is read as an instruction to
-        PERFORM it, not as identification. Three caption variants on that
-        seed produced the same face, so the words move nothing anyway."""
-        block = self.block()
-        self.assertIn("NEVER HER FEATURES", block)
-        for feature in ("nose", "teeth", "chin", "cheekbones", "jaw"):
-            with self.subTest(feature=feature):
-                self.assertIn(feature, block)
-        # Age is the stated exception, and it is the one thing that measured.
-        self.assertIn("category", block)
-
-    def test_the_reality_block_is_supplied_verbatim(self):
-        """Five of the seventeen sentences in a keeper caption are this
-        block, near enough word for word, and the chat writer had never
-        produced any of it - which is most of what "plastic" was."""
-        block = self.block()
-        for line in ("This is a photograph of reality.",
-                     "every pore catches its own tiny highlight",
-                     "Fine peach fuzz along her jaw glows",
-                     "lit the way skin is actually lit"):
-            with self.subTest(line=line[:36]):
-                self.assertIn(line, block)
-
-    def test_it_carries_the_measured_rules(self):
-        block = self.block()
-        for rule in ("REAL BEATS STAGED", "WHO IS HOLDING THE CAMERA",
-                     "THE LIGHT IS THE REALISM LEVER",
-                     "GIVE HER AN ACTION", "WAIST-UP OR CLOSER",
-                     "POSES ARE PLANTED"):
-            with self.subTest(rule=rule):
-                self.assertIn(rule, block)
-        # Length is not the constraint, clause depth is: the keepers run
-        # 240-330 words as sixteen short sentences.
-        self.assertIn("clause six", block)
-        self.assertNotIn("forty-five words", block)
-        # Two expressions at once is what produced the tongue-and-lip-bite
-        # face that rendered as neither.
-        self.assertIn("ONE thing", block)
-
-    def test_every_rule_is_phrased_positively(self):
-        """The 2026-08-31 finding, applied here: a prohibition a writer can
-        copy WILL be copied, and it reaches the sampler as a negation - the
-        one form this model family has no representation of. Rules about the
-        caption's own construction are exempt; rules about what is in the
-        frame are not."""
-        for line in self.block().splitlines():
-            if not (line.startswith("- ") or line[:1].isdigit()):
-                continue
-            with self.subTest(line=line[:48]):
-                self.assertNotRegex(line, r"\bno\s+(?:lamp|bulb|neon|sign)\b")
-                self.assertNotRegex(line, r"\bnever\s+(?:name|write|say|show)\b")
-
-    def test_it_is_last_on_its_subject_and_survives_official_prompting(self):
-        # The craft block official prompting swaps out is the realism one, so
-        # this sits after it (last on its subject, per 9.65) and outside the
-        # seam - a model maker's expansion prompt must not take the lane's
-        # own rules with it.
-        text = server.SYSTEM
-        self.assertLess(text.index("Photo craft for realism and realism_ii:"),
-                        text.index(self.HEAD))
-        with patch.object(server, "_OFFICIAL_PROMPTS",
-                          {"krea2": "Official craft goes here."}), \
-             patch.object(server, "load_config",
-                          return_value={"llm": {"official_prompting": True}}):
-            swapped = server.writer_system_prompt(False, True, "realism")
-        self.assertIn("Official craft goes here.", swapped)
-        self.assertIn(self.HEAD, swapped)
+    def test_creative_text_changes_leave_the_recipe_controls_unchanged(self):
+        baseline, _, _ = self.build("She sits beside a window in a navy sweater.")
+        changed, _, _ = self.build(
+            "She sits perfectly still beside a window in a navy sweater. "
+            "Soft overcast daylight. A restrained slate and ivory palette.")
+        # Model, encoder, VAE, sampling, seed and decode stay at the same controls.
+        for node in ("1", "2", "3", "4", "7", "8", "9", "10", "11", "12"):
+            self.assertEqual(baseline[node], changed[node], node)
+        before, after = dict(baseline["6"]["inputs"]), dict(changed["6"]["inputs"])
+        self.assertNotEqual(before.pop("prompt"), after.pop("prompt"))
+        self.assertEqual(before, after)
 
 
 class EndContractTests(unittest.TestCase):

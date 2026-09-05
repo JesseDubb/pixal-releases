@@ -3,9 +3,10 @@
 // with re-roll / iterate / open actions.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { tuningLine, finishChips } from "../lib/names.js";
+import { originalImage, imageFinishInfo } from "../lib/image-compare.js";
 import { ArrowClockwise, ArrowBendUpLeft, ArrowsOutSimple,
          Check, Copy, FilmStrip, LockSimple, LockSimpleOpen, MagnifyingGlass,
-         PaintBrush, Play } from "@phosphor-icons/react";
+         PaintBrush, Play, ArrowsLeftRight } from "@phosphor-icons/react";
 import { FONT, W, TYPE, SPACE, RADIUS, MOTION, GLASS_SOLID } from "../lib/design-tokens.js";
 import { Disclosure, DisclosureTrigger } from "../lib/Disclosure.jsx";
 import { DotMatrix } from "../lib/DotMatrix.jsx";
@@ -52,6 +53,13 @@ const StillFrame = ({ im, alt, chips, onClick }) => {
       <img src={thumbUrl(im)} loading="lazy" alt={alt} onClick={onClick}
            style={{ width: "100%", borderRadius: RADIUS.card, display: "block",
                     cursor: "zoom-in", background: "var(--bg0)" }} />
+      {originalImage(im) && <button type="button" onClick={onClick}
+        aria-label="Compare original and processed image" style={{
+          position: "absolute", right: 10, bottom: 10, ...GLASS_SOLID,
+          display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 11px",
+          minHeight: 36, border: "none", borderRadius: RADIUS.pill, cursor: "pointer",
+          color: "var(--text)", fontFamily: FONT, fontSize: TYPE.label,
+        }}><ArrowsLeftRight size={15} /> Compare</button>}
       {chips.length > 0 && (
         <div aria-hidden="true" style={{
           position: "absolute", top: SPACE[6], left: SPACE[6],
@@ -332,7 +340,7 @@ export const JobCard = ({ job, onOpen, onIterate, onReroll, onAnimate, onReview,
               </div>
             ) : (
               <StillFrame key={i} im={im} alt={job.scene}
-                          chips={finishChips(info)}
+                          chips={finishChips(imageFinishInfo(im, info))}
                           onClick={() => onOpen(job.images, i, job)} />
             )
           ))}

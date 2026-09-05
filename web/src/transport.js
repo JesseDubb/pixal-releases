@@ -238,7 +238,10 @@ export async function lane() {
 }
 
 export async function history() {
-  const r = await fetch("/api/history");
+  // lite drops the caption/spec/telemetry fields the UI never reads - 45%
+  // of a 4.8 MB body at 1630 entries. The full row stays the default for
+  // terminal scripts matching on scene/ts/info.
+  const r = await fetch("/api/history?lite=1");
   return (await r.json()).entries || [];
 }
 

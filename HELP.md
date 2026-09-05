@@ -374,13 +374,33 @@ the sampler schedule — sampler, scheduler, steps, cfg — elapsed, LoRAs)
 with the same finish chips above it, a save button, and arrow keys to move
 through the set.
 
+**compare** — new stills with successful post processing keep two files: the
+untouched output from this render and a separate processed version. Click
+**Compare** on the image (or open the picture), then move left/right to wipe
+between **Original** and **Processed**. Both occupy the same canvas: this is a
+mask, not a crossfade. The labels below show only the effects that ran on that
+image, including the DLSS 5 style. Save either version with its own download
+button. Wheel to zoom; mouse-drag to pan both together. On touch, drag to wipe;
+with the comparison slider focused, arrow keys adjust the reveal. Escape closes
+the viewer. Turn Compare off to inspect the processed image alone.
+
+Original means before this render's delivery-time finishing, not camera RAW
+and not before earlier edits/upscales. Failed or skipped effects never replace
+that original. If every effect is skipped, only the original is delivered.
+Comparison uses no additional model run, but preserving two versions uses more
+disk space. Older processed images were overwritten in place and cannot gain
+an original retroactively; they keep the normal viewer and download behavior.
+
 **animate** — opens the Animate dialog with this frame as the first frame of
 a video. Section 4 walks it. (Stills only; a clip is already motion.)
 
 **edit** — opens "Edit this image": type a change in plain words and the
 frame comes back changed. Section 3.1 below walks it.
 
-**review** — asks the image reviewer to look at the render and critique it.
+**review** — asks the image reviewer to compare the render with its saved
+generation brief, respecting the intended medium, light and composition. It
+suggests a minimal correction only when needed; it does not regenerate anything
+automatically. Missing or incomplete answers are reported as failed reviews.
 A "critic" chip appears in the chat ("reading the shot…", then "review
 posted below · 12s"), followed by the review itself: what works, what does
 not, and a concrete fix. When the review names a fix, an **apply the fix**
@@ -836,8 +856,8 @@ upscale):
 - **DLSS 5** (the row wears NVIDIA's mark) — runs the finished still
   through NVIDIA's DLSS 5 neural re-render: relights materials and tames
   glare at the same resolution, about a second per frame. With the toggle
-  on, a style select (default / natural / cinematic) and an intensity
-  dial (1.0 is the shipped default) ride inline on the row. Two things
+  on, a style select (default / natural / cinematic) and a tone
+  dial (1.5 is the shipped default) ride inline on the row. Two things
   make the row light up, and Pixal ships neither: the ComfyUI-DLSS5-NR
   node pack, and the DLSS DLL itself — NVIDIA has not released DLSS 5
   publicly, so Pixal can neither bundle the runtime nor download it for
@@ -1292,7 +1312,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.3.2b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.4.0b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

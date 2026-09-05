@@ -58,7 +58,8 @@ async def _settled(resp_coro):
     return resp
 
 
-def _review(root, *, read, models=(), submit=None, critic=CRITIC, entry=True):
+def _review(root, *, read, models=(), submit=None, critic=CRITIC, entry=True,
+            scene=None, recipe=None):
     """Drive /api/review - handler AND its spawned task - with every outside
     fact faked."""
     root = Path(root)
@@ -67,7 +68,8 @@ def _review(root, *, read, models=(), submit=None, critic=CRITIC, entry=True):
     mocks = SimpleNamespace(
         submit=submit or AsyncMock(return_value={"id": "job1"}),
         broadcast=Mock())
-    ledger = ([{"id": "abc123", "images": [{"filename": "shot.png",
+    ledger = ([{"id": "abc123", "scene": scene, "template": recipe,
+                "images": [{"filename": "shot.png",
                                             "subfolder": ""}]}]
               if entry else [])
     with patch.object(server, "CDIR", root), \
@@ -130,11 +132,58 @@ class LocalReviewerFallback(unittest.TestCase):
         mocks.submit.assert_awaited_once()
         args = mocks.submit.await_args.args
         self.assertEqual((args[1], args[2]), ("chat", "vl_review"))
-        self.assertEqual(args[4], {"image": "pixal_review_abc123.png"})
+        self.assertEqual(args[4], {"image": "pixal_review_abc123.png",
+                                   "brief": None, "recipe": None})
         self.assertEqual(mocks.submit.await_args.kwargs.get("parent"), "abc123")
 
 
 class SightedBrainReview(unittest.TestCase):
+
+    def test_single_line_vision_answers_keep_the_actionable_fix(self):
+        read = AsyncMock(return_value=(" ".join(REVIEW_TEXT.split()), None))
+        with tempfile.TemporaryDirectory() as td:
+            _, mocks = _review(td, read=read)
+        reviews = [c.kwargs for c in mocks.broadcast.call_args_list
+                   if c.kwargs.get("type") == "review"]
+        self.assertEqual(reviews[0]["fix"], "reroll with a plainer mug")
+        self.assertEqual(reviews[0]["text"], REVIEW_TEXT)
+
+    def test_both_paths_receive_the_same_selected_render_brief(self):
+        scene = "Woodcut illustration of a still fox; flat indigo and cream."
+        questions = []
+        for answer in ((REVIEW_TEXT, None), (None, BLIND)):
+            read = AsyncMock(return_value=answer)
+            with tempfile.TemporaryDirectory() as td:
+                _, mocks = _review(td, read=read, models=[CRITIC],
+                                   scene=scene, recipe="fantasy")
+            question = read.await_args.args[1]
+            questions.append(question)
+            self.assertIn(scene, question)
+            if answer[0] is None:
+                params = mocks.submit.await_args.args[4]
+                with patch.object(server, "load_config", return_value=cfg()):
+                    graph, _, _ = server.build_review("review of #abc123", 17, **params)
+                self.assertEqual(graph["2"]["inputs"]["custom_prompt"], question)
+        self.assertEqual(questions[0], questions[1])
+
+    def test_partial_answer_never_becomes_an_actionable_review(self):
+        read = AsyncMock(return_value=("LOOKS: a mug. FIX: add neon.", None))
+        with tempfile.TemporaryDirectory() as td:
+            _, mocks = _review(td, read=read, models=[CRITIC])
+        self.assertNotIn("review", _types(mocks.broadcast))
+        self.assertIn("thinkingdone", _types(mocks.broadcast))
+        self.assertTrue(any("incomplete" in text for text in _lane_texts(mocks.broadcast)))
+        mocks.submit.assert_not_awaited()
+
+    def test_clean_review_does_not_offer_a_pointless_reroll(self):
+        read = AsyncMock(return_value=(
+            "LOOKS: a still fox. WORKS: composition. PROBLEMS: none. FIX: none.", None))
+        with tempfile.TemporaryDirectory() as td:
+            _, mocks = _review(td, read=read)
+        reviews = [c.kwargs for c in mocks.broadcast.call_args_list
+                   if c.kwargs.get("type") == "review"]
+        self.assertEqual(len(reviews), 1)
+        self.assertIsNone(reviews[0]["fix"])
 
     def test_a_sighted_brain_answers_and_comfyui_is_never_submitted(self):
         read = AsyncMock(return_value=(REVIEW_TEXT, None))

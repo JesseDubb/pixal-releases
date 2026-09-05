@@ -437,7 +437,9 @@ class MemorySection(unittest.TestCase):
     def test_memory_explains_automatic_release_and_maintenance_is_separate(self):
         props, block = self._block()
         self.assertIn("Pixal releases idle models automatically", props["title"])
-        self.assertIn("<MemoryOverview gpu={store.gpu}", block)
+        # The overview reads the meter's own subscription (useGpu), not the
+        # store getter: a gpu tick must not re-render Settings (2026-09-05).
+        self.assertIn("<MemoryOverview gpu={gpu}", block)
         maintenance, _ = self._block("Maintenance")
         self.assertEqual(maintenance["gloss"].strip('"'), "Release cached models and memory.")
 

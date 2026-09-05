@@ -19,7 +19,7 @@ import { VideoPlayer } from "../lib/VideoPlayer.jsx";
 import { renderRichText } from "../lib/richtext.js";
 import { prettyTemplate, prettyResolvedModel, prettyLora, tuningLine, finishChips } from "../lib/names.js";
 import { imgUrl } from "../transport.js";
-import { useJobLive, useStore, renderIntent, loadPromptEnhance,
+import { useJobLive, useStore, useGpu, renderIntent, loadPromptEnhance,
          PROMPT_ENHANCE_KEY } from "../store.js";
 import { ComposerBar, LoraChain, AttachmentIcons, AttachmentIcon } from "./Composer.jsx";
 import { CharacterForm } from "./CharacterForm.jsx";
@@ -32,6 +32,8 @@ import { ChatsPanel } from "./ChatsPanel.jsx";
 import { SettingsMenu } from "./SettingsMenu.jsx";
 import { SettingsDockStyle, useSettingsDock } from "./SettingsDock.jsx";
 import { JobCard } from "./JobCard.jsx";
+import { PostProcessCompare } from "./PostProcessCompare.jsx";
+import { originalImage, imageFinishInfo } from "../lib/image-compare.js";
 import { NavRail } from "./NavRail.jsx";
 import { PhotonField } from "../lib/PhotonField.jsx";
 
@@ -497,6 +499,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
   const dragMoved = useRef(false);  // suppresses the click that ends a drag
   const cur = lb.images[lb.idx];
   const isVideo = cur.media === "video";
+  const hasComparison = !!originalImage(cur);
 
   useEffect(() => { setZoom({ s: 1, tx: 0, ty: 0, anim: false }); setShowBefore(false); }, [lb.idx]);
 
@@ -545,7 +548,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
     m.elapsed ? m.elapsed + "s" : null,
     m.loras && m.loras.length ? m.loras.map(prettyLora).join(" · ") : null,
   ].filter(Boolean);
-  const chips = finishChips(m);
+  const chips = finishChips(imageFinishInfo(cur, m));
   return (
     <div onClick={onClose} style={{
       // Below every dialog: animate and edit open FROM this viewer, so they
@@ -566,7 +569,7 @@ const Lightbox = ({ lb, onClose, onNav }) => {
       ><X size={20} weight="duotone" /></button>
       {/* An <a download> against the same-origin image proxy - the browser
           saves under the render's real filename, no blob dance needed. */}
-      <a href={imgUrl(cur)} download={cur.filename} className="px-lb-btn"
+      {!hasComparison && <a href={imgUrl(cur)} download={cur.filename} className="px-lb-btn"
          title={"save " + cur.filename} aria-label={"save " + cur.filename}
          onClick={(e) => e.stopPropagation()}
          onMouseEnter={(e) => { e.currentTarget.style.color = "rgba(232,237,240,0.95)"; }}
@@ -575,8 +578,8 @@ const Lightbox = ({ lb, onClose, onNav }) => {
            position: "absolute", top: 14, right: 56, padding: 8, zIndex: 2,
            color: "var(--textTer)", display: "inline-flex",
            transition: `color ${MOTION.hover}`,
-         }}><DownloadSimple size={20} weight="duotone" /></a>
-      {before && !isVideo && (
+         }}><DownloadSimple size={20} weight="duotone" /></a>}
+      {before && !isVideo && !hasComparison && (
         <button className="px-lb-btn" aria-label="hold to see the original"
           title="hold to see the original"
           onClick={(e) => e.stopPropagation()}
@@ -619,6 +622,10 @@ const Lightbox = ({ lb, onClose, onNav }) => {
         <VideoPlayer src={imgUrl(cur)} onDims={setDims}
                videoStyle={{ maxWidth: m.model || m.scene ? "88vw" : "94vw",
                              maxHeight: "90vh" }} />
+      ) : hasComparison ? (
+        <PostProcessCompare key={`${imgUrl(cur)}|${imgUrl(cur.original)}`} image={cur} onDims={setDims}
+          onZoom={(s) => setZoom((z) => ({ ...z, s }))}
+          maxWidth={m.model || m.scene ? "88vw" : "94vw"} />
       ) : (
         <img ref={imgRef} src={imgUrl(showBefore && before ? before : cur)} draggable={false}
              onLoad={(e) => { if (!showBefore) setDims(e.target.naturalWidth + "×" + e.target.naturalHeight); }}
@@ -711,6 +718,28 @@ const Lightbox = ({ lb, onClose, onNav }) => {
     </div>
   );
 };
+
+// The VRAM/RAM readout on its own subscription: the watcher ticks every 3 s
+// for a whole render, and drawing it from the root re-rendered the app each
+// time. Null until the first reading, which the header lays out around via
+// store.gpu (that one transition does go through emit).
+const GpuMeter = memo(({ compact, afterBrain }) => {
+  const gpu = useGpu();
+  if (!gpu) return null;
+  return (
+    <span title={`${gpu.name} · ${gpu.used}/${gpu.total} GB VRAM · ${gpu.ram_used}/${gpu.ram_total} GB RAM`}
+      style={{ marginLeft: afterBrain ? 10 : "auto", flexShrink: 0,
+               fontFamily: MONO, fontSize: 10,
+               color: "var(--textTer)", whiteSpace: "nowrap",
+               display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <NvidiaMark />
+      {compact
+        ? <>{gpu.used}/{gpu.total} GB</>
+        : <>{gpu.name}{" · "}{gpu.used}/{gpu.total} GB VRAM
+            {" · "}{gpu.ram_used}/{gpu.ram_total} GB RAM</>}
+    </span>
+  );
+});
 
 export const Chat = () => {
   const store = useStore();
@@ -1009,6 +1038,7 @@ export const Chat = () => {
   useEffect(() => {
     if (!lb) return;
     const onKey = (e) => {
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") store.setLb(null);
       if (e.key === "ArrowLeft")
         store.setLb({ ...lb, idx: (lb.idx + lb.images.length - 1) % lb.images.length });
@@ -1233,18 +1263,8 @@ export const Chat = () => {
                 <BrainChip brain={store.brain} narrow={narrow || !!dock} />
               </span>
             )}
-            {!store.scan && store.gpu && (
-              <span title={`${store.gpu.name} · ${store.gpu.used}/${store.gpu.total} GB VRAM · ${store.gpu.ram_used}/${store.gpu.ram_total} GB RAM`}
-                style={{ marginLeft: store.brain ? 10 : "auto", flexShrink: 0,
-                             fontFamily: MONO, fontSize: 10,
-                             color: "var(--textTer)", whiteSpace: "nowrap",
-                             display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <NvidiaMark />
-                {narrow || dock
-                  ? <>{store.gpu.used}/{store.gpu.total} GB</>
-                  : <>{store.gpu.name}{" · "}{store.gpu.used}/{store.gpu.total} GB VRAM
-                      {" · "}{store.gpu.ram_used}/{store.gpu.ram_total} GB RAM</>}
-              </span>
+            {!store.scan && (
+              <GpuMeter compact={!!(narrow || dock)} afterBrain={!!store.brain} />
             )}
             {!store.scan && (
               <button type="button" title="rescan model folders"
@@ -1432,7 +1452,9 @@ export const Chat = () => {
                     e.preventDefault();
                     setMIdx((i) => (i + mHits.length - 1) % mHits.length); return;
                   }
-                  if (e.key === "Enter" || e.key === "Tab") {
+                  // Space accepts too, once at least one letter of the name
+                  // is typed - a bare "@ " still just types a space.
+                  if (e.key === "Enter" || e.key === "Tab" || (e.key === " " && mention.q)) {
                     e.preventDefault(); pickMention(mHits[mIdx]); return;
                   }
                   if (e.key === "Escape") { setMention(null); return; }
@@ -1657,7 +1679,8 @@ export const Chat = () => {
         );
       })()}
 
-      {lb && <Lightbox lb={lb} onClose={() => store.setLb(null)}
+      {lb && <Lightbox key={`${lb.idx}:${lb.images[lb.idx]?.subfolder}/${lb.images[lb.idx]?.filename}`}
+                       lb={lb} onClose={() => store.setLb(null)}
                        onNav={(idx) => store.setLb({ ...lb, idx })} />}
 
       {rendering && <RenderMeter jobId={liveJobId} />}

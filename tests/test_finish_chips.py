@@ -107,7 +107,7 @@ class LightboxReadout(unittest.TestCase):
         self.assertIn("tuningLine(m.tuning)", CHAT)
 
     def test_the_chips_sit_in_the_lower_left_readout(self):
-        self.assertIn("const chips = finishChips(m);", CHAT)
+        self.assertIn("const chips = finishChips(imageFinishInfo(cur, m));", CHAT)
         self.assertIn('aria-label="Finish chain"', CHAT)
 
 

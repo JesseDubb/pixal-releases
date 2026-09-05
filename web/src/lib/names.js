@@ -165,11 +165,14 @@ export const prettyResolvedModel = (info, template) => {
 // written in run order as each finisher lands; info.upscaler is set only
 // by the upscale builders). One source for the card's hover strip and the
 // lightbox readout.
-export const finishChips = (info) => {
+export const finishChips = (info, { details = false } = {}) => {
   if (!info) return [];
   const finish = String(info.finish || "");
   const chips = [];
-  if (finish.includes("dlss5")) chips.push("DLSS 5");
+  if (finish.includes("dlss5")) {
+    const style = finish.match(/dlss5@(default|natural|cinematic)/)?.[1];
+    chips.push(details && style ? `DLSS 5 (${style[0].toUpperCase() + style.slice(1)})` : "DLSS 5");
+  }
   if (finish.includes("deshine")) chips.push("Matte skin");
   if (info.upscaler) chips.push("Upscaled");
   if (finish.includes("grain")) chips.push("Film grain");

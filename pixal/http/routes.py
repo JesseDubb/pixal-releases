@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import NamedTuple
 
+import gzip
+
 from aiohttp import web
 
 from pixal.paths import RuntimePaths
@@ -96,9 +98,35 @@ def register_routes(app: web.Application, paths: RuntimePaths,
     if missing:
         raise ValueError(f"Missing HTTP handlers: {', '.join(sorted(missing))}")
 
-    async def bundle(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(paths.web_dir / "app.js",
-                                headers={"Content-Type": "application/javascript"})
+    # The bundle compressed once per file version and held here: 868 KB on
+    # the wire became ~250 KB, which is nothing on a LAN and the whole first
+    # paint through a tunnel. Revalidation stays (ETag, no max-age): a cached
+    # bundle behind a new sidecar is the "screenshot contradicts the code"
+    # failure, so the browser must always ask.
+    packed: dict = {}
+
+    async def bundle(request: web.Request) -> web.StreamResponse:
+        source = paths.web_dir / "app.js"
+        if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+            return web.FileResponse(source, headers={
+                "Content-Type": "application/javascript",
+                "Cache-Control": "no-cache", "Vary": "Accept-Encoding"})
+        try:
+            stat = source.stat()
+        except OSError:
+            return web.FileResponse(source)   # let aiohttp answer the miss
+        key = (stat.st_mtime_ns, stat.st_size)
+        if packed.get("key") != key:
+            packed["key"] = key
+            packed["body"] = gzip.compress(source.read_bytes(), compresslevel=6)
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-gz"'
+        headers = {"Content-Type": "application/javascript",
+                   "Cache-Control": "no-cache", "Vary": "Accept-Encoding",
+                   "ETag": etag}
+        if request.headers.get("If-None-Match") == etag:
+            return web.Response(status=304, headers=headers)
+        headers["Content-Encoding"] = "gzip"
+        return web.Response(body=packed["body"], headers=headers)
 
     for route in ROUTES:
         if route.method == "STATIC":

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.0b — 2026-09-05
+
+**Compare the finish.** A still that went through post-processing now keeps
+two files: the untouched render and the processed one. Click **Compare** on a
+picture and wipe between Original and Processed on the same canvas, zoom and
+pan both together, and download either. The labels show only the effects that
+actually ran on that image. Older processed images were finished in place and
+keep the normal viewer.
+
+**Review reads the brief.** The image reviewer compares a render against its
+saved generation brief, respecting the medium, light and composition you asked
+for, and suggests one minimal correction only when one is needed. Nothing
+regenerates on its own.
+
+**Pixal stays responsive while a picture finishes.** Skin shine removal, DLSS 5
+and grain used to freeze the whole app for several seconds per image. They now
+run beside it, the lane says "finishing the frame" while they do, and the face
+detector stays warm between renders, so the finish lands about twice as fast.
+
+**Quicker to open, lighter to run.** The model catalog builds in a third of the
+time, the gallery loads half the data, a finished render slots into the gallery
+instead of reloading it, and thumbnails survive a restart. The VRAM meter no
+longer redraws the whole interface every few seconds during a render.
+
+**Small things.** Space accepts a highlighted @character while you type. The
+Casting card's photo edit shows what is happening from the model load onward.
+The reference writer carries a character's card age into its direction without
+inventing one. DLSS 5's tone dial ships at 1.5.
+
 ## 1.3.2b — 2026-09-05
 
 **Memory recovery does less guessing.** Pixal distinguishes GPU exhaustion from

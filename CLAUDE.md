@@ -93,6 +93,20 @@ wrong lane or the wrong day, which reads exactly like a result. `info.writer`
 says who wrote the caption: `pixal` / `official` is the brain, `verbatim` is
 whatever you sent with `prompt_enhance: false`.
 
+**A still finishes AFTER its render ends.** DLSS 5, skin-shine removal and
+grain run on the delivered frame in a worker thread, so a job's `executed`
+message is not the last word: the finished filename carries a
+`__finished_<token>` suffix, the original is kept beside it, and the ledger
+row's `images[].finish` is what actually ran. Two consequences for a terminal
+session. The face detector stays warm in **its own python process** for ten
+idle minutes after a still - a resident interpreter holding torch on the CPU,
+which is expected, not a leak. And a frame whose finishers outlive a Stop is
+written to the ledger late, as its own row.
+
+`GET /api/history` still returns every field; the browser asks for `?lite=1`,
+which drops `full_prompt`, `spec`, `cache` and `vram`. Match on the full form
+from a script.
+
 Five things that will bite you:
 
 - **The lane key is `engine`, not `template`.** `opts.template` is read
@@ -191,23 +205,40 @@ one LoRA strength nobody could see.
 
 **Fetch models with `huggingface_hub`, never `curl`.** Given a Hugging Face
 link, download it from Python with ComfyUI's `python_embeded` interpreter —
-that environment already carries `huggingface_hub` with **hf_xet** and
-**hf_transfer**, which pull in parallel chunks:
+that environment carries `huggingface_hub` 1.x with **hf_xet**, which pulls
+in parallel chunks. `HF_HUB_ENABLE_HF_TRANSFER` is a no-op on hub 1.x (the
+constant survives, the code path is gone); xet is the whole speed.
 
 ```python
-import os; os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+import os
+os.environ["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] = "false"
+os.environ["HF_XET_FIXED_DOWNLOAD_CONCURRENCY"] = "16"
+os.environ["HF_XET_CLIENT_READ_TIMEOUT"] = "30s"
 from huggingface_hub import hf_hub_download
 p = hf_hub_download(repo_id="<owner>/<repo>", filename="<file>.safetensors",
                     local_dir=r"<comfy_root>\_hf_staging")
 ```
 
-Measured on a 21 GB checkpoint: **76 MiB/s**, against 11 MB/s for the best a
-single-stream `curl` ever managed on the same file. Worse than slow, that curl
-then wedged at 0.7 KB/s after 582 MB — a dead socket that reads exactly like a
-slow mirror, and a resume will not notice. The `hf` CLI in that interpreter is
-broken (`Typer.__init__() got an unexpected keyword argument
-'suggest_commands'`, a Typer version mismatch); the library under it is fine,
-so call it from Python rather than the shell.
+Measured on 21 GB checkpoints: **87–107 MiB/s** (2026-09-06), against 11 MB/s
+for the best a single-stream `curl` ever managed on the same file. Two things
+wedge instead of failing, and both read exactly like a slow mirror:
+
+- **Xet's adaptive controller.** Left alone it ramps to 64 range-gets, and
+  twice in one night every one of them hung — `success_ratio 1.000`, zero
+  bytes, not one non-INFO log line, forever. Pin it to 16 as above. The read
+  timeout did NOT rescue a hung run by itself, so **watch the `.incomplete`
+  under `_hf_staging\.cache\huggingface\download\` and kill the process at
+  45 s of no growth, then relaunch.** Xet writes straight into that file and
+  does not resume; a relaunch is three minutes at full rate.
+  `HF_XET_NUM_CONCURRENT_RANGE_GETS` does not exist in hf_xet 1.5 and
+  silently does nothing.
+- **A single-stream `curl`**, which wedged at 0.7 KB/s after 582 MB — a dead
+  socket, and a resume will not notice.
+
+`HF_HUB_DISABLE_XET=1` is not a fallback: it drops to one plain HTTP stream at
+15 MiB/s. The `hf` CLI in that interpreter is broken (`Typer.__init__() got an
+unexpected keyword argument 'suggest_commands'`, a Typer version mismatch),
+and it is the same xet underneath; call the library from Python.
 
 Stage to a folder on the **same volume** and move the finished file into
 `models\...` — a `.incomplete` sitting where ComfyUI scans reads as a corrupt

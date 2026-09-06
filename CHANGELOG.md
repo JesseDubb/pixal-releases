@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.1b — 2026-09-06
+
+**Your LoRAs have their real names back.** A shelf of cards reading `aitk_lora`
+or `my_first_lora_v1` was showing the name a trainer wrote at training time,
+not the model's — and that placeholder was also blocking the real name Pixal
+had already looked up. Those defaults are ignored now, and when two files
+genuinely carry the same name the filename takes over so you can tell them
+apart. On the studio's own library, 59 of 457 LoRAs changed.
+
+**And their cover art.** MiniMax H3 is a video model, so CivitAI previews its
+LoRAs as short clips — and Pixal only ever looked for a still image, which left
+every H3 LoRA sitting under a blank placeholder. A video preview is a cover
+now, and it plays when you point at it.
+
+**One list when you add a LoRA.** The recipe's own LoRAs used to sit in a
+separate group above everything else, behind a padlock that read as "locked" on
+rows that were nothing of the sort. They are ordinary rows in the one list now.
+Picking one still brings the recipe's own strength with it.
+
+**MiniMax H3 stills are quicker.** The still lanes now sample with `res_2s` on
+`bong_tangent` at 8 steps — about 40 seconds a frame on a 5090, where the old
+20-step pair took roughly two and a half times that. The previous setting is
+one click away on the sampler card as **Detail**, and nothing about video
+changed.
+
 ## 1.4.0b — 2026-09-05
 
 **Compare the finish.** A still that went through post-processing now keeps

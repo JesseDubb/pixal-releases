@@ -1627,13 +1627,18 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
     return { stage, name, meta: metaByName.get(name) };
   };
   const activeNames = new Set(entries.map((entry) => detailFor(entry).name));
-  const recipeNames = new Set(stages.map((stage) => stage.name));
   // A recipe row that names a file the machine does not have is never
   // offered: the server annotates every stage with `installed` (the same
   // _catalog_has the readiness list reads), and a click that can only fail
   // at build time is worse than no row - "if they have that lora" (9.86).
   const inactiveStages = editableStages.filter((stage) =>
     !activeNames.has(stage.name) && stage.installed !== false);
+  // A recipe stage the chain does not carry yet is a plain row in the list,
+  // like every other installed LoRA. It used to sit in its own group above
+  // the list behind a lock glyph, and the glyph read as "locked" on stages
+  // that were fully editable. Picking one still adds it AS the stage, so it
+  // keeps the recipe's default strength and slot.
+  const stageForName = new Map(inactiveStages.map((stage) => [stage.name, stage]));
   // The whole chain in render order, reduced to what a thumbnail can carry:
   // which LoRA, where in the stack, and whether it is on.
   const chainGlyphs = [
@@ -1655,7 +1660,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
   ];
   // Everything pickable: the catalog minus what already rides the chain.
   const available = (options?.loras || []).filter((lora) =>
-    !activeNames.has(lora.name) && !recipeNames.has(lora.name));
+    !activeNames.has(lora.name));
   // The flat list (filter on, not searching) is the compatible set.
   const installedAll = available.filter((lora) => loraMatchesProfile(lora, profile));
   // Cap what is rendered, but say so - a silent truncation reads as "that is
@@ -1791,6 +1796,8 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
     setAdding(false); setFilter("");
   };
   const addInstalled = (lora) => {
+    const stage = stageForName.get(lora.name);
+    if (stage) { addStage(stage); return; }
     setEntries([...entries, {
       name: lora.name,
       ...(lora.title ? { title: lora.title } : {}),
@@ -1944,25 +1951,6 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
              down={rail} alignRight={rail} rail={rail}
              anchorRef={addAnchorRef} boundsRef={sectionRef}>
           {rail && addSearch}
-          {inactiveStages.map((stage) => (
-            <Row key={stage.slot} onClick={() => addStage(stage)}>
-              <LockSimple size={12} weight={stage.order_locked ? "fill" : "duotone"} />
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis",
-                               whiteSpace: "nowrap" }}>
-                  {recipeStageLabel(stage, metaByName.get(stage.name))}
-                </span>
-                {stage.role && (
-                  <span style={{ display: "block", fontFamily: "ui-monospace, Consolas, monospace",
-                                 fontSize: 9, color: "var(--textMut)" }}>{stage.role}</span>
-                )}
-              </span>
-              <Tag>recipe · {planNumber(stage.strength)}</Tag>
-            </Row>
-          ))}
-          {inactiveStages.length > 0 && (
-            <div style={{ borderTop: "1px solid var(--border)", margin: `${SPACE[10]}px 0` }} />
-          )}
           {!rail && addSearch}
           {(searching || showAll) ? (
             familyGroups.length ? familyGroups.map((group) => {
@@ -2037,7 +2025,7 @@ export const LoraChain = ({ opts, options, recipeId, plan, setEntries, resetPlan
               ))}
             </div>
           )}
-          {!inactiveStages.length && !installed.length && (
+          {!installed.length && (
             <Row disabled>no installed {profileLabel} LoRAs match this profile</Row>
           )}
             </>

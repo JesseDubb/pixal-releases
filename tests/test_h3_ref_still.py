@@ -127,7 +127,7 @@ class RecipeRowTests(unittest.TestCase):
         spec = server.RECIPE_SPECS["h3_ref_still"]
         self.assertEqual(spec["label"], "MiniMax H3 Ref")
         self.assertEqual(spec["tag"],
-                         "2K still from a reference · 20 steps · ~1 min")
+                         "2K still from a reference · 8 steps · ~1 min")
         self.assertEqual(spec["family"], "minimax_h3")
         self.assertEqual(spec["variants"], ["ref2va"])
         self.assertEqual(spec["default_model"], REF2VA)
@@ -171,8 +171,8 @@ class RecipeRowTests(unittest.TestCase):
         self.assertEqual(server.seat_tuning_keys(seat),
                          ("steps", "sampler_name", "scheduler"))
         self.assertEqual(server.sampler_defaults("h3_ref_still"),
-                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
-                          "scheduler": "beta"})
+                         {"steps": 8, "sampler_name": "res_2s",
+                          "scheduler": "bong_tangent"})
 
     def test_the_popup_key_space_covers_the_ref2va_profile(self):
         self.assertIn("minimax_h3:ref2va", server._LORA_PROFILE_KEYS)
@@ -246,21 +246,22 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(g["6"]["inputs"]["length"], 5)
         self.assertEqual(g["6"]["inputs"]["ref_image_size"], "match")
         self.assertEqual(g["8"]["inputs"], {"model": ["1", 0],
-                                            "scheduler": "beta",
-                                            "steps": 20, "denoise": 1.0})
+                                            "scheduler": "bong_tangent",
+                                            "steps": 8, "denoise": 1.0})
         self.assertEqual(g["10"]["inputs"], {"noise_seed": 424242})
         self.assertEqual(g["13"]["inputs"], {"image": ["12", 0],
                                              "batch_index": 0, "length": 1})
         self.assertEqual(g["14"]["inputs"]["images"], ["13", 0])
         self.assertEqual(g["14"]["inputs"]["filename_prefix"],
                          "pixal_dm/a_red_barn_at_dusk")
-    def test_the_graph_samples_at_the_ab_winner(self):
-        """9.78: the ref still runs the same still pair on the ref2v
-        spine - dpmpp_sde_gpu x beta, the locked-seed A/B winner."""
+    def test_the_graph_samples_at_the_still_default(self):
+        """The ref still runs the same still trio on the ref2v spine:
+        res_2s x bong_tangent at 8 steps since 2026-09-06 (Jesse's pick;
+        9.78's dpmpp_sde_gpu x beta A/B winner stays as the Detail preset)."""
         g, _cap, _info = self.build()
-        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
-        self.assertEqual(g["8"]["inputs"]["scheduler"], "beta")
-        self.assertEqual(g["8"]["inputs"]["steps"], 20)
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "res_2s"})
+        self.assertEqual(g["8"]["inputs"]["scheduler"], "bong_tangent")
+        self.assertEqual(g["8"]["inputs"]["steps"], 8)
 
     def test_exactly_one_reference_naming_the_identity_photo(self):
         g, _cap, info = self.build()

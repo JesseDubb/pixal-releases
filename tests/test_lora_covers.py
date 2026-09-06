@@ -22,6 +22,9 @@ What these tests pin:
                            (Jesse's krea2filterbypass case).
   NullTitleRetry         - a null in _lora_titles.json is a miss, not a
                            tombstone: retried, never re-persisted.
+  TrainerDefaultsAreNotTitles - aitk_lora in the header is a miss, healed
+                           out of the cache; a title two files share names
+                           neither, and the filename takes over.
   MissStaysCached        - a CivitAI/CivArchive miss is cached and not
                            re-queried next pass - until the retry window ends.
   LazyFamilyGate         - nothing is hashed for a family the picker has not
@@ -41,6 +44,7 @@ import hashlib
 import json
 import os
 import struct
+import time
 import unittest
 import urllib.parse
 from contextlib import ExitStack, contextmanager
@@ -263,6 +267,85 @@ class ByHashAndTwins(LoraMetaBase):
             self.assertEqual(entry["base"], "Krea 2")
 
 
+class VideoPreviewsAreCovers(LoraMetaBase):
+    """MiniMax H3 is a video model, so CivitAI previews its LoRAs as video -
+    and _civitai_by_hash took images only, so all 22 H3 LoRAs on the real box
+    were stored as hits with an empty thumb, which a stored hit never
+    revisited. Now: the first video is a cover (LoraThumb plays mp4), a
+    thumbless hit is retried on the miss window, and a record stored before
+    the rule changed gets one more look (2026-09-06)."""
+
+    class _Resp:
+        def __init__(self, payload):
+            self.status, self._payload = 200, payload
+        async def json(self):
+            return self._payload
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Session:
+        def __init__(self, payload):
+            self.payload = payload
+        def get(self, _url, timeout=None):
+            return VideoPreviewsAreCovers._Resp(self.payload)
+
+    def test_a_video_only_version_yields_its_first_video_as_the_cover(self):
+        payload = {"model": {"name": "HMNSFW - AIO Sex LoRA"}, "name": "V2",
+                   "baseModel": "MiniMax H3",
+                   "images": [{"type": "video", "url": "https://image.civitai.com/x/1.mp4"},
+                              {"type": "video", "url": "https://image.civitai.com/x/2.mp4"}]}
+        status, hit = asyncio.run(
+            server._civitai_by_hash(self._Session(payload), "ab" * 32))
+        self.assertEqual(status, "hit")
+        self.assertEqual(hit["thumb"], "https://image.civitai.com/x/1.mp4")
+
+    def test_an_image_still_beats_a_video(self):
+        payload = {"model": {"name": "Alpha"}, "name": "v1", "baseModel": "Krea 2",
+                   "images": [{"type": "video", "url": "https://image.civitai.com/x/1.mp4"},
+                              {"type": "image", "url": "https://image.civitai.com/x/1.jpeg"}]}
+        _status, hit = asyncio.run(
+            server._civitai_by_hash(self._Session(payload), "ab" * 32))
+        self.assertEqual(hit["thumb"], "https://image.civitai.com/x/1.jpeg")
+
+    def test_a_thumbless_hit_is_asked_again_once_its_window_or_the_rule_allows(self):
+        recent = R("misc", "recent.safetensors")     # thumbless, checked just now
+        stale = R("misc", "stale.safetensors")       # thumbless, checked before the rule
+        covered = R("misc", "covered.safetensors")   # has a cover, checked long ago
+        with library({recent: b"recent" * 64, stale: b"stale" * 64,
+                      covered: b"covered" * 64}) as root:
+            def record(rel, thumb, checked):
+                p = root / "loras" / rel
+                st = p.stat()
+                return {"size": st.st_size, "mtime": st.st_mtime,
+                        "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                        "checked": checked,
+                        "hit": {"name": "N", "version": "v", "thumb": thumb,
+                                "base": "MiniMax H3", "source": "civitai"}}
+            now = time.time()
+            self.civ_cache.write_text(json.dumps({
+                "loras" + chr(92) + recent: record(recent, "", now),
+                "loras" + chr(92) + stale: record(stale, "", server._CIV_THUMB_RULE_SINCE - 1),
+                "loras" + chr(92) + covered: record(
+                    covered, "https://image.civitai.com/x/c.jpeg", now - 400 * 86400),
+            }), encoding="utf-8")
+            civ, _arch = self.mock_lookup(("hit", {
+                "name": "N", "version": "v", "thumb": "https://image.civitai.com/x/1.mp4",
+                "base": "MiniMax H3", "source": "civitai"}))
+            self.refresh()
+            civ.assert_awaited_once()               # the stale one, and only it
+            self.assertEqual(server._civ_hit(stale, "loras")["thumb"],
+                             "https://image.civitai.com/x/1.mp4")
+            self.assertEqual(server._civ_hit(recent, "loras")["thumb"], "")
+            self.assertEqual(server._civ_hit(covered, "loras")["thumb"],
+                             "https://image.civitai.com/x/c.jpeg")
+            # Re-checked: stamped now, so the next load leaves it alone.
+            stored = json.loads(self.civ_cache.read_text(encoding="utf-8"))
+            self.assertGreater(stored["loras" + chr(92) + stale]["checked"],
+                               server._CIV_THUMB_RULE_SINCE)
+
+
 class NullTitleRetry(LoraMetaBase):
     """The _lora_titles.json trap: a null title stored as a PRESENT key pinned
     titleless LoRAs forever (162 of them sit sticky on the real box). A miss
@@ -293,6 +376,59 @@ class NullTitleRetry(LoraMetaBase):
             # (path, mtime, size), so the replacement is re-read, not pinned.
             write_safetensors(p, {"ss_output_name": "Now Titled"}, b"yz")
             self.assertEqual(server._lora_title_map([rel])[rel], "Now Titled")
+
+
+class TrainerDefaultsAreNotTitles(LoraMetaBase):
+    """ss_output_name is kohya's / AI Toolkit's --output_name: the filename at
+    training time, not a title. Eight LoRAs on the real box all read
+    `aitk_lora` in the picker and blocked their own CivitAI names, which only
+    apply to an EMPTY title. A trainer default is a miss; a title shared by
+    more than one installed file resolves to the filename for all of them."""
+
+    def stored_titles(self):
+        return json.loads(self.title_cache.read_text(encoding="utf-8")) \
+            if self.title_cache.exists() else {}
+
+    def test_a_trainer_default_is_a_miss_and_never_cached(self):
+        rel = R("misc", "PAWG_krea2_epoch32.safetensors")
+        with library({}) as root:
+            write_safetensors(root / "loras" / rel, {"ss_output_name": "aitk_lora"}, b"x")
+            self.assertIsNone(server._lora_title_map([rel])[rel])
+            self.assertNotIn(rel, self.stored_titles())
+
+    def test_a_trainer_default_cached_as_a_hit_is_healed(self):
+        rel = R("misc", "HMBody_D_e10.safetensors")
+        with library({}) as root:
+            write_safetensors(root / "loras" / rel, {"ss_output_name": "aitk_lora"}, b"x")
+            self.title_cache.write_text(json.dumps({rel: "aitk_lora"}), encoding="utf-8")
+            self.assertIsNone(server._lora_title_map([rel])[rel])
+            self.assertNotIn(rel, self.stored_titles())
+
+    def test_a_trainer_default_yields_to_the_next_header_key(self):
+        rel = R("misc", "instant-camera.safetensors")
+        with library({}) as root:
+            write_safetensors(root / "loras" / rel,
+                              {"modelspec.title": "lora",
+                               "ss_output_name": "Instant camera portrait"}, b"x")
+            self.assertEqual(server._lora_title_map([rel])[rel],
+                             "Instant camera portrait")
+
+    def test_a_title_shared_by_two_files_resolves_to_neither(self):
+        a, b, c = (R("misc", f) for f in ("snofs_krea_v1.safetensors",
+                                          "snofs_krea_v1_2.safetensors",
+                                          "unique.safetensors"))
+        with library({}) as root:
+            for rel in (a, b):
+                write_safetensors(root / "loras" / rel,
+                                  {"ss_output_name": "snofs_krea"}, b"x")
+            write_safetensors(root / "loras" / c, {"modelspec.title": "Only One"}, b"y")
+            titles = server._lora_title_map([a, b, c])
+            self.assertIsNone(titles[a])
+            self.assertIsNone(titles[b])
+            self.assertEqual(titles[c], "Only One")
+            # The header truth stays cached per file: sharing is a property of
+            # the collection, resolved on every pass and never persisted.
+            self.assertEqual(self.stored_titles()[a], "snofs_krea")
 
 
 class MissStaysCached(LoraMetaBase):

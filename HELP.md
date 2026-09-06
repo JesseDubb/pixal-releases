@@ -318,7 +318,9 @@ Use one:
 
 1. Type `@` in the message box and pick them from the "character" popup — or
    just type their @Name anywhere in the message — or pick them from the
-   composer's **character** pill.
+   composer's **character** pill. In the popup, **space**, Tab or Enter all
+   accept the highlighted name once you have typed a letter of it; arrows move
+   the highlight and Escape dismisses it.
 2. The composer shows an "identity · Mia" chip, and selecting an anchor
    switches the render to Identity Edit automatically (it runs on Krea 2;
    the model picker tells you "Identity Edit runs on Krea 2…" while one is
@@ -1312,7 +1314,7 @@ logs untouched. Interrupted or partial runs resume: "Nothing is lost. Open
 Pixal Setup from the Start Menu and it picks up where it stopped."
 
 **How do I uninstall?**
-"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.4.0b").
+"Uninstall Pixal" in the Start Menu (or Apps & features, "Pixal 1.4.1b").
 It removes the app itself. It does not remove ComfyUI or any downloaded
 models — those live outside the app folder — and your renders stay under
 `ComfyUI\output\pixal_dm`. Your characters and saved styles are left behind

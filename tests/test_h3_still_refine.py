@@ -210,7 +210,7 @@ class GraphTests(unittest.TestCase):
             "model_name": UPSCALER, "width": 3072, "height": 4096,
             "device": "cuda", "precision": "bf16"})
         self.assertEqual(g["up:sigmas"]["inputs"], {
-            "model": ["1", 0], "scheduler": server.H3_STILL_SCHEDULER,
+            "model": ["1", 0], "scheduler": server.H3_UPSCALE_SCHEDULER,
             "steps": server.H3_UPSCALE_STEPS,
             "denoise": server.H3_UPSCALE_DENOISE})
         # the measured recipe, not a new one
@@ -413,8 +413,8 @@ class SeatTests(unittest.TestCase):
 
     def test_defaults_report_the_same_trio(self):
         self.assertEqual(server.sampler_defaults("h3_still_2x"),
-                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
-                          "scheduler": "beta"})
+                         {"steps": 8, "sampler_name": "res_2s",
+                          "scheduler": "bong_tangent"})
 
     def test_tuning_lands_on_the_first_pass_only(self):
         overrides = server.tuning_overrides(
@@ -432,17 +432,19 @@ class SeatTests(unittest.TestCase):
         self.assertEqual(g["up:sigmas"]["inputs"]["steps"],
                          server.H3_UPSCALE_STEPS)
         self.assertEqual(g["up:sigmas"]["inputs"]["scheduler"],
-                         server.H3_STILL_SCHEDULER)
+                         server.H3_UPSCALE_SCHEDULER)
         self.assertEqual(g["up:sigmas"]["inputs"]["denoise"],
                          server.H3_UPSCALE_DENOISE)
-    def test_the_refine_also_samples_at_the_ab_winner(self):
-        """9.78: both passes are the same still - the refine's sampler
-        input rides the first pass's KSamplerSelect, and its own sigmas
-        take the still scheduler."""
+    def test_the_refine_rides_the_first_pass_sampler_on_its_own_sigmas(self):
+        """Both passes share the first pass's KSamplerSelect (res_2s since
+        2026-09-06), but the refine's sigmas stay on beta: the tile pass was
+        measured there, and bong_tangent ignores the graph's shift
+        (H3_UPSCALE_SCHEDULER)."""
         g, _cap, _info = build()
-        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "res_2s"})
         self.assertEqual(g["up:sample"]["inputs"]["sampler"], ["7", 0])
         self.assertEqual(g["up:sigmas"]["inputs"]["scheduler"], "beta")
+        self.assertEqual(server.H3_UPSCALE_SCHEDULER, "beta")
 
 
 class RoutingTests(unittest.TestCase):

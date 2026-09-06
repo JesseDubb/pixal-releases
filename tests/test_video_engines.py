@@ -266,7 +266,7 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual((server.H3_SAMPLER, server.H3_SCHEDULER),
                          ("res_multistep", "simple"))
         self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER),
-                         ("dpmpp_sde_gpu", "beta"))
+                         ("res_2s", "bong_tangent"))
 # Frozen from the installed pack's INPUT_TYPES and cross-checked live against
     # GET /object_info/H3MultishotSampler. The graph must supply every required
     # input and nothing else: a stray key is a queue-time rejection that would

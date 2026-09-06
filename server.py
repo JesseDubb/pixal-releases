@@ -498,7 +498,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.4.0b"
+PIXAL_VERSION = "1.4.1b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = DATA_DIR / "history.jsonl"
@@ -962,8 +962,19 @@ async def manager_status(_req):
 
 
 
+# Trainer defaults that ride along in the header. Kohya and AI Toolkit write
+# their --output_name into ss_output_name, which is the filename at TRAINING
+# time; the uploader renames the file and the header keeps saying aitk_lora.
+# Eight cards in one picker read identically before this counted as a miss.
+_LORA_JUNK_TITLES = frozenset({"aitk_lora", "my_first_lora_v1", "lora"})
+
+def _lora_title_ok(title):
+    return bool(title) and title.strip().lower() not in _LORA_JUNK_TITLES
+
 def lora_title(path):
-    """Real model title from the safetensors header metadata, not the filename."""
+    """Real model title from the safetensors header metadata, not the filename.
+    A trainer default is skipped, not returned: the next key gets its turn,
+    and a header that carries only the default is a miss."""
     try:
         with open(path, "rb") as f:
             n = struct.unpack("<Q", f.read(8))[0]
@@ -974,7 +985,7 @@ def lora_title(path):
         for k in ("modelspec.title", "title", "ss_output_name", "sshs_name",
                   "modelspec.name", "name"):
             v = m.get(k)
-            if v and isinstance(v, str):
+            if v and isinstance(v, str) and _lora_title_ok(v):
                 return v.strip()
     except Exception:
         pass
@@ -1004,7 +1015,8 @@ def _lora_title_map(rels):
     out = {}
     for rel in rels:
         title = titles.get(rel)
-        if title is None:                        # absent, or a legacy null
+        if not _lora_title_ok(title):            # absent, a legacy null, or a
+            title = None                         # trainer default cached as a hit
             for root in model_roots():
                 p = root / "loras" / rel
                 if p.is_file():
@@ -1019,7 +1031,7 @@ def _lora_title_map(rels):
                 titles[rel] = title
                 dirty = True
             elif rel in titles:
-                del titles[rel]                  # drop the sticky null
+                del titles[rel]                  # drop the sticky null / junk
                 dirty = True
         out[rel] = title
     if dirty:
@@ -1029,6 +1041,13 @@ def _lora_title_map(rels):
                            ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
+    # A title shared by more than one installed file cannot be the label that
+    # tells them apart; the filename can. A property of the collection, not of
+    # the file, so it is resolved on every pass and never cached.
+    shared = {t for t, n in collections.Counter(out.values()).items() if t and n > 1}
+    for rel, title in out.items():
+        if title in shared:
+            out[rel] = None
     return out
 
 _MODEL_TITLE_CACHE = {}
@@ -1147,6 +1166,9 @@ def lm_enrich(rel, entry):
 _CIVITAI_CACHE = DATA_DIR / "_civitai_models.json"
 _CIV = {"data": None, "busy": False}
 _CIV_MISS_RETRY = 7 * 86400
+# 2026-09-06T00:00Z. Records checked before this were stored under the
+# image-only cover rule below; see _civ_data's self-heal.
+_CIV_THUMB_RULE_SINCE = 1788652800
 
 def _civ_data():
     if _CIV["data"] is None:
@@ -1154,6 +1176,16 @@ def _civ_data():
             _CIV["data"] = json.loads(_CIVITAI_CACHE.read_text(encoding="utf-8"))
         except Exception:
             _CIV["data"] = {}
+        # Self-heal the thumbless hits: until 2026-09-06 a CivitAI version whose
+        # previews were all video (every MiniMax H3 LoRA) was stored with an
+        # empty thumb, and a stored hit was never asked again. A record checked
+        # before that date is due one more look; once re-checked it carries a
+        # newer stamp and is never healed twice.
+        for rec in _CIV["data"].values():
+            hit = rec.get("hit") or {}
+            if hit.get("source") == "civitai" and not hit.get("thumb") \
+                    and rec.get("checked", 0) < _CIV_THUMB_RULE_SINCE:
+                rec["checked"] = 0
         # Self-heal records an earlier, laxer CivArchive parse let through: the
         # hash-mirror page ("<file> - SHA256 mirrors", banner.webp cover) is not
         # a model hit. Demoted to a plain miss; the sha256 is kept.
@@ -1204,8 +1236,12 @@ async def _civitai_by_hash(s, sha):
     name = ((v.get("model") or {}).get("name") or "").strip()
     if not name:
         return "miss", None
-    img = next((i for i in v.get("images") or []
-                if (i.get("type") or "image") == "image"), None)
+    images = v.get("images") or []
+    # An image cover first; failing that the first video, which the picker's
+    # LoraThumb already plays. Every MiniMax H3 LoRA on CivitAI previews as
+    # video, and until 2026-09-06 each was stored thumbless for it.
+    img = next((i for i in images if (i.get("type") or "image") == "image"), None) \
+        or next((i for i in images if i.get("type") == "video"), None)
     return "hit", {"name": name, "version": (v.get("name") or "").strip(),
                    "thumb": (img or {}).get("url") or "",
                    "base": v.get("baseModel") or "", "source": "civitai"}
@@ -1288,7 +1324,10 @@ async def _civ_lookup_one(s, data, kind, rel, p):
     rec = data.get(key)
     fresh = bool(rec) and rec.get("size") == st.st_size and \
         abs(rec.get("mtime", 0) - st.st_mtime) < 2
-    if fresh and (rec.get("hit") or
+    # A hit with no cover is retried on the miss window rather than pinned:
+    # a stored hit was never asked again, and the video-only versions were
+    # stored with an empty thumb until the cover rule above learned video.
+    if fresh and ((rec.get("hit") or {}).get("thumb") or
                   time.time() - rec.get("checked", 0) < _CIV_MISS_RETRY):
         return False
     sha = rec.get("sha256") if fresh else None
@@ -2369,7 +2408,7 @@ RECIPE_SPECS = {
     # the composer's MP ladder runs to its top rung; `mp` stays the native-2K
     # default, which is what the tag prices.
     "h3_still": {
-        "label": "MiniMax H3", "tag": "2K still · 20 steps · ~1 min",
+        "label": "MiniMax H3", "tag": "2K still · 8 steps · ~1 min",
         "family": "minimax_h3", "variants": ["fl2va"],
         "lora_variants": ["any"],
         "default_model": H3_MODEL,
@@ -2410,7 +2449,7 @@ RECIPE_SPECS = {
     # speed distills).
     "h3_ref_still": {
         "label": "MiniMax H3 Ref",
-        "tag": "2K still from a reference · 20 steps · ~1 min",
+        "tag": "2K still from a reference · 8 steps · ~1 min",
         "family": "minimax_h3", "variants": ["ref2va"],
         "lora_variants": ["any"],
         "default_model": H3_REF2V_MODEL,
@@ -3501,7 +3540,7 @@ def sampler_defaults(base_id, model=None):
         # by construction. h3_still_2x shares
         # the first pass, so it reports the same trio; h3_ref_still (9.67)
         # runs the same schedule on the ref2v spine.
-        return {"steps": H3_STEPS, "sampler_name": H3_STILL_SAMPLER,
+        return {"steps": H3_STILL_STEPS, "sampler_name": H3_STILL_SAMPLER,
                 "scheduler": H3_STILL_SCHEDULER}
     return {k: node[k] for k in seat_tuning_keys(seat) if k in node}
 
@@ -3803,9 +3842,15 @@ H3_STILL_LANES = ("h3_still", "h3_still_2x", "h3_ref_still", "h3_ref_still_2x")
 
 SAMPLER_PRESETS = {
     "minimax_h3": (
+        {"id": "res", "label": "Res 2s", "lanes": H3_STILL_LANES,
+         "note": "Jesse's pick, 2026-09-06: res_2s on bong_tangent at 8 steps. "
+                 "Second order, so two model calls a step; bong_tangent brings "
+                 "its own sigma shift. The shipped default.",
+         "tuning": {"sampler_name": "res_2s", "scheduler": "bong_tangent",
+                    "steps": 8}},
         {"id": "detail", "label": "Detail", "lanes": H3_STILL_LANES,
          "note": "Measured here: +74% mean fine detail over the community pick "
-                 "across six frames. ~104 s. The shipped default.",
+                 "across six frames. ~104 s. The default until 2026-09-06.",
          "tuning": {"sampler_name": "dpmpp_sde_gpu", "scheduler": "beta",
                     "steps": 20}},
         {"id": "speed", "label": "Speed", "lanes": H3_STILL_LANES,
@@ -4007,7 +4052,7 @@ def sampler_presets(base_id, model=None):
 H3_COMMUNITY_COMBOS = (
     ("dpmpp_sde_gpu", "beta",
      "Measured here: +74% mean fine detail over six frames against the "
-     "community pick. ~104 s. The shipped still default."),
+     "community pick. ~104 s. The still default until 2026-09-06."),
     ("res_multistep", "simple",
      "Measured here: ~35% faster at 68 s with less fine detail - and the pair "
      "that produced the sets Jesse called amazing."),
@@ -6866,7 +6911,7 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
               "inputs": {"sampler_name": H3_STILL_SAMPLER}},
         "8": {"class_type": "BasicScheduler", "inputs": {
             "model": ["1", 0], "scheduler": H3_STILL_SCHEDULER,
-            "steps": H3_STEPS, "denoise": 1.0}},
+            "steps": H3_STILL_STEPS, "denoise": 1.0}},
         "9": {"class_type": "BasicGuider", "inputs": {
             "model": ["1", 0], "conditioning": ["6", 0]}},
         "10": {"class_type": "RandomNoise",
@@ -6949,7 +6994,7 @@ def _h3_append_2x_refine(g, seed):
         "min_tile_size": 256,
         "overlap_mode": "earlier", "overlap_blend": "smoothstep"}}
     g["up:sigmas"] = {"class_type": "BasicScheduler", "inputs": {
-        "model": [model_tail, 0], "scheduler": H3_STILL_SCHEDULER,
+        "model": [model_tail, 0], "scheduler": H3_UPSCALE_SCHEDULER,
         "steps": H3_UPSCALE_STEPS, "denoise": H3_UPSCALE_DENOISE}}
     g["up:noise"] = {"class_type": "RandomNoise",
                      "inputs": {"noise_seed": int(seed) + 1}}
@@ -7631,7 +7676,7 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
               "inputs": {"sampler_name": H3_STILL_SAMPLER}},
         "8": {"class_type": "BasicScheduler", "inputs": {
             "model": ["1", 0], "scheduler": H3_STILL_SCHEDULER,
-            "steps": H3_STEPS, "denoise": 1.0}},
+            "steps": H3_STILL_STEPS, "denoise": 1.0}},
         # H3 is CFG-distilled: BasicGuider, never a CFGGuider.
         "9": {"class_type": "BasicGuider", "inputs": {
             "model": ["1", 0], "conditioning": ["6", 0]}},
@@ -7882,8 +7927,16 @@ H3_SCHEDULER = "simple"
 # h3_still, seed 424242, 20 steps, 1536x2048, every arm verified from its
 # PNG's embedded graph, renders in Desktop\Pixal Renders\images\2026-08-28-h3-sampler-ab\
 # - was "So for realism 100 percent C": dpmpp_sde_gpu x beta.
-H3_STILL_SAMPLER = "dpmpp_sde_gpu"
-H3_STILL_SCHEDULER = "beta"
+# Moved 2026-09-06 on Jesse's word - res_2s x bong_tangent at 8 steps ("I want
+# this in as a default recipe for h3 image"). Not A/B'd here; the 9.78 pair
+# stays on the shelf as the Detail preset. Second order, so 8 steps is 16
+# model calls against the old 40; bong_tangent brings its own sigma shift and
+# ignores the graph's. The 2x refine keeps its sigmas on beta - its tile pass
+# was measured there (H3_UPSCALE_SCHEDULER). Video keeps H3_STEPS.
+H3_STILL_SAMPLER = "res_2s"
+H3_STILL_SCHEDULER = "bong_tangent"
+H3_STILL_STEPS = 8
+H3_UPSCALE_SCHEDULER = "beta"
 H3_TURBO = {"steps": 8, "sampler": "euler", "scheduler": "beta", "strength": 1.0}
 
 H3_LENGTHS = (5, 10, 15)

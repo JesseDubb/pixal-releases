@@ -202,7 +202,10 @@ class LoraPickerCopy(unittest.TestCase):
         # The no-behaviour-change contract: same profile match, same text
         # predicate, same cap, same tile mapping - only the copy moved.
         flat = re.sub(r"\s+", " ", SRC)
-        self.assertIn("!activeNames.has(lora.name) && !recipeNames.has(lora.name)", flat)
+        # 2026-09-06: the recipe's unadded stages joined this set (they were
+        # subtracted out and stacked above the list); the predicate is the
+        # chain only.
+        self.assertIn("filter((lora) => !activeNames.has(lora.name));", flat)
         self.assertIn("loraMatchesProfile(lora, profile)", flat)
         self.assertIn("(!filter || `${lora.title || \"\"} ${lora.short || \"\"} ${lora.name}`"
                       " .toLowerCase().includes(filter.toLowerCase()))", flat)
@@ -213,6 +216,24 @@ class LoraPickerCopy(unittest.TestCase):
                       "the popup no longer maps the filtered set")
         self.assertIn("<LoraTile", popup,
                       "the popup no longer renders the set as LoraTile")
+
+    def test_recipe_stages_ride_the_main_list(self):
+        # 2026-09-06: the picker no longer stacks the recipe's unadded stages
+        # above the list behind a lock glyph and a "recipe · 0.2" tag - every
+        # H3 stage is order_locked: false, and the glyph read as "locked".
+        # They are plain rows now, and a click on one still adds the STAGE
+        # (recipe default strength, slot binding), never a bare user entry.
+        flat = re.sub(r"\s+", " ", SRC)
+        popup = _block(SRC, "const addControl = (", "</Pop>")
+        self.assertNotIn("inactiveStages.map((stage) => (", popup,
+                         "the recipe group is back above the list")
+        self.assertNotIn("recipe · ", popup, "the recipe tag is back in the popup")
+        self.assertIn("const stageForName = new Map(inactiveStages.map(", flat)
+        add = _block(SRC, "const addInstalled = (lora) => {", "setAdding(false)")
+        self.assertIn("stageForName.get(lora.name)", add,
+                      "a click on a recipe stage's file no longer finds the stage")
+        self.assertIn("addStage(stage)", add,
+                      "a recipe stage's file is added as a bare user entry")
 
 
 if __name__ == "__main__":

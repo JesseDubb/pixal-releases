@@ -107,7 +107,7 @@
   "7": {
    "class_type": "KSamplerSelect",
    "inputs": {
-    "sampler_name": "dpmpp_sde_gpu"
+    "sampler_name": "res_2s"
    }
   },
   "8": {
@@ -118,8 +118,8 @@
      "1",
      0
     ],
-    "scheduler": "beta",
-    "steps": 20
+    "scheduler": "bong_tangent",
+    "steps": 8
    }
   },
   "9": {

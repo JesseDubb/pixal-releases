@@ -1,7 +1,9 @@
 # Pixal architecture: current state
 
 Last verified: 2026-09-05. Architecture/settings checkpoint: `9ff2a43` and
-`885dde9`; latest memory changes and live evidence are in the
+`885dde9`; ownership extraction checkpoint: `905dce0`, `67a9c98`, `016fd30`
+and `c10f848` (catalog, Z-Image family, events/ledger, ComfyUI supervision).
+Latest memory changes and live evidence are in the
 [memory checkpoint](docs/2026-09-05-memory-recovery.md).
 Cancellation follow-through and outstanding packaged-Windows validation are in
 [release readiness](docs/2026-09-05-release-readiness.md).
@@ -18,7 +20,9 @@ multi-tenant service or storage migration is part of the current extraction.
 `server.py` remains the desktop entry point **and a large legacy implementation**;
 it is not yet a thin launcher. Extract ownership and dependencies, not just lines.
 
-The architecture changes are included in the 1.3.2b candidate. Running a newer
+The architecture changes through `c10f848` shipped in **1.4.0b**, public and
+latest since 2026-09-05 (provenance:
+[release 1.4.0b](docs/2026-09-05-release-1.4.0b.md)). Running a newer
 checkout does not update the published installer; publication evidence lives in
 the release readiness record above. Version/channel authority remains `PIXAL_VERSION` and
 `PIXAL_CHANNEL` in [server.py](server.py); promotion follows [RELEASING.md](RELEASING.md).
@@ -149,6 +153,8 @@ from release packages. They may be absent in an installed copy:
 - [Live studio baseline](docs/2026-09-04-architecture-studio-smoke.md): real render/replay/restart evidence, not comprehensive failure coverage.
 - [Settings checkpoint](docs/2026-09-04-settings-boundary.md): latest application test totals, scoped benchmarks and live preference parity.
 - [Installer hardening](docs/2026-09-04-installer-hardening-implementation.md): bootstrap/runtime ownership, repair and download recovery, verification and the remaining packaged-Windows release gate.
+- [Performance pass](docs/2026-09-05-performance-pass.md): measured hot paths, what moved off the event loop and what each change is worth; its limitations are current.
+- [Release 1.4.0b](docs/2026-09-05-release-1.4.0b.md): promotion, the three-surface hash check and the still-outstanding clean-Windows rehearsal.
 
 Ordinary tests consume committed synthetic fixtures. Historical capture/benchmark
 tools can require private baseline Git commits; they are not runtime dependencies.

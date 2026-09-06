@@ -207,10 +207,10 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(g["6"]["inputs"]["clip"], ["2", 0])
         self.assertEqual(g["6"]["inputs"]["vae"], ["3", 0])
         self.assertEqual(g["6"]["inputs"]["length"], 5)
-        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "res_2s"})
         self.assertEqual(g["8"]["inputs"], {"model": ["1", 0],
-                                            "scheduler": "beta",
-                                            "steps": 20, "denoise": 1.0})
+                                            "scheduler": "bong_tangent",
+                                            "steps": 8, "denoise": 1.0})
         self.assertEqual(g["9"]["inputs"], {"model": ["1", 0],
                                             "conditioning": ["6", 0]})
         self.assertEqual(g["10"]["inputs"], {"noise_seed": 424242})
@@ -325,20 +325,23 @@ class GraphTests(unittest.TestCase):
             {"node": "10", "input": "noise_seed", "value": 7}])
         self.assertEqual(g["8"]["inputs"]["steps"], 12)
         self.assertEqual(g["10"]["inputs"]["noise_seed"], 7)
-    def test_the_graph_samples_at_the_ab_winner(self):
-        """9.78: Jesse's locked-seed A/B (4 arms x 2 scenes, seed 424242,
-        on h3_still, renders in the h3-sampler-ab folder) picked arm C
-        for realism - "So for realism 100 percent C" - so the still lane
-        samples at dpmpp_sde_gpu x beta on its OWN constants, leaving the
-        video default (H3_SAMPLER/H3_SCHEDULER) untouched."""
+    def test_the_graph_samples_at_the_still_default(self):
+        """The still lane samples on its OWN constants, leaving the video
+        default (H3_SAMPLER/H3_SCHEDULER/H3_STEPS) untouched. 9.78 set them
+        from Jesse's locked-seed A/B (dpmpp_sde_gpu x beta, "So for realism
+        100 percent C"); 2026-09-06 moved them on his word to res_2s x
+        bong_tangent at 8 steps, and the A/B winner stays as the Detail
+        preset."""
         g, _cap, _info = self.build()
         self.assertEqual(g["7"]["inputs"],
                          {"sampler_name": server.H3_STILL_SAMPLER})
         self.assertEqual(g["8"]["inputs"]["scheduler"],
                          server.H3_STILL_SCHEDULER)
-        self.assertEqual(g["8"]["inputs"]["steps"], server.H3_STEPS)
-        self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER),
-                         ("dpmpp_sde_gpu", "beta"))
+        self.assertEqual(g["8"]["inputs"]["steps"], server.H3_STILL_STEPS)
+        self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER,
+                          server.H3_STILL_STEPS),
+                         ("res_2s", "bong_tangent", 8))
+        self.assertEqual(server.H3_STEPS, 20)
 
     def test_a_users_tuning_beats_the_ab_default(self):
         """A saved style's tuning applies after the graph is built, so it
@@ -474,8 +477,8 @@ class SeatTests(unittest.TestCase):
 
     def test_defaults_report_the_still_recipe(self):
         self.assertEqual(server.sampler_defaults("h3_still"),
-                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
-                          "scheduler": "beta"})
+                         {"steps": 8, "sampler_name": "res_2s",
+                          "scheduler": "bong_tangent"})
 
     def test_tuning_writes_through_the_map_and_drops_cfg(self):
         overrides = server.tuning_overrides(

@@ -107,7 +107,20 @@ written to the ledger late, as its own row.
 which drops `full_prompt`, `spec`, `cache` and `vram`. Match on the full form
 from a script.
 
-Five things that will bite you:
+Six things that will bite you:
+
+- **A character's photo rides the MODEL, so the model can silently drop it.**
+  With a character set, `effective_recipe` routes on the build's variant: a
+  **ref2va** build goes to `h3_ref_still`, which wires the anchor's photograph
+  into the graph, and an **fl2va** build goes to `h3_still`, whose node has no
+  reference input at all - only the character card's PROSE reaches the caption,
+  and the render comes back a plausible stranger. Every H3 checkpoint carries
+  the same 932-tensor architecture, so the **filename** is the only thing that
+  decides this (`h3_name_takes_reference`: `ref2va`, `ref-delta`, `ref_delta`,
+  `refdelta`). A build whose name matches none of them defaults to fl2va
+  silently. After installing any H3 checkpoint, check the lane before judging a
+  face: the graph must carry `LoadImage -> ref_images.ref_image_0`. Found
+  2026-09-06, on a reference-capable build named `Ref-Delta-Fused`.
 
 - **The lane key is `engine`, not `template`.** `opts.template` is read
   NOWHERE on this path - it is the brain's own render-tool argument, and in

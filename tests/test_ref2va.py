@@ -195,6 +195,42 @@ class VariantPlumbingTests(unittest.TestCase):
             # (d) unknown ids are None, as today
             self.assertIsNone(server.h3_model_variant("wan2"))
 
+    def test_a_ref_delta_build_is_reference_capable(self):
+        """2026-09-06, from Jesse's own Zara shots. A Ref-Delta-Fused build
+        fuses ref2va's delta into fl2va weights and takes references exactly
+        as ref2va does - but its name never says "ref2va", so the token test
+        filed it fl2va, effective_recipe sent a CHARACTER to h3_still, and
+        that lane has no reference input: the anchor's photo was dropped in
+        silence and the render came back a stranger. Every H3 checkpoint
+        shares one 932-tensor architecture, so the NAME is the only signal."""
+        rel = ("Minimax H3" + chr(92) +
+               "MiniMax-H3-Pruned-Ref-Delta-Fused-r1024-comfy-int8-convrot.safetensors")
+        self.assertTrue(server.h3_name_takes_reference(rel))
+        self.assertTrue(server.h3_name_takes_reference("x_ref_delta_fused.safetensors"))
+        self.assertTrue(server.h3_name_takes_reference("x_refdelta.safetensors"))
+        # and a plain fl2va build is still not reference-capable
+        self.assertFalse(server.h3_name_takes_reference(server.H3_MODEL))
+        with patch.object(server, "model_catalog", side_effect=catalog_with(
+                server.H3_MODEL, REF2VA_REL, rel)):
+            self.assertEqual(server.h3_model_variant(
+                "minimax-h3-pruned-ref-delta-fused-r1024-comfy-int8-convrot"),
+                "ref2va")
+
+    def test_a_character_never_routes_to_a_lane_that_drops_its_photo(self):
+        """The bug as the user met it: pick the reference-capable build, pick
+        a character, and land on the lane with no reference input."""
+        rel = ("Minimax H3" + chr(92) +
+               "MiniMax-H3-Pruned-Ref-Delta-Fused-r1024-comfy-int8-convrot.safetensors")
+        with patch.object(server, "model_catalog", side_effect=catalog_with(
+                server.H3_MODEL, REF2VA_REL, rel)):
+            self.assertEqual(
+                server.effective_recipe({"character": "zara", "model": rel}),
+                "h3_ref_still")
+            self.assertEqual(
+                server.effective_recipe({"character": "zara", "model": rel,
+                                         "quality": "refined"}),
+                "h3_ref_still_2x")
+
     def test_speed_modes_carry_the_variant_gates(self):
         modes = {m["id"]: m for m in server.H3_SPEED_MODES}
         # ref2va IS quality at 20 steps; refusing it the quality id would
@@ -229,6 +265,62 @@ class VariantPlumbingTests(unittest.TestCase):
         self.assertFalse(chips["fl2va"])
         self.assertTrue(chips["ref2va"])
         self.assertTrue(h3["available"])
+
+    # An H3 build whose name matches NO lane token used to default to fl2va
+    # in silence (`else "fl2va"`) - the exact shape of the Ref-Delta trap one
+    # naming later. One is on Jesse's disk: 10Eros_Max_h3_TURBO-hybrid_beta4.
+    LANELESS = "Minimax H3\\10Eros_Max_h3_TURBO-hybrid_beta4_int8_convrot.safetensors"
+
+    def test_a_laneless_name_is_unknown_not_fl2va(self):
+        with patch.object(server, "model_catalog", side_effect=catalog_with(
+                server.H3_MODEL, REF2VA_REL, self.LANELESS)), \
+                patch.object(server, "adjacent_metadata", return_value={}):
+            profile = server.model_profile(self.LANELESS)
+            self.assertEqual(profile["family"], "minimax_h3")
+            self.assertEqual(profile["variant"], "unknown")
+            self.assertFalse(profile["supported"])
+            self.assertEqual(profile["reason"], server.H3_UNKNOWN_LANE_REASON)
+            self.assertEqual(profile["lanes"], [])
+            self.assertEqual(server.h3_build_lanes(self.LANELESS), set())
+            # not a chip on either Animate lane, and no still recipe takes it
+            self.assertNotIn("10eros_max_h3_turbo-hybrid_beta4_int8_convrot",
+                             [o["id"] for o in server.h3_model_options()])
+            self.assertEqual(server.compatible_recipes(profile), [])
+            # a recipe reaching for it by name is refused BY NAME, never laned
+            with patch.object(server, "resolve_model_entry", return_value={
+                    "rel": self.LANELESS, "kind": "diffusion_models",
+                    "family": "minimax_h3", "variant": "unknown"}):
+                with self.assertRaisesRegex(ValueError, "neither fl2va nor ref2va"):
+                    server.pick_recipe_model(self.LANELESS, "h3_still")
+                with self.assertRaisesRegex(ValueError, "h3_lanes"):
+                    server.pick_recipe_model(self.LANELESS, "h3_ref_still")
+
+    def test_a_sidecar_declaration_lanes_a_build_the_name_cannot(self):
+        """The merge's author is the only oracle: `"h3_lanes"` in the build's
+        own .metadata.json outranks the filename, both ways."""
+        def sidecar(kind, rel):
+            return {"h3_lanes": "ref2va"} if rel == self.LANELESS else {}
+
+        with patch.object(server, "model_catalog", side_effect=catalog_with(
+                server.H3_MODEL, REF2VA_REL, self.LANELESS)), \
+                patch.object(server, "adjacent_metadata", side_effect=sidecar):
+            profile = server.model_profile(self.LANELESS)
+            self.assertEqual(profile["variant"], "ref2va")
+            self.assertTrue(profile["supported"])
+            self.assertEqual(profile["lanes"], ["ref2va"])
+            self.assertEqual(server.h3_model_variant(
+                "10eros_max_h3_turbo-hybrid_beta4_int8_convrot"), "ref2va")
+            # and the character routes to the graph that carries the photo
+            self.assertEqual(server.effective_recipe(
+                {"character": "zara", "model": self.LANELESS}), "h3_ref_still")
+        # a declaration can also say a REF-named build is fl2va-only, or both
+        with patch.object(server, "adjacent_metadata",
+                          return_value={"h3_lanes": "fl2va"}):
+            self.assertEqual(server.h3_declared_lanes(REF2VA_REL), {"fl2va"})
+        with patch.object(server, "adjacent_metadata",
+                          return_value={"h3_lanes": "fl2va ref2va"}):
+            self.assertEqual(server.h3_declared_lanes(self.LANELESS),
+                             {"fl2va", "ref2va"})
 
 
 class Ref2VAGraphTests(unittest.TestCase):

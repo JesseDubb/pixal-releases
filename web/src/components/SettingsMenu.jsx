@@ -201,6 +201,10 @@ const HUMAN_REASON = {
   "auxiliary model, not a standalone image generator":
     "a pipeline part — never renders on its own",
   "no compatible Pixal pipeline yet": "no lane here runs it yet",
+  // An H3 merge whose filename carries no lane token is never laned by
+  // default - the silent fl2va fallback dropped a character's photo once.
+  "MiniMax H3 build whose name says neither fl2va nor ref2va":
+    "an H3 build whose name says neither fl2va nor ref2va — declare \"h3_lanes\" in its .metadata.json to lane it",
 };
 
 // The readable inventory: product name, filename, compatibility and disk

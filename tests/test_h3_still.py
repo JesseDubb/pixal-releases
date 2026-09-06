@@ -681,5 +681,31 @@ class ClientRoutingTests(unittest.TestCase):
         self.assertNotIn("MiniMax H3 Reference", branch)
 
 
+class IdentityRefUnusedHasAReader(unittest.TestCase):
+    """build_h3_still records identity_ref_unused when a character with a
+    photo lands on the lane with no reference input; until 2026-09-06
+    nothing read it. HUB.submit now says it in the lane, next to the LoRA
+    and H3 warnings, before the sampling starts."""
+
+    def test_the_lane_line_names_the_character_and_the_build(self):
+        text = server._identity_ref_unused_text(
+            {"identity_ref_unused": "zara.png", "character": "Zara",
+             "model": "minimax_h3_fl2va_pruned_int8_convrot"})
+        self.assertIn("Zara's reference photo did not ride", text)
+        self.assertIn("minimax_h3_fl2va_pruned_int8_convrot", text)
+        self.assertIn("ref2va", text)
+
+    def test_silent_when_the_photo_rode(self):
+        self.assertIsNone(server._identity_ref_unused_text({"character": "Zara"}))
+        self.assertIsNone(server._identity_ref_unused_text({}))
+        self.assertIsNone(server._identity_ref_unused_text(None))
+
+    def test_submit_reads_it_beside_the_other_warnings(self):
+        src = Path(server.__file__).read_text(encoding="utf-8")
+        submit = src[src.index("    async def submit(self"):]
+        submit = submit[:submit.index("asyncio.create_task(self.watch(job_id))")]
+        self.assertIn("_identity_ref_unused_text(info)", submit)
+
+
 if __name__ == "__main__":
     unittest.main()

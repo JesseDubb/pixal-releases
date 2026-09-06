@@ -464,6 +464,62 @@ class OneReplyPerTurn(unittest.TestCase):
         self.assertIn("Want me to run it?", joined)
 
 
+class AParagraphOfChatIsNotACaption(unittest.TestCase):
+    """Job dd94f150 (2026-09-06 01:41): the cloud brain passed generate a
+    scene that opened with a paragraph of chat about which lane carries the
+    character's photo, closing "here's the shot I'd fire:", and the whole
+    aside rendered as the caption. Whole paragraphs of chat come off both
+    ends of a scene, on the tool-argument path and the prose rescue alike;
+    a single paragraph is never touched."""
+
+    PREAMBLE = ("Quick heads-up before the fun part: the constraints point at "
+                "h3_still, which doesn't wire in Zara's reference photo - so her "
+                "face may come back as a stranger. If you want the real her, "
+                "h3_ref_still is the locked-identity lane. Either way, here's "
+                "the shot I'd fire:")
+    SCENE = ("Chest-up frame, Zara at a small round table in a busy Starbucks. "
+             "Afternoon sun pours through the storefront window from frame left. "
+             "A tall paper cup sits between her hands. She wears a canary-yellow "
+             "vinyl trench with huge sculpted shoulders.")
+
+    def test_the_leaked_preamble_comes_off(self):
+        self.assertEqual(server._strip_scene_preamble(self.PREAMBLE + "\n\n" + self.SCENE),
+                         self.SCENE)
+
+    def test_a_trailing_offer_comes_off_too(self):
+        text = self.SCENE + "\n\nWant a different lane? Say go and I'll fire it."
+        self.assertEqual(server._strip_scene_preamble(text), self.SCENE)
+
+    def test_each_leading_tell_on_its_own(self):
+        for head in ("Here's the shot:",                     # lead-in colon
+                     "You wanted her somewhere busy.",       # second person
+                     "Got it.",                              # interjection
+                     "The constraints point at h3_still.",   # a recipe id
+                     "I'd keep the light hard."):            # the assistant
+            with self.subTest(head=head):
+                self.assertEqual(server._strip_scene_preamble(head + "\n\n" + self.SCENE),
+                                 self.SCENE)
+
+    def test_two_paragraphs_of_scene_both_stay(self):
+        second = "Behind her the counter and a short queue stay readable."
+        text = self.SCENE + "\n\n" + second
+        self.assertEqual(server._strip_scene_preamble(text), text)
+
+    def test_dialogue_is_masked_before_the_tells_are_read(self):
+        first = 'She leans in. <d>You wanted this, I\'d bet.</d> Her cup steams.'
+        text = first + "\n\n" + self.SCENE
+        self.assertEqual(server._strip_scene_preamble(text), text)
+
+    def test_a_single_paragraph_is_never_emptied(self):
+        lone = "Here's the shot I'd fire:"
+        self.assertEqual(server._strip_scene_preamble(lone), lone)
+        self.assertEqual(server._strip_scene_preamble(""), "")
+
+    def test_the_prose_rescue_runs_the_same_rule(self):
+        self.assertEqual(server._scene_from_prose(self.PREAMBLE + "\n\n" + self.SCENE),
+                         self.SCENE)
+
+
 class ProseRescueOnlyWithEnhance(unittest.TestCase):
     """9.99: _scene_from_prose is reached ONLY with prompt_enhance on.
 

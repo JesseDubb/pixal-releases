@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.4.2b — 2026-09-06
+
+**A character's photo is never dropped in silence.** With a character set, Pixal
+picks the MiniMax H3 lane from the model's filename, and a build that said
+"reference" a new way (the Ref-Delta merges) was being sent to the lane that has
+no reference input at all. The photo went nowhere, only the card's description
+reached the caption, and the render came back a plausible stranger. Every naming
+of a reference-capable build now routes to the reference graph, and when a
+photo genuinely cannot ride a lane, the chat says so before sampling starts.
+
+**No more guessing a lane from a name that doesn't say.** An H3 build whose
+filename carries neither `fl2va` nor `ref2va` used to be treated as fl2va by
+default. It now shows in the Library as a build whose lane is unknown, stays off
+the Animate model lists, and is refused with the fix in the message rather than
+rendered on a guess. To lane such a merge yourself, add `"h3_lanes": "ref2va"`
+(or `"fl2va"`, or `"fl2va ref2va"` for a hybrid) to the `.metadata.json` beside
+the file. The declaration outranks the filename.
+
+**The reference stills keep their measured sampler.** The 1.4.1b sampler change
+had landed on all four H3 still lanes; the two reference lanes are back on the
+pair that was actually measured for likeness, in their own defaults. The
+prompt-only lanes keep the faster pair.
+
+**No chat in the caption.** When the brain wrapped a scene in a paragraph of
+conversation ("here's the shot I'd fire:"), the whole aside rendered as the
+prompt. Paragraphs of chat now come off both ends of a scene before it reaches
+the sampler; a scene that is only one paragraph is never touched.
+
+**Two versions of one LoRA are told apart.** When two installed files share a
+CivitAI model name because they are two versions of the same LoRA, the picker
+shows the version name after it ("HMNSFW - AIO Sex LoRA V2.5") instead of one
+ambiguous label.
+
 ## 1.4.1b — 2026-09-06
 
 **Your LoRAs have their real names back.** A shelf of cards reading `aitk_lora`

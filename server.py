@@ -498,7 +498,7 @@ LISTEN = ("127.0.0.1", 8190)
 # The trailing "b" is the beta line; the CHANNEL beside it is which build of
 # that line you are on (stable, as against nightly). Two different facts, which
 # is why they are two fields and not one string.
-PIXAL_VERSION = "1.4.1b"
+PIXAL_VERSION = "1.4.2b"
 PIXAL_CHANNEL = "stable"
 
 LEDGER = DATA_DIR / "history.jsonl"
@@ -1433,6 +1433,33 @@ def _lora_entry_extras(entry, rel):
     if "base" not in entry and own_civ.get("base"):
         entry["base"] = own_civ["base"]
 
+def _disambiguate_lora_titles(loras):
+    """A title two installed picker LoRAs share cannot be the label that tells
+    them apart. The header dedupe in _lora_title_map runs BEFORE the CivitAI
+    floor, so it never sees the three pairs that share a CivitAI MODEL name
+    because they are two versions of one model (HMNSFW V2 / V2.5, snofs v1 /
+    v1_1, hmpussy v6 / Vagina). The same by-hash record carries the VERSION
+    name, so that is appended - "HMNSFW - AIO Sex LoRA V2.5" - and only when
+    the version cannot tell them apart either does the title yield to the
+    filename, as the header dedupe does. Runs after every title source."""
+    by_title = collections.defaultdict(list)
+    for entry in loras:
+        if entry.get("title"):
+            by_title[entry["title"]].append(entry)
+    for title, group in by_title.items():
+        if len(group) < 2:
+            continue
+        for entry in group:
+            version = str(_civ_hit(entry["name"], "loras").get("version")
+                          or "").strip()
+            if version and version.lower() not in title.lower():
+                entry["title"] = f"{title} {version}"
+        still = collections.Counter(entry["title"] for entry in group)
+        for entry in group:
+            if still[entry["title"]] > 1:
+                entry["title"] = None
+
+
 def lora_catalog():
     """Every LoRA on disk: relpath + real title + model family, cached to disk."""
     root = CDIR / "models" / "loras"
@@ -2052,6 +2079,74 @@ ZIMAGE_TURBO_PROFILES = ("zimage_turbo",)
 # names them.
 H3_MODEL = "Minimax H3\\minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 H3_REF2V_MODEL = "Minimax H3\\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+# Which H3 builds take a reference photograph, named ONCE (2026-09-06).
+#
+# Every H3 checkpoint on disk carries the same 932-tensor architecture, so
+# nothing in the file says whether reference conditioning was trained into it:
+# the filename token is the only signal there is, and four sites were each
+# spelling it `"ref2va" in name`. A build whose name says REF another way -
+# `MiniMax-H3-Pruned-Ref-Delta-Fused-r1024`, which fuses ref2va's delta into
+# fl2va weights at rank 1024 and is exactly as reference-capable - therefore
+# classified fl2va, and `effective_recipe` sent a CHARACTER to h3_still, whose
+# graph has no reference input at all. The anchor's photo was dropped in
+# silence and the render came back a plausible stranger; found on Jesse's own
+# Zara shots the night those two checkpoints were installed.
+#
+# A new naming still needs a token here - but one token list, not four.
+H3_REF_TOKENS = ("ref2va", "ref-delta", "ref_delta", "refdelta")
+
+def h3_basename(rel):
+    return str(rel or "").replace("/", "\\").lower().rsplit("\\", 1)[-1]
+
+def h3_name_takes_reference(rel):
+    """True when this H3 build's name says it takes reference images."""
+    return any(t in h3_basename(rel) for t in H3_REF_TOKENS)
+
+# A build whose name matches NO lane token has no lane - not fl2va by default.
+# The token fix above closed the Ref-Delta case, but the `else "fl2va"` it
+# left behind was the same trap one step later: any future naming lands a
+# reference-capable build on the graph with no reference input, in silence.
+# One such file is already on disk (`10Eros_Max_h3_TURBO-hybrid_beta4`), and
+# its name genuinely cannot say what it serves. So "unknown" is a real state
+# now - unsupported, with this reason, refused by pick_recipe_model by name -
+# and the person who made or downloaded the merge, the only oracle there is,
+# declares it in the build's own .metadata.json sidecar (the file base_model
+# is already read from): `"h3_lanes": "ref2va"`, `"fl2va"`, or `"fl2va ref2va"`
+# for a hybrid. The declaration outranks the filename.
+H3_LANES_KEY = "h3_lanes"
+H3_UNKNOWN_LANE_REASON = ("MiniMax H3 build whose name says neither fl2va "
+                          "nor ref2va")
+
+def h3_declared_lanes(rel, md=None):
+    """The lanes one H3 build's own evidence names: {"fl2va"}, {"ref2va"},
+    both, or EMPTY when nothing says. The sidecar declaration first, then
+    the filename tokens. `md` is the sidecar when the caller already read it."""
+    if md is None:
+        # Best-effort, like every sidecar read: unreadable means undeclared,
+        # and the chip list must not fail on a metadata file.
+        try:
+            md = adjacent_metadata("diffusion_models", rel) if rel else {}
+        except Exception:
+            md = {}
+    declared = str((md or {}).get(H3_LANES_KEY) or "").lower()
+    if declared.strip():
+        return {lane for lane in (H3_MODEL_ID, H3_REF2V_MODEL_ID)
+                if lane in declared}
+    name = h3_basename(rel)
+    lanes = set()
+    if "fl2va" in name:
+        lanes.add(H3_MODEL_ID)
+    if h3_name_takes_reference(name):
+        lanes.add(H3_REF2V_MODEL_ID)
+    return lanes
+
+def h3_unknown_lane_error(rel):
+    """The refusal a laneless H3 build gets wherever a recipe reaches for it."""
+    return (f"{h3_basename(rel)} does not say which MiniMax H3 lane it "
+            f"serves - its name carries neither fl2va nor ref2va. Declare it "
+            f"in the build's .metadata.json sidecar: \"{H3_LANES_KEY}\": "
+            f"\"ref2va\" if it takes reference photos, \"fl2va\" if not, or "
+            f"\"fl2va ref2va\" for a hybrid.")
 H3_CLIP = "Qwen\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 # The small-encoder stand-ins for the 32B (9.94). A projection maps a general
 # Qwen3-VL encoder into the space MiniMax H3's own 32B encoder occupies, so
@@ -2449,7 +2544,7 @@ RECIPE_SPECS = {
     # speed distills).
     "h3_ref_still": {
         "label": "MiniMax H3 Ref",
-        "tag": "2K still from a reference · 8 steps · ~1 min",
+        "tag": "2K still from a reference · 20 steps · ~2 min",
         "family": "minimax_h3", "variants": ["ref2va"],
         "lora_variants": ["any"],
         "default_model": H3_REF2V_MODEL,
@@ -2637,12 +2732,16 @@ def model_profile(rel, kind="diffusion_models"):
         # and ref2va builds run h3_ref_still (9.67), so both are supported
         # stills. No families.json row can say this - a row classifies media
         # "image", supported True - so the family stays an elif. The variant
-        # rule is the filename token, ref2va first (h3_model_variant's
+        # rule is the declared lane set, ref2va first (h3_model_variant's
         # precedence), and the variant stays on the profile so the picker
-        # groups the two architectures.
-        variant = "ref2va" if "ref2va" in low.rsplit("\\", 1)[-1] else "fl2va"
+        # groups the two architectures. A build that declares NO lane is
+        # "unknown" and unsupported, never fl2va by default (2026-09-06).
+        h3_lanes = h3_declared_lanes(rel, md)
+        variant = ("ref2va" if H3_REF2V_MODEL_ID in h3_lanes
+                   else "fl2va" if H3_MODEL_ID in h3_lanes else "unknown")
         family, media = "minimax_h3", "video"
-        supported, reason = True, ""
+        supported = bool(h3_lanes)
+        reason = "" if h3_lanes else H3_UNKNOWN_LANE_REASON
     elif low.startswith("ltx"):
         family, variant, media, supported = "video", "video", "video", False
         reason = "video model"
@@ -3119,9 +3218,15 @@ def pick_recipe_model(requested, recipe_id):
     if variants and entry["variant"] not in variants:
         # 9.91: a hybrid fl2va/ref2va build serves BOTH H3 lanes - the same
         # exception compatible_recipes applies, from the one membership rule.
-        if entry["family"] == "minimax_h3" and \
-                set(variants) & h3_build_lanes(entry["rel"]):
-            return entry
+        if entry["family"] == "minimax_h3":
+            lanes = h3_build_lanes(entry["rel"])
+            if set(variants) & lanes:
+                return entry
+            if not lanes:
+                # Laneless is refused BY NAME, never routed by default: the
+                # silent fl2va fallback is how a character's photo was
+                # dropped on 2026-09-06.
+                raise ValueError(h3_unknown_lane_error(entry["rel"]))
         # The architecture word rides only where the label doesn't already
         # name it ("Fantasy uses Z-Image base models", but "MiniMax H3 uses
         # fl2va models" - not "...uses MiniMax H3 fl2va models").
@@ -3223,6 +3328,20 @@ def lora_stack(loras, baked=(), family=None, variant=None):
                 del seen[key]
             seen[key] = (real, st)
     return list(seen.values()), dropped
+
+
+def _identity_ref_unused_text(info):
+    """Lane line for a character whose reference photo the lane could not
+    carry (build_h3_still's identity_ref_unused). None when clean."""
+    if not (info or {}).get("identity_ref_unused"):
+        return None
+    who = str(info.get("character") or "The character").strip()
+    model = str(info.get("model") or "this build").strip()
+    return (f"*{who}'s reference photo did not ride this render:* {model} is "
+            "a first-frame (fl2va) build, and that lane has no reference "
+            "input - only the character card's description reached the "
+            "caption, so the face may come back a stranger. Pick a "
+            "reference-capable H3 build (ref2va) to carry the likeness.")
 
 
 def _lora_warning_text(warnings):
@@ -3537,9 +3656,12 @@ def sampler_defaults(base_id, model=None):
         # numbers are the still recipe's own constants - since 9.78 the STILL
         # pair, not the video default the shared constants now name. No H3
         # video id has a SAMPLER_SEATS entry, so this branch is stills-only
-        # by construction. h3_still_2x shares
-        # the first pass, so it reports the same trio; h3_ref_still (9.67)
-        # runs the same schedule on the ref2v spine.
+        # by construction. Each 2x shares its first pass, so it reports the
+        # same trio as the lane it refines.
+        if base_id in ("h3_ref_still", "h3_ref_still_2x"):
+            return {"steps": H3_REF_STILL_STEPS,
+                    "sampler_name": H3_REF_STILL_SAMPLER,
+                    "scheduler": H3_REF_STILL_SCHEDULER}
         return {"steps": H3_STILL_STEPS, "sampler_name": H3_STILL_SAMPLER,
                 "scheduler": H3_STILL_SCHEDULER}
     return {k: node[k] for k in seat_tuning_keys(seat) if k in node}
@@ -3843,14 +3965,17 @@ H3_STILL_LANES = ("h3_still", "h3_still_2x", "h3_ref_still", "h3_ref_still_2x")
 SAMPLER_PRESETS = {
     "minimax_h3": (
         {"id": "res", "label": "Res 2s", "lanes": H3_STILL_LANES,
-         "note": "Jesse's pick, 2026-09-06: res_2s on bong_tangent at 8 steps. "
-                 "Second order, so two model calls a step; bong_tangent brings "
-                 "its own sigma shift. The shipped default.",
+         "note": "Jesse's pick, 2026-09-06: res_2s on bong_tangent at 8 steps, "
+                 "and what the prompt-only stills ship at. Second order, so "
+                 "two model calls a step. bong_tangent brings its own sigma "
+                 "curve and ignores H3's shift, which is why the reference "
+                 "lanes are not on it.",
          "tuning": {"sampler_name": "res_2s", "scheduler": "bong_tangent",
                     "steps": 8}},
         {"id": "detail", "label": "Detail", "lanes": H3_STILL_LANES,
          "note": "Measured here: +74% mean fine detail over the community pick "
-                 "across six frames. ~104 s. The default until 2026-09-06.",
+                 "across six frames. ~104 s. What the REFERENCE stills ship "
+                 "at, and the prompt-only lanes' default until 2026-09-06.",
          "tuning": {"sampler_name": "dpmpp_sde_gpu", "scheduler": "beta",
                     "steps": 20}},
         {"id": "speed", "label": "Speed", "lanes": H3_STILL_LANES,
@@ -4052,7 +4177,7 @@ def sampler_presets(base_id, model=None):
 H3_COMMUNITY_COMBOS = (
     ("dpmpp_sde_gpu", "beta",
      "Measured here: +74% mean fine detail over six frames against the "
-     "community pick. ~104 s. The still default until 2026-09-06."),
+     "community pick. ~104 s. What the reference stills ship at."),
     ("res_multistep", "simple",
      "Measured here: ~35% faster at 68 s with less fine detail - and the pair "
      "that produced the sets Jesse called amazing."),
@@ -6948,6 +7073,13 @@ def build_h3_still(scene, seed, width=None, height=None, loras=(), overrides=(),
             "size": f"{width}x{height}",
             "canvas_mp": (width * height) / 1e6,
             "character": ch["name"] if ch else None}
+    # This lane is prompt-only: MiniMaxH3ImageToVideo has no reference input,
+    # so an anchor's photograph cannot ride it and only the card's PROSE
+    # reaches the caption. Say so in the row rather than letting the render
+    # come back a plausible stranger with nothing recording why (2026-09-06).
+    # A reference-capable build routes to h3_ref_still and never lands here.
+    if ch and ch.get("identity_ref"):
+        info["identity_ref_unused"] = ch["identity_ref"]
     return g, cap, info
 
 
@@ -7672,11 +7804,12 @@ def build_h3_ref_still(scene, seed, width=None, height=None, loras=(),
         # and the second VAE is pure VRAM.
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": assets["image_vae"] if single else assets["video_vae"]}},
+        # The IDENTITY pair, not the prompt-only lane's - see H3_REF_STILL_*.
         "7": {"class_type": "KSamplerSelect",
-              "inputs": {"sampler_name": H3_STILL_SAMPLER}},
+              "inputs": {"sampler_name": H3_REF_STILL_SAMPLER}},
         "8": {"class_type": "BasicScheduler", "inputs": {
-            "model": ["1", 0], "scheduler": H3_STILL_SCHEDULER,
-            "steps": H3_STILL_STEPS, "denoise": 1.0}},
+            "model": ["1", 0], "scheduler": H3_REF_STILL_SCHEDULER,
+            "steps": H3_REF_STILL_STEPS, "denoise": 1.0}},
         # H3 is CFG-distilled: BasicGuider, never a CFGGuider.
         "9": {"class_type": "BasicGuider", "inputs": {
             "model": ["1", 0], "conditioning": ["6", 0]}},
@@ -7936,6 +8069,29 @@ H3_SCHEDULER = "simple"
 H3_STILL_SAMPLER = "res_2s"
 H3_STILL_SCHEDULER = "bong_tangent"
 H3_STILL_STEPS = 8
+# The IDENTITY lanes keep the measured pair (2026-09-06). Jesse asked for
+# res_2s x bong_tangent x 8 "for h3 image" and it went onto all four still
+# lanes; the reference lanes were never part of that ask, and the reason to
+# split is mechanical, not clerical:
+#
+#   - `bong_tangent_scheduler` takes `model_sampling` and never reads it
+#     (RES4LYF sigmas.py:4076-4088): it returns a fixed arctan curve, so H3's
+#     `shift: 12.0` - which piles the schedule up near sigma 1 - is discarded.
+#     Identity (skull, eye spacing, nose length, jaw) is decided high in the
+#     schedule; texture is decided low. beta x 20 on shift 12 queries the
+#     conditioned model 18 times above sigma 0.5; bong_tangent x 8 queries it
+#     5 times. The reference is wired at every step either way - what changes
+#     is how often it gets to steer while the face is still being decided.
+#   - ComfyUI's stock `res_2s` is RES4LYF's `sample_rk_beta` at its defaults,
+#     eta 0.5 / noise_mode_sde "hard" - an SDE that re-randomises at every
+#     step and substep. The deterministic sibling is `res_2s_ode`.
+#
+# 8 steps was never measured on this lane; docs/2026-08-30-h3-ref-realism.md
+# tried 10/16/20 and only 20 held. Every locked identity recipe here is 20.
+# The trio is still one click away on all four lanes as the "Res 2s" preset.
+H3_REF_STILL_SAMPLER = "dpmpp_sde_gpu"
+H3_REF_STILL_SCHEDULER = "beta"
+H3_REF_STILL_STEPS = 20
 H3_UPSCALE_SCHEDULER = "beta"
 H3_TURBO = {"steps": 8, "sampler": "euler", "scheduler": "beta", "strength": 1.0}
 
@@ -9302,19 +9458,24 @@ def h3_model_options():
         rel = str(entry.get("rel") or "")
         low = rel.replace("/", "\\").lower()
         name = low.rsplit("\\", 1)[-1]
-        if not name.endswith(".safetensors") or \
-                ("fl2va" not in name and "ref2va" not in name):
+        if not name.endswith(".safetensors"):
+            continue
+        # A laneless build is not a chip: the one membership rule (sidecar
+        # declaration, then filename tokens) decides, so a declared merge
+        # whose name says nothing still reaches the Animate lanes.
+        lanes = h3_build_lanes(rel)
+        if not lanes:
             continue
         if low in stock:
             found[low] = rel
             continue
         stem = rel.replace("/", "\\").rsplit("\\", 1)[-1][:-len(".safetensors")]
-        variant = "ref2va" if "ref2va" in name else "fl2va"
+        variant = "ref2va" if H3_REF2V_MODEL_ID in lanes else "fl2va"
         # A hybrid is not a finetune of either build - it is a merge that
         # takes ref2va's adaln_proj across a block range and fl2va's weights
         # everywhere else - and it is the better one, so it says so rather
         # than sitting in the list as one more anonymous community file.
-        if "hybrid" in name and "fl2va" in name and "ref2va" in name:
+        if len(lanes) == 2:
             description = ("FL2VA/REF2VA hybrid - REF2VA's reference "
                            "conditioning on FL2VA's weights. Sharper skin, "
                            "hair and fabric than stock REF2VA; renders a "
@@ -9384,13 +9545,7 @@ def h3_build_lanes(rel):
     the Settings slots, not "where does a picked chip go".
     """
 
-    name = str(rel or "").replace("/", "\\").lower().rsplit("\\", 1)[-1]
-    lanes = set()
-    if "fl2va" in name:
-        lanes.add(H3_MODEL_ID)
-    if "ref2va" in name:
-        lanes.add(H3_REF2V_MODEL_ID)
-    return lanes
+    return h3_declared_lanes(rel)
 
 
 def h3_lane_options(lane):
@@ -9634,9 +9789,10 @@ def h3_model_variant(model_id):
         return H3_MODEL_ID
     if name == H3_REF2V_MODEL.replace("/", "\\").lower().rsplit("\\", 1)[-1]:
         return H3_REF2V_MODEL_ID
-    if "ref2va" in name:
+    lanes = h3_build_lanes(rel)
+    if H3_REF2V_MODEL_ID in lanes:
         return H3_REF2V_MODEL_ID
-    if "fl2va" in name:
+    if H3_MODEL_ID in lanes:
         return H3_MODEL_ID
     return None
 
@@ -14834,6 +14990,7 @@ class Hub:
             lm_enrich(rel, entry)
             _lora_entry_extras(entry, rel)
             loras.append(entry)
+        _disambiguate_lora_titles(loras)
         loras.sort(key=lambda l: (not l["supported"], l["family"], l["group"].lower(),
                                   (l["title"] or l["short"]).lower()))
         # model picker metadata from lora-manager's checkpoints index (which
@@ -15198,6 +15355,13 @@ class Hub:
                         # over-long line degrades silently, so the lane has to
                         # say it BEFORE 200 seconds of sampling, not after.
                         warn = _h3_warning_text(info.get("h3_warnings"))
+                        if warn:
+                            self.broadcast(type="text", cid=job["cid"], text=warn)
+                        # And for a character whose photo this lane cannot
+                        # carry: build_h3_still records identity_ref_unused,
+                        # and until 2026-09-06 nothing read it - the render
+                        # came back a stranger with the reason in the ledger.
+                        warn = _identity_ref_unused_text(info)
                         if warn:
                             self.broadcast(type="text", cid=job["cid"], text=warn)
                         # stage narration needs node id -> class; vram note
@@ -17518,6 +17682,60 @@ def _strip_conversational_furniture(text):
     return text[frags[lo][0]:frags[hi - 1][1]].strip()
 
 
+def _strip_scene_preamble(scene):
+    """Drop the chat the brain wrapped around a scene, paragraph by paragraph.
+
+    Job dd94f150 (2026-09-06 01:41): the cloud brain passed generate a scene
+    that OPENED with "Quick heads-up before the fun part: the constraints
+    point at h3_still, which doesn't wire in Zara's reference photo ... Either
+    way, here's the shot I'd fire:" and the whole aside rendered as the
+    caption - the sampler read "h3_still" as scene. The sentence trimmer
+    (_strip_conversational_furniture) stops at the first fragment that is not
+    furniture, and that lead-in is six words, past its three-word label rule.
+
+    A caption is paragraphs of description. A leading paragraph is chat when
+    it ends on a lead-in colon, names one of Pixal's own recipe ids, opens as
+    an interjection or second-person address, or has the assistant speaking
+    for itself ("I'd", "let me") outside dialogue. A trailing paragraph is
+    chat when it asks a question or offers ("say go"). Both are dropped only
+    while a paragraph of scene remains - a wrongly emptied scene is worse
+    than a chatty one, so a single paragraph is never touched."""
+    text = str(scene or "").strip()
+    paras = [p for p in _BLANK_LINE_RE.split(text) if p.strip()]
+    if len(paras) < 2:
+        return text
+    ids = "|".join(re.escape(i) for i in PUBLIC_RECIPE_IDS)
+    machinery = re.compile(rf"(?<![\w-])(?:{ids})(?![\w-])", re.I)
+
+    def masked(p):
+        chars = list(p)
+        for a, b in _dialogue_spans(p):
+            for i in range(a, min(b, len(chars))):
+                if chars[i] not in "\r\n":
+                    chars[i] = " "
+        return "".join(chars).strip()
+
+    def leading(p):
+        body = masked(p)
+        return (body.endswith(":") or bool(machinery.search(body))
+                or bool(_PROSE_INTERJECTION_RE.match(body))
+                or bool(_PROSE_SECOND_PERSON_RE.match(body))
+                or bool(_PROSE_ASSISTANT_RE.search(body)))
+
+    def trailing(p):
+        body = masked(p)
+        return (body.endswith("?") or bool(_PROSE_ASSISTANT_RE.search(body))
+                or bool(machinery.search(body))
+                or any(not any(s <= m.start() < e for s, e in _dialogue_spans(p))
+                       for m in _PROSE_SAY_GO_RE.finditer(p)))
+
+    while len(paras) > 1 and leading(paras[0]):
+        paras.pop(0)
+    while len(paras) > 1 and trailing(paras[-1]):
+        paras.pop()
+    return "\n\n".join(p.strip() for p in paras)
+
+
 def _scene_from_prose(text):
     """A prose brain that failed to call generate sometimes roleplays the tool
     instead: a line of chat, then a markdown fence holding a fake settings
@@ -17543,6 +17761,8 @@ def _scene_from_prose(text):
         text = max(fences, key=len)
     text = _SCENE_CONFIG_LINE_RE.sub("", text or "")
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # Whole paragraphs of chat first, then the sentence trimmer inward.
+    text = _strip_scene_preamble(text)
     stripped = _strip_conversational_furniture(text)
     return stripped if stripped.strip() else text
 
@@ -20701,8 +20921,11 @@ async def _kimi_reply(cid, user_msg, convo, opts=None):
                         # Small local brains sometimes echo the server's own
                         # [COMPOSER: ...] brief back inside the scene they write,
                         # which then ships to the sampler and into the ledger as
-                        # if the user had asked for it.
-                        scene = _strip_history_directives(args.pop("scene", ""))
+                        # if the user had asked for it. The cloud brain's own
+                        # failure is a paragraph of chat around the scene
+                        # (job dd94f150): whole paragraphs come off here.
+                        scene = _strip_scene_preamble(
+                            _strip_history_directives(args.pop("scene", "")))
                         if not prompt_enhance and not local_iteration:
                             # The captured prompt, never the literal turn: on an
                             # accept turn the literal turn is the word "generate".

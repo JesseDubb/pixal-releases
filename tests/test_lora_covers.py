@@ -267,6 +267,74 @@ class ByHashAndTwins(LoraMetaBase):
             self.assertEqual(entry["base"], "Krea 2")
 
 
+class TwoVersionsOfOneModel(LoraMetaBase):
+    """Three installed pairs share a CivitAI MODEL name because they are two
+    versions of one model (HMNSFW V2 / V2.5, snofs v1 / v1_1, hmpussy v6 /
+    Vagina). The header dedupe runs before the CivitAI floor and cannot see
+    them; the by-hash record carries the VERSION name, and that tells them
+    apart (2026-09-06)."""
+
+    def _hits(self, root, versions):
+        """_civitai_by_hash answering per sha256 of the FILE on disk:
+        {rel: version}. A miss for anything else."""
+        by_sha = {server._sha256_of(root / "loras" / rel): version
+                  for rel, version in versions.items()}
+
+        async def lookup(_s, sha):
+            version = by_sha.get(sha)
+            if version is None:
+                return "miss", None
+            return "hit", {"name": "HMNSFW - AIO Sex LoRA", "version": version,
+                           "thumb": "", "base": "MiniMax H3", "source": "civitai"}
+        self._stack.enter_context(patch.object(server, "_civitai_by_hash", lookup))
+        self._stack.enter_context(patch.object(
+            server, "_civarchive_by_hash", AsyncMock(return_value=("miss", None))))
+
+    def _picker(self, rels):
+        entries = [{"name": rel, "title": None} for rel in rels]
+        for entry in entries:
+            server._lora_entry_extras(entry, entry["name"])
+        server._disambiguate_lora_titles(entries)
+        return {e["name"]: e["title"] for e in entries}
+
+    def test_a_shared_model_name_wears_each_files_version(self):
+        a, b, c = (R("misc", f) for f in ("HMNSFW_AIO_V2.safetensors",
+                                                "HMNSFW_AIO_V2.5.safetensors",
+                                                "other.safetensors"))
+        with library({a: b"v2-bytes" * 8, b: b"v25-bytes" * 8, c: b"other" * 8}) as root:
+            self._hits(root, {a: "V2", b: "V2.5"})
+            self.refresh()
+            titles = self._picker([a, b, c])
+        self.assertEqual(titles[a], "HMNSFW - AIO Sex LoRA V2")
+        self.assertEqual(titles[b], "HMNSFW - AIO Sex LoRA V2.5")
+        self.assertIsNone(titles[c])                 # a miss keeps its filename
+
+    def test_a_lone_hit_never_grows_a_version(self):
+        a = R("misc", "HMNSFW_AIO_V2.safetensors")
+        with library({a: b"v2-bytes" * 8}) as root:
+            self._hits(root, {a: "V2"})
+            self.refresh()
+            self.assertEqual(self._picker([a])[a], "HMNSFW - AIO Sex LoRA")
+
+    def test_a_version_the_name_already_carries_is_not_doubled(self):
+        a, b = (R("misc", f) for f in ("x_v2.safetensors", "x_v2b.safetensors"))
+        with library({a: b"one" * 8, b: b"two" * 8}) as root:
+            self._hits(root, {a: "AIO Sex LoRA", b: "V2.5"})
+            self.refresh()
+            titles = self._picker([a, b])
+        self.assertEqual(titles[a], "HMNSFW - AIO Sex LoRA")   # version is in the name
+        self.assertEqual(titles[b], "HMNSFW - AIO Sex LoRA V2.5")
+
+    def test_when_the_version_cannot_tell_them_apart_the_filename_does(self):
+        a, b = (R("misc", f) for f in ("twin_a.safetensors", "twin_b.safetensors"))
+        with library({a: b"aaa" * 8, b: b"bbb" * 8}) as root:
+            self._hits(root, {a: "V2", b: "V2"})
+            self.refresh()
+            titles = self._picker([a, b])
+        self.assertIsNone(titles[a])
+        self.assertIsNone(titles[b])
+
+
 class VideoPreviewsAreCovers(LoraMetaBase):
     """MiniMax H3 is a video model, so CivitAI previews its LoRAs as video -
     and _civitai_by_hash took images only, so all 22 H3 LoRAs on the real box

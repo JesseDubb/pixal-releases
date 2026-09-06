@@ -127,7 +127,7 @@ class RecipeRowTests(unittest.TestCase):
         spec = server.RECIPE_SPECS["h3_ref_still"]
         self.assertEqual(spec["label"], "MiniMax H3 Ref")
         self.assertEqual(spec["tag"],
-                         "2K still from a reference · 8 steps · ~1 min")
+                         "2K still from a reference · 20 steps · ~2 min")
         self.assertEqual(spec["family"], "minimax_h3")
         self.assertEqual(spec["variants"], ["ref2va"])
         self.assertEqual(spec["default_model"], REF2VA)
@@ -171,8 +171,8 @@ class RecipeRowTests(unittest.TestCase):
         self.assertEqual(server.seat_tuning_keys(seat),
                          ("steps", "sampler_name", "scheduler"))
         self.assertEqual(server.sampler_defaults("h3_ref_still"),
-                         {"steps": 8, "sampler_name": "res_2s",
-                          "scheduler": "bong_tangent"})
+                         {"steps": 20, "sampler_name": "dpmpp_sde_gpu",
+                          "scheduler": "beta"})
 
     def test_the_popup_key_space_covers_the_ref2va_profile(self):
         self.assertIn("minimax_h3:ref2va", server._LORA_PROFILE_KEYS)
@@ -246,22 +246,30 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(g["6"]["inputs"]["length"], 5)
         self.assertEqual(g["6"]["inputs"]["ref_image_size"], "match")
         self.assertEqual(g["8"]["inputs"], {"model": ["1", 0],
-                                            "scheduler": "bong_tangent",
-                                            "steps": 8, "denoise": 1.0})
+                                            "scheduler": "beta",
+                                            "steps": 20, "denoise": 1.0})
         self.assertEqual(g["10"]["inputs"], {"noise_seed": 424242})
         self.assertEqual(g["13"]["inputs"], {"image": ["12", 0],
                                              "batch_index": 0, "length": 1})
         self.assertEqual(g["14"]["inputs"]["images"], ["13", 0])
         self.assertEqual(g["14"]["inputs"]["filename_prefix"],
                          "pixal_dm/a_red_barn_at_dusk")
-    def test_the_graph_samples_at_the_still_default(self):
-        """The ref still runs the same still trio on the ref2v spine:
-        res_2s x bong_tangent at 8 steps since 2026-09-06 (Jesse's pick;
-        9.78's dpmpp_sde_gpu x beta A/B winner stays as the Detail preset)."""
+    def test_the_identity_lane_keeps_its_own_measured_pair(self):
+        """The reference lanes do NOT follow the prompt-only lane's trio.
+        Jesse asked for res_2s x bong_tangent x 8 "for h3 image" and it went
+        onto all four still lanes on 2026-09-06; the identity lanes were never
+        part of that ask. bong_tangent discards H3's shift 12 (RES4LYF
+        sigmas.py:4076-4088 takes model_sampling and never reads it), which
+        collapses the high-sigma steps where a face is decided, and stock
+        res_2s is an eta-0.5 SDE. 8 steps was never measured here; every
+        locked identity recipe on this lane is 20."""
         g, _cap, _info = self.build()
-        self.assertEqual(g["7"]["inputs"], {"sampler_name": "res_2s"})
-        self.assertEqual(g["8"]["inputs"]["scheduler"], "bong_tangent")
-        self.assertEqual(g["8"]["inputs"]["steps"], 8)
+        self.assertEqual(g["7"]["inputs"], {"sampler_name": "dpmpp_sde_gpu"})
+        self.assertEqual(g["8"]["inputs"]["scheduler"], "beta")
+        self.assertEqual(g["8"]["inputs"]["steps"], 20)
+        # and the prompt-only lane still carries what he asked for
+        self.assertEqual((server.H3_STILL_SAMPLER, server.H3_STILL_SCHEDULER,
+                          server.H3_STILL_STEPS), ("res_2s", "bong_tangent", 8))
 
     def test_exactly_one_reference_naming_the_identity_photo(self):
         g, _cap, info = self.build()
